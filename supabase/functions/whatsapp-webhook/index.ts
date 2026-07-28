@@ -22,13 +22,12 @@ import {
   uploadToStorage,
 } from "../_shared/media.ts";
 import { whatsappToMarkdown } from "../_shared/markdown.ts";
+import { getWhatsAppAccessToken } from "../_shared/whatsapp_token.ts";
 
 const API_VERSION = "v24.0";
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN");
 const APP_ID = Deno.env.get("META_APP_ID");
 const APP_SECRET = Deno.env.get("META_APP_SECRET");
-const DEFAULT_ACCESS_TOKEN = Deno.env.get("META_SYSTEM_USER_ACCESS_TOKEN") ||
-  "";
 
 /**
  * Queries the database for organization addresses and returns a map.
@@ -1143,14 +1142,40 @@ async function processMessage(request: Request): Promise<Response> {
     organizations: orgSummary,
   });
 
+  // One Vault round-trip per address, not per message. Scoped to this request
+  // so a rotated token is never served from a warm isolate.
+  const tokens = new Map<string, Promise<string>>();
+
+  const tokenFor = (row: OrganizationAddressRow): Promise<string> => {
+    const key = `${row.organization_id}|${row.address}`;
+    let pending = tokens.get(key);
+
+    if (!pending) {
+      pending = getWhatsAppAccessToken(
+        client,
+        row.organization_id,
+        row.address,
+      );
+      tokens.set(key, pending);
+    }
+
+    return pending;
+  };
+
   const downloadMediaPromise = Promise.all(
     messages.map(async (message) => {
       const orgAddress = orgAddressMap.get(message.organization_address)!;
 
       try {
+        // Mirrors downloadMediaItem's own guard, so text-only messages don't
+        // pay for a token lookup they will not use.
+        if (message.content.type !== "file") {
+          return message;
+        }
+
         return await downloadMediaItem({
           organization_id: orgAddress.organization_id,
-          access_token: orgAddress.extra?.access_token || DEFAULT_ACCESS_TOKEN,
+          access_token: await tokenFor(orgAddress),
           message,
           client,
         });

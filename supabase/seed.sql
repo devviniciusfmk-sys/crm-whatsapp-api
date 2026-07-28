@@ -166,10 +166,24 @@ insert into public.agents (id, name, user_id, organization_id, ai, extra) values
 -- Organization Addresses - WhatsApp Integration (for Mountain Peaks)
 insert into public.organizations_addresses (organization_id, service, address, extra, status) values
   ('3a182d8d-d6d8-44bd-b021-029915476b8c', 'whatsapp', '318232498042593', 
-   '{"waba_id": "309222208943804", "phone_number": "5492604237115", "access_token": "EAAEKlp6x6a...GZC", "flow_type": "existing_phone_number", "verified_name": "Jaspers Market"}', 'connected'),
+   '{"waba_id": "309222208943804", "phone_number": "5492604237115", "flow_type": "existing_phone_number", "verified_name": "Jaspers Market"}', 'connected'),
   ('3a182d8d-d6d8-44bd-b021-029915476b8c', 'whatsapp', '9876543210',
-   '{"waba_id": "309222208943804", "phone_number": "5492604237116", "access_token": "EAAEKlp6x6a...GZC", "flow_type": "new_phone_number"}', 'disconnected')
+   '{"waba_id": "309222208943804", "phone_number": "5492604237116", "flow_type": "new_phone_number"}', 'disconnected')
 ;
+
+-- Meta tokens are Vault secrets, never `extra` (see
+-- 20260728055237_whatsapp_token_to_vault).
+select public.set_whatsapp_access_token(
+  '3a182d8d-d6d8-44bd-b021-029915476b8c',
+  '318232498042593',
+  'EAAEKlp6x6a...GZC'
+);
+
+select public.set_whatsapp_access_token(
+  '3a182d8d-d6d8-44bd-b021-029915476b8c',
+  '9876543210',
+  'EAAEKlp6x6a...GZC'
+);
 
 -- Contacts (for Mountain Peaks)
 insert into public.contacts (id, organization_id, name) values

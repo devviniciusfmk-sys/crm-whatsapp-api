@@ -1,6 +1,11 @@
-import type { Database, TemplateData } from "../_shared/supabase.ts";
+import {
+  createUnsecureClient,
+  type Database,
+  type TemplateData,
+} from "../_shared/supabase.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import * as log from "../_shared/logger.ts";
+import { getWhatsAppAccessToken } from "../_shared/whatsapp_token.ts";
 import { HTTPException } from "jsr:@hono/hono/http-exception";
 import { ContentfulStatusCode } from "jsr:@hono/hono/utils/http-status";
 
@@ -11,22 +16,33 @@ async function getBusinessCredentials(
   organization_id: string,
   organization_address: string,
 ): Promise<{ waba_id: string; access_token: string }> {
+  // `client` is the caller's user-/api-key-scoped client: this lookup is still
+  // RLS-checked, so a caller outside the org gets no row and a 403 below.
   const { data, error } = await client
     .from("organizations_addresses")
-    .select("extra->>waba_id, extra->>access_token")
+    .select("extra->>waba_id")
     .eq("organization_id", organization_id)
     .eq("address", organization_address)
     .single();
 
   if (error || !data) {
-    log.error("Could not fetch business access token", error);
+    log.error("Could not fetch business credentials", error);
     throw new HTTPException(403, {
-      message: "Could not fetch business access token",
+      message: "Could not fetch business credentials",
       cause: error,
     });
   }
 
-  return data;
+  // The token is a Vault secret readable only by service_role. Membership and
+  // role were already proven by the route's requireRoles guard and the
+  // RLS-checked lookup above, so escalating just for the read is safe.
+  const access_token = await getWhatsAppAccessToken(
+    createUnsecureClient(),
+    organization_id,
+    organization_address,
+  );
+
+  return { waba_id: data.waba_id, access_token };
 }
 
 export async function listTemplates(

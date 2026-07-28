@@ -6,6 +6,10 @@ import type {
   WhatsAppOrganizationAddressExtra,
 } from "../_shared/supabase.ts";
 import { ContentfulStatusCode } from "jsr:@hono/hono/utils/http-status";
+import {
+  getWhatsAppAccessToken,
+  setWhatsAppAccessToken,
+} from "../_shared/whatsapp_token.ts";
 
 const API_VERSION = "v24.0";
 const APP_ID = Deno.env.get("META_APP_ID");
@@ -299,6 +303,16 @@ export async function performEmbeddedSignup(
     payload.phone_number_id,
   );
 
+  // Store the token before the address row goes live: the webhook and the
+  // dispatcher resolve it from the Vault as soon as the number is connected.
+  log.info("Storing access token in the vault", ctx);
+  await setWhatsAppAccessToken(
+    client,
+    payload.organization_id,
+    payload.phone_number_id,
+    business_access_token,
+  );
+
   log.info("Persisting phone number data", ctx);
   const { data, error } = await client
     .from("organizations_addresses")
@@ -311,7 +325,6 @@ export async function performEmbeddedSignup(
         waba_id: payload.waba_id,
         business_id: payload.business_id,
         flow_type: payload.flow_type,
-        access_token: business_access_token,
         phone_number: normalizePhoneNumber(phone_number.display_phone_number),
         verified_name: phone_number.verified_name,
         callback_url: payload.callback_url || null,
@@ -452,7 +465,13 @@ export async function deleteSignup(
     });
   }
 
-  await deregisterPhoneNumber(extra.access_token || "", phone_number_id);
+  const business_access_token = await getWhatsAppAccessToken(
+    client,
+    organization_id,
+    phone_number_id,
+  );
+
+  await deregisterPhoneNumber(business_access_token, phone_number_id);
 
   const { data } = await client
     .from("organizations_addresses")

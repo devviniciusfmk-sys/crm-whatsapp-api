@@ -10,6 +10,7 @@ import {
   type InstagramContactAddressExtra,
   type InstagramEvent,
   type InstagramMessage,
+  type InstagramOrganizationAddressExtra,
   type InstagramReferral,
   type InstagramWebhookPayload,
   type MessageInsert,
@@ -630,7 +631,11 @@ async function processMessage(request: Request): Promise<Response> {
       contact: c,
       profile: await fetchProfile(
         c.igsid,
-        c.orgAddress.extra?.access_token ?? "",
+        // `extra` is the WA|IG union and only IG still carries a token there
+        // (WhatsApp's moved to the Vault); orgAddressMap is IG-only by
+        // construction, so narrow explicitly.
+        (c.orgAddress.extra as InstagramOrganizationAddressExtra | null)
+          ?.access_token ?? "",
       ),
     })),
   );

@@ -133,6 +133,28 @@ export type Database = MergeDeep<
           };
         };
       };
+      // Declared here rather than waiting on `db_types.ts`: these are
+      // `service_role`-only Vault accessors added by
+      // 20260728055237_whatsapp_token_to_vault. Regenerating `db_types.ts`
+      // makes this block redundant but harmless (MergeDeep, same shape).
+      Functions: {
+        get_whatsapp_access_token: {
+          Args: { p_address: string; p_organization_id: string };
+          Returns: string | null;
+        };
+        set_whatsapp_access_token: {
+          Args: {
+            p_address: string;
+            p_organization_id: string;
+            p_token: string;
+          };
+          Returns: undefined;
+        };
+        delete_whatsapp_access_token: {
+          Args: { p_address: string; p_organization_id: string };
+          Returns: undefined;
+        };
+      };
     };
   }
 >;

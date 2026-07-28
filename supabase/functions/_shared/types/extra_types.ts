@@ -32,7 +32,9 @@ export type WhatsAppOrganizationAddressExtra = {
   phone_number?: string;
   verified_name?: string;
   flow_type?: "only_waba" | "new_phone_number" | "existing_phone_number";
-  access_token?: string; // Meta system-user token
+  // No `access_token` here on purpose: the Meta token is a Vault secret, read
+  // through `getWhatsAppAccessToken` (_shared/whatsapp_token.ts). `extra` is
+  // member-readable via RLS and is echoed to customer webhooks.
   callback_url?: string | null;
   verify_token?: string | null;
 };

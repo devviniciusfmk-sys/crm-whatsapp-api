@@ -39,6 +39,16 @@ on public.organizations_addresses
 for each row
 execute function public.notify_webhook();
 
+-- The Meta token for a whatsapp address lives in the Vault under a name
+-- derived from (organization_id, address); drop it with the row so deleted
+-- orgs/addresses don't leave orphaned secrets behind.
+create trigger drop_whatsapp_access_token
+after delete
+on public.organizations_addresses
+for each row
+when (old.service = 'whatsapp')
+execute function public.drop_whatsapp_access_token_on_delete();
+
 create index organizations_addresses_waba_id_idx
 on public.organizations_addresses
 using btree ((extra->>'waba_id'))
