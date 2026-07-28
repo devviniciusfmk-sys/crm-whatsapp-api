@@ -55,7 +55,10 @@ Dashboard → **Settings → API Keys → New**. Pick a role:
 - **admin** — manage templates, contacts, webhooks, send messages.
 - **member** — read + send.
 
-Copy the key. It's scoped to this one organization and carries that role.
+Copy the key **now** — only its hash is stored, so it is shown once and cannot
+be recovered later. It's scoped to this one organization and carries that role.
+(Under the hood the dashboard calls the `create_api_key` RPC; see
+[AUTH.md](AUTH.md#creating-a-key) to do it from the REST API.)
 
 ## 3. Make REST calls
 

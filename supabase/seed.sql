@@ -144,8 +144,10 @@ insert into public.agents (name, user_id, organization_id, ai, extra) values
 ;
 
 -- API Keys (for Mountain Peaks)
-insert into public.api_keys (organization_id, key, role, name) values
-  ('3a182d8d-d6d8-44bd-b021-029915476b8c', '1234567890', 'member', 'Default')
+-- Only the hash is stored; the plaintext key stays '1234567890' locally so the
+-- examples in AUTH.md keep working.
+insert into public.api_keys (organization_id, key_hash, role, name) values
+  ('3a182d8d-d6d8-44bd-b021-029915476b8c', public.hash_api_key('1234567890'), 'member', 'Default')
 ;
 
 -- Onboarding Tokens (for Mountain Peaks - created by Goat)

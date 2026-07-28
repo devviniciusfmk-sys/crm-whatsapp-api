@@ -1,3 +1,23 @@
+-- Canonical hash for API keys: sha256, hex-encoded. Single definition shared by
+-- get_authorized_orgs, create_api_key and the api_keys RLS policy so the three
+-- cannot drift apart. Built-ins only (sha256/convert_to/encode live in
+-- pg_catalog): no pgcrypto dependency and nothing to schema-qualify under
+-- `search_path = ''`.
+-- strict: a missing `api-key` header hashes to null, which matches no row.
+-- Keeps the default `public` grant, unlike the security-definer functions in
+-- 02-05_vault_secrets.sql: the api_keys SELECT policy calls it, and policy
+-- expressions run with the invoking role's privileges. It leaks nothing —
+-- sha256 of a value the caller already holds.
+create function public.hash_api_key(p_key text) returns text
+language sql
+immutable
+strict
+parallel safe
+set search_path to ''
+as $$
+  select encode(sha256(convert_to(p_key, 'UTF8')), 'hex');
+$$;
+
 create function public.get_authorized_orgs(role public.role default 'member') returns setof uuid
 language plpgsql
 security definer
@@ -47,7 +67,7 @@ begin
   if api_key is not null then
     select a.organization_id into org_id
     from public.api_keys a
-    where a.key = api_key
+    where a.key_hash = public.hash_api_key(api_key)
     and (
       case (a.role::text)
         when 'owner' then 3

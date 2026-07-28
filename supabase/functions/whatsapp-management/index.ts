@@ -3,6 +3,7 @@ import { Context, Hono } from "@hono/hono";
 import { cors } from "jsr:@hono/hono/cors";
 import { HTTPException } from "jsr:@hono/hono/http-exception";
 import * as log from "../_shared/logger.ts";
+import { hashApiKey } from "../_shared/api_keys.ts";
 import { Json } from "../_shared/db_types.ts";
 import {
   ApiKeyRow,
@@ -109,7 +110,7 @@ app.use("*", async (c, next) => {
   const { data: apiKey, error: apiKeyError } = await client
     .from("api_keys")
     .select()
-    .eq("key", token)
+    .eq("key_hash", await hashApiKey(token))
     .maybeSingle();
 
   if (apiKeyError || !apiKey) {

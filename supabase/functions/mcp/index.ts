@@ -15,6 +15,7 @@ import {
   createClient,
   type Database,
 } from "../_shared/supabase.ts";
+import { hashApiKey } from "../_shared/api_keys.ts";
 import { authBaseUrl, functionsBaseUrl } from "../_shared/urls.ts";
 import * as log from "../_shared/logger.ts";
 import * as tools from "./tools.ts";
@@ -78,7 +79,7 @@ app.use("*", async (c, next) => {
       const { data: key, error: apiKeyError } = await supabase
         .from("api_keys")
         .select("organization_id")
-        .eq("key", apiKey)
+        .eq("key_hash", await hashApiKey(apiKey))
         .maybeSingle();
 
       if (apiKeyError || !key) {

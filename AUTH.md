@@ -4,6 +4,10 @@ OpenBSP uses API keys stored in the `api_keys` table. Authentication works
 differently depending on whether you're calling the **REST API** (PostgREST) or
 an **Edge Function**.
 
+> Keys are stored **hashed** (`api_keys.key_hash`, sha256 hex). The plaintext is
+> shown once, when the key is created, and cannot be recovered afterwards — lose
+> it and you issue a new one. See [Creating a key](#creating-a-key).
+
 ## Headers Overview
 
 | Header          | What it carries                      | Who consumes it                                                |
@@ -35,11 +39,30 @@ The function `get_authorized_orgs()` in
 
 1. Checks `auth.uid()` — if a user JWT is present, resolves org via the `agents`
    table
-2. Falls back to `api-key` header — looks up the key in `api_keys` and returns
-   the org
+2. Falls back to `api-key` header — hashes it with `hash_api_key()` and looks
+   the hash up in `api_keys.key_hash`, returning the org
 
 For API-key-only requests (no `Authorization` header), `auth.uid()` is null, so
 it falls through to step 2.
+
+## Creating a key
+
+`api_keys` has no INSERT policy: keys are minted by the `create_api_key` RPC,
+which generates the secret server-side, stores only its hash, and returns the
+plaintext in the response — the one and only time it is readable.
+
+```bash
+curl -X POST '<SUPABASE_URL>/rest/v1/rpc/create_api_key' \
+  -H "apikey: <SUPABASE_ANON_KEY_OR_PUBLISHABLE_KEY>" \
+  -H "api-key: <OWNER_OPENBSP_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"p_organization_id": "<ORG_ID>", "p_name": "My integration", "p_role": "member"}'
+
+# [{ "api_key_id": "…", "api_key": "obsp_…" }]   ← copy api_key now
+```
+
+Requires an **owner** key (or an owner's JWT); anything else gets a 42501.
+Revoking is still a plain `DELETE /rest/v1/api_keys?id=eq.<id>`.
 
 ## Edge Functions
 
@@ -58,7 +81,7 @@ No `apikey` header needed. The middleware in each function (e.g.
 [`mcp/index.ts`](supabase/functions/mcp/index.ts)):
 
 1. Extracts the Bearer token from `Authorization`
-2. Looks it up in `api_keys`
+2. Hashes it (`_shared/api_keys.ts`) and looks the hash up in `api_keys`
 3. Creates a Supabase client via `createApiClient()` which internally uses
    `SUPABASE_ANON_KEY` for PostgREST and sets the OpenBSP token as the `api-key`
    custom header for RLS
@@ -111,8 +134,8 @@ REST API                              Edge Function
                      if Authorization    passes through)             │
                      is present)                                     ▼
                         │                                     middleware extracts
-                        ▼                                     Bearer token, looks
-                    sets Postgres role                        up in api_keys
+                        ▼                                     Bearer token, hashes
+                    sets Postgres role                        it, looks up key_hash
                         │
                         ▼
                     RLS policies call
@@ -121,7 +144,8 @@ REST API                              Edge Function
                     reads api-key header
                     from request.headers
                         │
-                    looks up in api_keys
+                    hashes it, looks up
+                    api_keys.key_hash
 ```
 
 ## Test Results

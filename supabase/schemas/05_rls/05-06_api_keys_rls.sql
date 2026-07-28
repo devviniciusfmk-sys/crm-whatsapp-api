@@ -10,21 +10,17 @@ on public.api_keys
 for select
 to authenticated, anon
 using (
-  key = current_setting('request.headers', true)::json->>'api-key'
+  key_hash = public.hash_api_key(
+    current_setting('request.headers', true)::json->>'api-key'
+  )
   or organization_id in (
     select public.get_authorized_orgs('owner')
   )
 );
 
-create policy "owners can create their orgs api keys"
-on public.api_keys
-for insert
-to authenticated, anon
-with check (
-  organization_id in (
-    select public.get_authorized_orgs('owner')
-  )
-);
+-- No INSERT policy on purpose: keys are minted by public.create_api_key(), the
+-- only place that generates the secret and stores its hash. A direct INSERT
+-- would let the client choose (or reuse) the hashed value.
 
 create policy "owners can delete their orgs api keys"
 on public.api_keys

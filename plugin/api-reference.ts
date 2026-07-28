@@ -198,7 +198,7 @@ Types: text, file, data. Kinds vary by type (text: text/reaction/caption; file: 
 | id | uuid | PK, default: gen_random_uuid() |
 | organization_id | uuid | FK → organizations.id |
 | name | text | required |
-| key | text | required |
+| key_hash | text | required, sha256 of the key — the key itself is never stored |
 | role | role | default: member |
 | created_at | timestamptz | default: now() |
 | updated_at | timestamptz | default: now() |
@@ -210,6 +210,7 @@ Types: text, file, data. Kinds vary by type (text: text/reaction/caption; file: 
 | Path | Description |
 |------|-------------|
 | /rest/v1/rpc/get_authorized_orgs | Get organizations the current user has access to |
+| /rest/v1/rpc/create_api_key | Mint an API key (owner only) — returns the plaintext key once |
 
 ---
 
