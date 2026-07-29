@@ -53,6 +53,7 @@ export type IncomingStatus = {
   typing?: string;
   edited?: string; // sender edited the message (Instagram, WhatsApp coexistence)
   deleted?: string; // sender deleted/revoked the message (Instagram, WhatsApp coexistence)
+  hidden?: string; // hidden from the CRM by an agent (public.set_message_hidden); the customer's copy is untouched
   preprocessing?: string;
   preprocessed?: string;
 };
@@ -66,6 +67,7 @@ export type OutgoingStatus = {
   read?: string;
   edited?: string; // sender edited the message (Instagram, WhatsApp coexistence)
   deleted?: string; // sender deleted/revoked the message (Instagram, WhatsApp coexistence)
+  hidden?: string; // hidden from the CRM by an agent (public.set_message_hidden); the customer's copy is untouched
   failed?: string;
   preprocessing?: string;
   preprocessed?: string;
