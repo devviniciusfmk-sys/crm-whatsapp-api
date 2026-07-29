@@ -54,3 +54,34 @@ Monetization (medium-term)
 - [x] Sanitize tool names Error: 400 Invalid 'tools[0].function.name': string
       does not match pattern. Expected a string that matches the pattern
       '^[a-zA-Z0-9_-]+$'.
+
+## Message revoke on whatsapp-web (whatsmeow bridge)
+
+Deleting a message for the customer is impossible on the Cloud API — Meta
+exposes no recall endpoint, and `EditMessage`/`RevokeMessage` in
+`_shared/types/whatsapp_webhook_message_types.ts` are inbound Coexistence
+events only. The `whatsapp-web` service is the one channel where it is
+actually reachable, because whatsmeow speaks the protocol directly and already
+implements `RevokeMessage`.
+
+What it would take, none of which lives in this repo's edge functions:
+
+- [ ] **Bridge endpoint** (`open-bsp-whatsmeow`) —
+      `POST /sessions/:address/messages/:external_id/revoke`, server-to-server
+      with the shared bridge token, calling whatsmeow's `BuildRevoke` +
+      `SendMessage`. Needs the chat JID and the original message id, both of
+      which the `messages` row already carries (`contact_address` /
+      `group_address` and `external_id`).
+- [ ] **Proxy route** in `whatsapp-web-management` — the UI never talks to the
+      bridge directly, so this follows the existing `/sessions/*` pattern:
+      validate the user JWT, check the org owns the message, forward.
+- [ ] **Status merge** — on success, merge `{"deleted": now()}` onto the row,
+      the same shape the Coexistence webhook already writes. The UI renders
+      that tombstone today, so nothing is needed on that side.
+- [ ] **Channel-aware UI** — the action can only be offered when
+      `message.service === 'whatsapp-web'`; on `whatsapp` it must stay hidden
+      rather than fail, since there is nothing to fall back to. The CRM-only
+      hide (`public.set_message_hidden`) is what the other channels get.
+
+Note whatsmeow also supports editing a sent message, which has the same shape
+of problem and the same answer: bridge-only, never on the Cloud API.
