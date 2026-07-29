@@ -59,10 +59,10 @@ Monetization (medium-term)
 
 Deleting a message for the customer is impossible on the Cloud API — Meta
 exposes no recall endpoint, and `EditMessage`/`RevokeMessage` in
-`_shared/types/whatsapp_webhook_message_types.ts` are inbound Coexistence
-events only. The `whatsapp-web` service is the one channel where it is
-actually reachable, because whatsmeow speaks the protocol directly and already
-implements `RevokeMessage`.
+`_shared/types/whatsapp_webhook_message_types.ts` are inbound Coexistence events
+only. The `whatsapp-web` service is the one channel where it is actually
+reachable, because whatsmeow speaks the protocol directly and already implements
+`RevokeMessage`.
 
 What it would take, none of which lives in this repo's edge functions:
 
@@ -76,12 +76,12 @@ What it would take, none of which lives in this repo's edge functions:
       bridge directly, so this follows the existing `/sessions/*` pattern:
       validate the user JWT, check the org owns the message, forward.
 - [ ] **Status merge** — on success, merge `{"deleted": now()}` onto the row,
-      the same shape the Coexistence webhook already writes. The UI renders
-      that tombstone today, so nothing is needed on that side.
+      the same shape the Coexistence webhook already writes. The UI renders that
+      tombstone today, so nothing is needed on that side.
 - [ ] **Channel-aware UI** — the action can only be offered when
       `message.service === 'whatsapp-web'`; on `whatsapp` it must stay hidden
       rather than fail, since there is nothing to fall back to. The CRM-only
       hide (`public.set_message_hidden`) is what the other channels get.
 
-Note whatsmeow also supports editing a sent message, which has the same shape
-of problem and the same answer: bridge-only, never on the Cloud API.
+Note whatsmeow also supports editing a sent message, which has the same shape of
+problem and the same answer: bridge-only, never on the Cloud API.
