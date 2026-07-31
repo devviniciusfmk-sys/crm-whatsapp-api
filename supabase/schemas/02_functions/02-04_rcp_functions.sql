@@ -92,3 +92,66 @@ begin
   end if;
 end;
 $$;
+
+-- Blocks a contact address, or lifts the block.
+--
+-- Goes through a function because public.contacts_addresses deliberately does
+-- not let clients touch this column. The update policy defers to
+-- public.contact_address_update_rules, which requires the incoming `status` and
+-- `extra` to be identical to the stored ones — in effect freezing both, so that
+-- the only thing a member can change on an address is which contact it belongs
+-- to. That restriction is worth keeping: `extra.synced` mirrors state owned by
+-- Meta, and a client able to rewrite it would desynchronise the address book.
+--
+-- Blocking is the one exception the CRM needs, and it is narrow: one column,
+-- two possible values, on a row the caller already has read access to. A
+-- security definer function grants exactly that and nothing else, the same
+-- shape public.set_message_hidden uses for the same reason.
+--
+-- It lives on the address rather than on the contact because an address always
+-- exists — a stranger who writes for the first time has a row here and often no
+-- contact record at all, and that stranger is precisely who gets blocked.
+--
+-- agent-client reads this before answering. Nothing is sent to WhatsApp: the
+-- Cloud API gives a business no way to stop someone from writing, so the
+-- messages keep arriving and keep being stored. What the block buys is silence
+-- — no automated reply, and the thread out of the conversation list.
+--
+-- - 2026/07/31
+create function public.set_contact_address_blocked(
+  p_address text,
+  p_service public.service,
+  p_blocked boolean default true
+)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $$
+begin
+  update public.contacts_addresses
+  set status = case when p_blocked then 'blocked' else 'active' end
+  where address = p_address
+    and service = p_service
+    and organization_id in (select public.get_authorized_orgs('member'));
+
+  -- A missing row and an unauthorised one answer the same way on purpose:
+  -- confirming that an address exists inside an organization the caller cannot
+  -- read would leak what the select policy is there to hide.
+  if not found then
+    raise exception 'contact address not found or not authorized'
+      using errcode = 'insufficient_privilege';
+  end if;
+end;
+$$;
+
+-- `create function` grants execute to public by default. The messages policies
+-- are granted `to authenticated, anon` — anon being how an API-key caller
+-- arrives — and this follows them.
+revoke execute on function
+  public.set_contact_address_blocked(text, public.service, boolean)
+from public;
+
+grant execute on function
+  public.set_contact_address_blocked(text, public.service, boolean)
+to anon, authenticated, service_role;
