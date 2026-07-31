@@ -263,10 +263,33 @@ function outgoingMessageToEndpointMessage({
       const mediaRef = isExternalUri(content.file.uri)
         ? { link: content.file.uri }
         : { id: content.file.uri };
+
+      /*
+       * A voice note and an attached audio file are the same message type with
+       * one flag between them. Without `voice: true` the recipient gets a
+       * music-icon file: no waveform, no auto-download, no profile picture and
+       * no automatic transcription. With it, WhatsApp renders the bubble people
+       * expect from someone who just spoke into their phone.
+       *
+       * Meta accepts the flag only for .ogg carrying Opus, so the container is
+       * the intent — no separate field is needed, and none could be trusted
+       * anyway: a flag saying "voice" over an mp3 would be a promise the format
+       * cannot keep. Recording produces ogg/opus; files people attach from disk
+       * essentially never do.
+       *
+       * Size matters too: past 512 KB WhatsApp shows a download icon instead of
+       * play, which for a voice note reads as broken.
+       */
+      const mimeType = content.file.mime_type.split(";")[0].trim();
+      const codecs = content.file.mime_type.toLowerCase();
+      const isVoiceNote =
+        (mimeType === "audio/ogg" || mimeType === "audio/opus") &&
+        (!codecs.includes("codecs=") || codecs.includes("opus"));
+
       return {
         ...baseMessage,
         type: "audio",
-        audio: mediaRef,
+        audio: isVoiceNote ? { ...mediaRef, voice: true } : mediaRef,
       };
     }
     case "image": {
