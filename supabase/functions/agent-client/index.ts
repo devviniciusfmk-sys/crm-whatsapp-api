@@ -190,6 +190,28 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // CHECK IF THE CONTACT IS BLOCKED
+
+  /*
+   * Blocking lives on the contact address, not on the conversation:
+   * `conversations` has no unique constraint tying one row to one contact, so a
+   * flag stored there would not survive a second thread from the same number.
+   *
+   * Messages keep arriving and keep being stored — the CRM hides them, it does
+   * not refuse them. The WhatsApp Cloud API gives a business no way to stop
+   * someone from writing, and dropping them on the way in would leave no record
+   * if the person later claims they made contact. What blocking buys is
+   * silence: the agent stops answering in your name inside a conversation you
+   * can no longer see. - 2026/07/31
+   */
+  if (contact_address?.status === "blocked") {
+    log.info(
+      `Contact ${contact_address.address} is blocked. Skipping response.`,
+    );
+
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   // CHECK IF CONVERSATION IS PAUSED
 
   if (
