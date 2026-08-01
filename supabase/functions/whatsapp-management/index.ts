@@ -21,6 +21,7 @@ import {
 } from "./templates.ts";
 import {
   type BusinessProfile,
+  fetchHealth,
   fetchProfile,
   updateProfile,
 } from "./profile.ts";
@@ -352,6 +353,29 @@ app.post(
         organization_id,
         organization_address,
         profile,
+      ),
+    );
+  },
+);
+
+// Number health route
+//
+// Readable by members: the quality rating is the number's own operating
+// condition, and whoever answers conversations is who notices it turning
+// yellow. Nothing here can be changed from this product anyway. - 2026/08/01
+
+app.put(
+  "/whatsapp-management/health",
+  requireRoles(["member", "admin", "owner"]),
+  async (c) => {
+    const { organization_id, organization_address } = await c.req
+      .json<ProfilePayload>();
+
+    return c.json(
+      await fetchHealth(
+        c.get("supabase"),
+        organization_id,
+        organization_address,
       ),
     );
   },

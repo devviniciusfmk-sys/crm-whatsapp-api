@@ -152,6 +152,65 @@ export async function fetchProfile(
   return profile ?? {};
 }
 
+/**
+ * The number's own health, as Meta reports it.
+ *
+ * Two of these decide whether the business keeps working, and neither is
+ * visible anywhere in the product today:
+ *
+ * `quality_rating` goes green → yellow → red as customers block or report the
+ * number, and red ends in a ban. Meta announces it by email, which is the
+ * channel nobody reads.
+ *
+ * `messaging_limit_tier` caps how many *new* conversations can be started in a
+ * day. A business that grows into its ceiling looks, from the inside, like a
+ * business whose messages stopped arriving.
+ *
+ * The other fields are cheap to carry and answer the questions people ask
+ * when something looks wrong. - 2026/08/01
+ */
+export type NumberHealth = {
+  verified_name?: string;
+  display_phone_number?: string;
+  quality_rating?: string;
+  messaging_limit_tier?: string;
+  code_verification_status?: string;
+  platform_type?: string;
+  status?: string;
+  throughput?: { level?: string };
+};
+
+const HEALTH_FIELDS = [
+  "verified_name",
+  "display_phone_number",
+  "quality_rating",
+  "messaging_limit_tier",
+  "code_verification_status",
+  "platform_type",
+  "status",
+  "throughput",
+] as const;
+
+export async function fetchHealth(
+  client: SupabaseClient<Database>,
+  organization_id: string,
+  organization_address: string,
+): Promise<NumberHealth> {
+  const access_token = await getCredentials(
+    client,
+    organization_id,
+    organization_address,
+  );
+
+  // Straight on the phone number node — the address *is* its id.
+  return await graph(
+    `https://graph.facebook.com/${API_VERSION}/${organization_address}` +
+      `?fields=${HEALTH_FIELDS.join(",")}`,
+    { headers: { Authorization: `Bearer ${access_token}` } },
+    "Fetching number health",
+  ) as NumberHealth;
+}
+
 export async function updateProfile(
   client: SupabaseClient<Database>,
   organization_id: string,
