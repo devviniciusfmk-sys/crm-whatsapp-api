@@ -56,22 +56,49 @@ export async function listTemplates(
     organization_address,
   );
 
-  const response = await fetch(
-    `https://graph.facebook.com/${API_VERSION}/${waba_id}/message_templates`,
-    {
+  // Two defects fixed together, both invisible until now.
+  //
+  // This returned Meta's envelope — `{ data: [...], paging: {...} }` — while
+  // its signature promised `TemplateData[]`. The route re-wrapped it and the UI
+  // read `data.data`, so the screen worked and the lie went unnoticed. It
+  // surfaced when something called this function directly: the draft generator
+  // does `.filter()` on the result, which throws every time, inside a catch
+  // that returns an empty list. Learning from approved templates never ran.
+  //
+  // And it read one page. Meta returns 25 by default with a cursor for the
+  // rest; an account with more simply lost them, with nothing to notice.
+  // - 2026/08/01
+  const templates: TemplateData[] = [];
+
+  let url =
+    `https://graph.facebook.com/${API_VERSION}/${waba_id}/message_templates?limit=100`;
+
+  // Bounded so a paging surprise upstream stalls one request instead of
+  // looping forever. A hundred pages is far past any real account.
+  for (let page = 0; page < 100 && url; page++) {
+    const response = await fetch(url, {
       method: "GET",
       headers: { Authorization: `Bearer ${access_token}` },
-    },
-  );
-
-  if (!response.ok) {
-    throw new HTTPException(response.status as ContentfulStatusCode, {
-      message: "Could not fetch templates",
-      cause: await response.json().catch(() => ({})),
     });
+
+    if (!response.ok) {
+      throw new HTTPException(response.status as ContentfulStatusCode, {
+        message: "Could not fetch templates",
+        cause: await response.json().catch(() => ({})),
+      });
+    }
+
+    const body = await response.json() as {
+      data?: TemplateData[];
+      paging?: { next?: string };
+    };
+
+    templates.push(...(body.data ?? []));
+
+    url = body.paging?.next ?? "";
   }
 
-  return await response.json();
+  return templates;
 }
 
 export async function fetchTemplate(
