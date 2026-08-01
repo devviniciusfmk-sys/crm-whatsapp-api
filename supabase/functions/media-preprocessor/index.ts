@@ -167,7 +167,12 @@ Deno.serve(async (req) => {
     );
   }
 
-  const model = config.model || "gemini-2.5-flash";
+  // An alias, not a pinned version. `gemini-2.5-flash` sat here as the default
+  // and Google retired it — it answers 404 "no longer available to new users" —
+  // so every organization that never picked a model had media preprocessing
+  // silently dead. A pinned name is precisely what rotted; the alias is
+  // Google's own promise to keep pointing at a current model. - 2026/08/01
+  const model = config.model || "gemini-flash-latest";
 
   const language = config.language || "English";
 
