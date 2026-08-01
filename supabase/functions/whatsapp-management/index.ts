@@ -24,6 +24,7 @@ import {
   fetchProfile,
   updateProfile,
 } from "./profile.ts";
+import { draftTemplate, transcribe } from "./draft.ts";
 import {
   deleteSignup,
   performEmbeddedSignup,
@@ -41,6 +42,14 @@ type ProfilePayload = {
   organization_id: string;
   organization_address: string;
   profile?: BusinessProfile;
+};
+
+type DraftPayload = {
+  organization_id: string;
+  description?: string;
+  language?: string;
+  examples?: string[];
+  audio?: { data: string; mime_type: string };
 };
 
 type AppEnv = {
@@ -344,6 +353,48 @@ app.post(
         profile,
       ),
     );
+  },
+);
+
+// Template draft route
+//
+// Describing the message and letting the model write it, instead of a fixed
+// gallery. Audio arrives inline because the clips are a sentence long; a
+// storage round trip would cost more than it saves. - 2026/08/01
+
+app.post(
+  "/whatsapp-management/draft",
+  requireRoles(["admin", "owner"]),
+  async (c) => {
+    const { organization_id, description, language, examples, audio } = await c
+      .req.json<DraftPayload>();
+
+    const client = c.get("supabase");
+
+    const spoken = audio
+      ? await transcribe(client, organization_id, audio)
+      : undefined;
+
+    const text = [spoken, description].filter(Boolean).join("\n").trim();
+
+    if (!text) {
+      throw new HTTPException(400, {
+        message: "Nothing to work from: send a description or some audio.",
+      });
+    }
+
+    const draft = await draftTemplate(
+      client,
+      organization_id,
+      text,
+      language || "Portuguese (Brazil)",
+      examples || [],
+    );
+
+    // The transcript goes back so the screen can show what was heard — a
+    // misheard word is far easier to spot than a template that quietly came
+    // out about the wrong thing.
+    return c.json({ draft, transcript: spoken });
   },
 );
 
