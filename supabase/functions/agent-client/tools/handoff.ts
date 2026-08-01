@@ -25,7 +25,7 @@ import type { RequestContext } from "../protocols/base.ts";
 
 const TransferToHumanAgentInputSchema = z.object({
   reason: z.string().describe(
-    "Why this conversation needs a person, addressed to the colleague who will pick it up — not to the customer. State what was asked and what you could not resolve. Example: 'Asks for a refund on order 4471; I have no access to orders.'",
+    "Why this conversation needs a person, addressed to the colleague who will pick it up — not to the customer. State what was asked and what you could not resolve. WRITE IT IN THE LANGUAGE OF THE CONVERSATION, never in English unless the conversation is in English: it is read by the business's own staff, in the chat list, not by a developer.",
   ),
 });
 
@@ -81,7 +81,7 @@ export const TransferToHumanAgentTool: ToolDefinition<
   type: "function",
   name: "transfer_to_human_agent",
   description:
-    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, or an explicit request to speak to a person. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. Prefer transferring over guessing — an invented answer costs more than a wait.",
+    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, or an explicit request to speak to a person. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. ALWAYS WRITE TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING — this instruction being in English says nothing about the language of your reply. Prefer transferring over guessing: an invented answer costs more than a wait.",
   inputSchema: z.toJSONSchema(TransferToHumanAgentInputSchema),
   outputSchema: z.toJSONSchema(TransferToHumanAgentOutputSchema),
   implementation: transferToHumanAgentImplementation,
