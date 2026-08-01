@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../_shared/supabase.ts";
 import * as log from "../_shared/logger.ts";
+import { listTemplates } from "./templates.ts";
 import { HTTPException } from "jsr:@hono/hono/http-exception";
 
 /**
@@ -31,6 +32,30 @@ export type TemplateDraft = {
 };
 
 const DEFAULT_MODEL = "gemini-flash-latest";
+
+/**
+ * Meta's code to the language name the UI sends, so an approved template can
+ * be matched against the language being written.
+ *
+ * The names have to be the ones `utils/whatsappLanguages.ts` produces on the
+ * other side; they are the same list, and both are written in Spanish because
+ * that is the key language the UI translates from.
+ */
+const LANGUAGE_NAMES: Record<string, string> = {
+  pt_BR: "Portugués (Brasil)",
+  pt_PT: "Portugués (Portugal)",
+  es: "Español",
+  es_AR: "Español (Argentina)",
+  es_ES: "Español (España)",
+  es_MX: "Español (México)",
+  en: "Inglés",
+  en_US: "Inglés (EE. UU.)",
+  en_GB: "Inglés (Reino Unido)",
+  fr: "Francés",
+  sw: "Suajili",
+};
+
+const whatsappLanguageName = (code: string) => LANGUAGE_NAMES[code] ?? code;
 
 async function getAI(
   client: SupabaseClient<Database>,
@@ -158,16 +183,86 @@ What the business wants to send:
 ${description}`;
 }
 
+/**
+ * Bodies of this organization's own approved templates, newest first.
+ *
+ * The gallery of approved templates already exists and is called Meta: it
+ * holds every template and says which passed review. Storing a second copy
+ * would add a table, a sync and a way to go stale, for information we can ask
+ * for.
+ *
+ * Deliberately this organization's own, never anybody else's. Template bodies
+ * carry a shop's name, its offers and its voice — commercial information, and
+ * personal data once a customer's details are in the examples. Teaching one
+ * customer's generator with another customer's messages would be a leak
+ * dressed up as a feature. Learning from your own is free of that, and it is
+ * where most of the value is anyway: it learns how *you* write.
+ *
+ * Same language only. An approved English template teaches nothing useful to a
+ * Portuguese one except the wrong words. - 2026/08/01
+ */
+async function approvedExamples(
+  client: SupabaseClient<Database>,
+  organization_id: string,
+  organization_address: string | undefined,
+  language: string,
+): Promise<string[]> {
+  if (!organization_address) return [];
+
+  try {
+    const templates = await listTemplates(
+      client,
+      organization_id,
+      organization_address,
+    );
+
+    return templates
+      .filter((template) =>
+        template.status === "APPROVED" &&
+        whatsappLanguageName(template.language) === language
+      )
+      .map((template) =>
+        template.components.find((component) => component.type === "BODY")
+      )
+      .map((body) => (body && "text" in body ? body.text : ""))
+      .filter(Boolean)
+      // Enough to set a voice; more would crowd out the instructions and cost
+      // tokens on every generation.
+      .slice(0, 5);
+  } catch (error) {
+    // Never fatal. Losing the examples costs tone, not correctness, and a
+    // Meta outage should not stop somebody writing a template.
+    log.error("Could not read approved templates for examples", error);
+
+    return [];
+  }
+}
+
 export async function draftTemplate(
   client: SupabaseClient<Database>,
   organization_id: string,
   description: string,
   language: string,
   examples: string[],
+  organization_address?: string,
 ): Promise<TemplateDraft> {
   const { genai, model } = await getAI(client, organization_id);
 
-  let prompt = buildPrompt(description, language, examples);
+  // What this business already got approved outranks the built-in samples: it
+  // is proof of what passes review *and* of how they talk. The samples stay as
+  // the fallback for an account with none yet.
+  const approved = await approvedExamples(
+    client,
+    organization_id,
+    organization_address,
+    language,
+  );
+
+  let prompt = buildPrompt(
+    description,
+    language,
+    approved.length ? approved : examples,
+  );
 
   // One retry, and the retry is told exactly what was wrong. A second failure
   // is reported rather than papered over: a draft that breaks the rules would

@@ -46,6 +46,7 @@ type ProfilePayload = {
 
 type DraftPayload = {
   organization_id: string;
+  organization_address?: string;
   description?: string;
   language?: string;
   examples?: string[];
@@ -366,8 +367,14 @@ app.post(
   "/whatsapp-management/draft",
   requireRoles(["admin", "owner"]),
   async (c) => {
-    const { organization_id, description, language, examples, audio } = await c
-      .req.json<DraftPayload>();
+    const {
+      organization_id,
+      organization_address,
+      description,
+      language,
+      examples,
+      audio,
+    } = await c.req.json<DraftPayload>();
 
     const client = c.get("supabase");
 
@@ -387,8 +394,12 @@ app.post(
       client,
       organization_id,
       text,
-      language || "Portuguese (Brazil)",
+      language || "Portugués (Brasil)",
       examples || [],
+      // Lets the generator learn from this organization's own approved
+      // templates. Without an address there are none to read, and it falls
+      // back to the built-in samples.
+      organization_address,
     );
 
     // The transcript goes back so the screen can show what was heard — a
