@@ -20,8 +20,33 @@ import { ContentfulStatusCode } from "jsr:@hono/hono/utils/http-status";
 
 const API_VERSION = "v24.0";
 
-/** The fields Meta returns; anything unset simply does not come back. */
-const FIELDS = [
+/**
+ * Everything Meta will return. Anything unset simply does not come back, so an
+ * absent key means "not configured" rather than "not asked for".
+ *
+ * `profile_picture_url` was missing here, which made the screen look like the
+ * profile had no photo when it might well have one: a number connected from
+ * the WhatsApp Business app arrives with whatever was already set on the
+ * phone, and this was not asking. Read-only — see WRITE_FIELDS.
+ */
+const READ_FIELDS = [
+  "about",
+  "address",
+  "description",
+  "email",
+  "websites",
+  "vertical",
+  "profile_picture_url",
+] as const;
+
+/**
+ * What a POST may carry. The photo is deliberately absent: Meta does not take
+ * a URL, it takes a `profile_picture_handle` produced by its resumable upload
+ * against the app id — a separate two-step flow. Sending the URL back would
+ * fail, and sending nothing leaves the existing photo alone, which is the
+ * behaviour we want until that flow exists. - 2026/08/01
+ */
+const WRITE_FIELDS = [
   "about",
   "address",
   "description",
@@ -38,6 +63,8 @@ export type BusinessProfile = {
   websites?: string[];
   /** Meta's business category, from a fixed list. */
   vertical?: string;
+  /** Read-only here: setting it needs Meta's upload flow. */
+  profile_picture_url?: string;
 };
 
 /**
@@ -114,7 +141,7 @@ export async function fetchProfile(
 
   const body = await graph(
     `https://graph.facebook.com/${API_VERSION}/${organization_address}` +
-      `/whatsapp_business_profile?fields=${FIELDS.join(",")}`,
+      `/whatsapp_business_profile?fields=${READ_FIELDS.join(",")}`,
     { headers: { Authorization: `Bearer ${access_token}` } },
     "Fetching business profile",
   );
@@ -142,7 +169,7 @@ export async function updateProfile(
   // whatever the owner set in Meta's dashboard before this screen existed.
   const payload: Record<string, unknown> = { messaging_product: "whatsapp" };
 
-  for (const field of FIELDS) {
+  for (const field of WRITE_FIELDS) {
     if (profile[field] !== undefined) payload[field] = profile[field];
   }
 
