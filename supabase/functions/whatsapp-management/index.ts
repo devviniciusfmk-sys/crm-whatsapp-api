@@ -20,6 +20,11 @@ import {
   listTemplates,
 } from "./templates.ts";
 import {
+  type BusinessProfile,
+  fetchProfile,
+  updateProfile,
+} from "./profile.ts";
+import {
   deleteSignup,
   performEmbeddedSignup,
   SignupPayload,
@@ -30,6 +35,12 @@ type TemplatePayload = {
   organization_id: string;
   organization_address: string;
   template?: TemplateData;
+};
+
+type ProfilePayload = {
+  organization_id: string;
+  organization_address: string;
+  profile?: BusinessProfile;
 };
 
 type AppEnv = {
@@ -288,6 +299,51 @@ app.delete(
     );
 
     return c.json(response);
+  },
+);
+
+// Business profile routes
+//
+// What the customer sees when they open the conversation. Reading is open to
+// members — it is public information anyway, visible to anyone who writes to
+// the number — while writing follows templates and asks for admin or owner.
+
+app.put(
+  "/whatsapp-management/profile",
+  requireRoles(["member", "admin", "owner"]),
+  async (c) => {
+    const { organization_id, organization_address } = await c.req
+      .json<ProfilePayload>();
+
+    return c.json(
+      await fetchProfile(
+        c.get("supabase"),
+        organization_id,
+        organization_address,
+      ),
+    );
+  },
+);
+
+app.post(
+  "/whatsapp-management/profile",
+  requireRoles(["admin", "owner"]),
+  async (c) => {
+    const { organization_id, organization_address, profile } = await c.req
+      .json<ProfilePayload>();
+
+    if (!profile) {
+      throw new HTTPException(400, { message: "Missing profile" });
+    }
+
+    return c.json(
+      await updateProfile(
+        c.get("supabase"),
+        organization_id,
+        organization_address,
+        profile,
+      ),
+    );
   },
 );
 
