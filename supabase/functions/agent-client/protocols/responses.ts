@@ -18,10 +18,8 @@ import type { AgentTool } from "../index.ts";
 import * as log from "../../_shared/logger.ts";
 import { getFileMetadata } from "../../_shared/media.ts";
 import { serializePartAsXML } from "./serializer.ts";
-import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
+import { buildRuntimeContext } from "./context.ts";
 import { inspect } from "node:util";
-dayjs.extend(utc);
 
 // Handler for the Open Responses protocol (https://openresponses.org), the
 // standardized, multi-vendor successor to OpenAI's Responses API. Mirrors
@@ -298,15 +296,7 @@ export class ResponsesHandler
 
     // Runtime context, delivered via the `instructions` field (the Responses
     // analog of Chat Completions' leading system message).
-    const contextInfo = {
-      now: dayjs.utc().format("dddd, YYYY-MM-DD HH:mm [UTC]"),
-      user: {
-        name: this.context.contact?.name,
-        phone: this.context.conversation.contact_address
-          ? "+" + this.context.conversation.contact_address
-          : undefined,
-      },
-    };
+    const contextInfo = buildRuntimeContext(this.context);
 
     let instructions = inspect(contextInfo, {
       compact: false,

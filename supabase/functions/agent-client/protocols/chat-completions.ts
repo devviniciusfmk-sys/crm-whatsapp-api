@@ -27,10 +27,8 @@ import type { AgentTool } from "../index.ts";
 import * as log from "../../_shared/logger.ts";
 import { getFileMetadata } from "../../_shared/media.ts";
 import { serializePartAsXML } from "./serializer.ts";
-import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
+import { buildRuntimeContext } from "./context.ts";
 import { inspect } from "node:util";
-dayjs.extend(utc);
 
 const MULTI_MESSAGE_RESPONSE = true;
 const RESPOND_FUNCTION_NAME = "respond";
@@ -374,15 +372,7 @@ export class ChatCompletionsHandler
 
     const chatCompletionMessages = this.mergeToolUseMessages(messages);
 
-    const context = {
-      now: dayjs.utc().format("dddd, YYYY-MM-DD HH:mm [UTC]"),
-      user: {
-        name: this.context.contact?.name,
-        phone: this.context.conversation.contact_address
-          ? "+" + this.context.conversation.contact_address
-          : undefined,
-      },
-    };
+    const context = buildRuntimeContext(this.context);
 
     let content = inspect(context, {
       compact: false,

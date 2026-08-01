@@ -17,6 +17,23 @@ export type PreprocessingConfig = {
   extra_prompt?: string;
 };
 
+/**
+ * Opening hours, seven entries, **Sunday first** — the order
+ * `Date.getDay()` and `Intl` both use, so no index has to be translated
+ * anywhere. `null` means closed that day.
+ *
+ * Times are "HH:mm" wall-clock in the organization's own timezone, never UTC:
+ * a business says "we close at six", and six does not move when the clocks do.
+ *
+ * One range per day. Places that shut for lunch exist, and this cannot express
+ * them; two ranges would double the form for a case that is not the common one
+ * and can be spelled out in the agent's instructions meanwhile.
+ *
+ * `to` earlier than `from` means the day runs past midnight (a bar open 18:00
+ * to 02:00), which is why the check has to look at the previous day too.
+ */
+export type BusinessHours = ({ from: string; to: string } | null)[];
+
 export type OrganizationExtra = {
   response_delay_seconds?: number;
   welcome_message?: string;
@@ -24,6 +41,17 @@ export type OrganizationExtra = {
   default_agent_id?: string;
   media_preprocessing?: PreprocessingConfig;
   error_messages_direction?: "internal" | "outgoing";
+  /**
+   * IANA timezone, e.g. "America/Sao_Paulo". Everything the agent is told
+   * about time is rendered in it.
+   *
+   * Until this existed the agent was handed `now` in UTC, so for a Brazilian
+   * business every hour it reasoned about was three off — nine at night read
+   * as midnight, and the day had already rolled over. Nothing failed loudly;
+   * it just answered as if it were tomorrow. - 2026/08/01
+   */
+  timezone?: string;
+  business_hours?: BusinessHours;
 };
 
 export type WhatsAppOrganizationAddressExtra = {
