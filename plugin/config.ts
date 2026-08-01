@@ -20,7 +20,7 @@ export const SESSION_FILE = join(STATE_DIR, "session.json");
 
 // Production defaults — same as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
 // in open-bsp-ui. These are public (embedded in the SPA bundle).
-const DEFAULT_SUPABASE_URL = "https://nheelwshzbgenpavwhcy.supabase.co";
+const DEFAULT_SUPABASE_URL = "https://wrgzrhinrceogbmsqgdn.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY =
   "sb_publishable_jS_LQSbttNz2nRyAcjOVUw_J1KpXhUd";
 
