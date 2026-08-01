@@ -143,6 +143,10 @@ Rules, all mandatory:
 - Provide exactly one example value per variable, in order, realistic for the
   language above.
 - Keep it short: one or two sentences. No emoji unless the description asks.
+- Spell correctly, with every accent the language requires, however the
+  description was written. People type fast and without accents, and speech
+  transcription drops them too — but the customer reads the result, and
+  "inauguracao" in a shop's message looks like a mistake the shop made.
 - Never request passwords, card numbers, documents or any sensitive data.
 - The name must be lowercase letters, digits and underscores, describing the
   situation — for example pedido_pronto or lembrete_agendamento.
