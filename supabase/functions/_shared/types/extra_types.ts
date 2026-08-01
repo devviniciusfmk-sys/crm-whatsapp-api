@@ -52,6 +52,23 @@ export type OrganizationExtra = {
    */
   timezone?: string;
   business_hours?: BusinessHours;
+  /**
+   * Sent when someone writes outside `business_hours`. Empty means the feature
+   * is off — there is no separate switch, because a message nobody wrote is a
+   * message nobody wants sent.
+   *
+   * The WhatsApp Business *app* has this natively; the Cloud API this talks to
+   * does not, so it lives here. Delivered exactly like `welcome_message`.
+   */
+  away_message?: string;
+  /**
+   * Whether the agent also stays quiet outside opening hours.
+   *
+   * Both answers are legitimate and they are not the same product: a shop that
+   * wants the bot selling at 3am needs it false, while one that wants the
+   * WhatsApp Business behaviour — a notice and nothing else — needs it true.
+   */
+  pause_agent_when_closed?: boolean;
 };
 
 export type WhatsAppOrganizationAddressExtra = {
@@ -101,6 +118,12 @@ export type ConversationExtra = {
     reason: string;
     agent_id: string;
   };
+  /**
+   * When the out-of-hours notice was last sent to this conversation. Without
+   * it the notice repeats on every message, which is the behaviour that makes
+   * people block a number.
+   */
+  away_sent?: string;
   /*
   test_run?: {
     reference_conversation: {

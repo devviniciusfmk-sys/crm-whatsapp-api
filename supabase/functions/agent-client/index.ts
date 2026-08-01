@@ -16,6 +16,7 @@ import {
   type WebhookPayload,
 } from "../_shared/supabase.ts";
 import { ProtocolFactory } from "./protocols/index.ts";
+import { DEFAULT_TIMEZONE, isOpenAt } from "./protocols/context.ts";
 import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
 import { z } from "zod";
@@ -47,6 +48,17 @@ export type AgentTool = {
 };
 
 const PAUSED_CONV_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
+/**
+ * How long the out-of-hours notice stays quiet after being sent to a
+ * conversation.
+ *
+ * A fixed window rather than "once per closed stretch", which would be the
+ * exact rule. Exact means walking the schedule backwards to find the last
+ * closing time, for a difference nobody can perceive: twelve hours covers one
+ * night, and a customer who writes on Saturday and again on Sunday getting two
+ * notices is reasonable, not a bug. - 2026/08/01
+ */
+const AWAY_MESSAGE_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
 const MESSAGES_TIME_LIMIT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MESSAGES_QUANTITY_LIMIT = 50;
 const RESPONSE_DELAY_SECS = 3; // 3 seconds
@@ -329,6 +341,63 @@ Deno.serve(async (req) => {
       .throwOnError();
 
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  // OUT OF HOURS
+  //
+  // The WhatsApp Business app sends an away message natively; the Cloud API
+  // does not, so it happens here — built the same way as the welcome message
+  // above, which is the same act with a different condition.
+  //
+  // Whether the agent then answers is the organization's call, and the two
+  // answers are different products: a shop that wants the bot selling at 3am
+  // needs it to keep going, one that wants the WhatsApp behaviour does not.
+  // - 2026/08/01
+
+  if (org.extra.business_hours?.length) {
+    const timezone = org.extra.timezone || DEFAULT_TIMEZONE;
+    const closed = !isOpenAt(org.extra.business_hours, timezone);
+
+    if (closed) {
+      const sentRecently = conv.extra.away_sent &&
+        +new Date(conv.extra.away_sent) > +new Date() - AWAY_MESSAGE_WINDOW;
+
+      if (org.extra.away_message && !sentRecently) {
+        const outgoing: MessageInsert = {
+          organization_id: conv.organization_id,
+          conversation_id: conv.id,
+          service: conv.service,
+          organization_address: conv.organization_address,
+          contact_address: conv.contact_address,
+          direction: "outgoing",
+          content: {
+            version: "1",
+            type: "text",
+            kind: "text",
+            text: org.extra.away_message,
+          },
+        };
+
+        log.info("Away message", (outgoing.content as TextPart).text);
+
+        await client.from("messages").insert(outgoing).throwOnError();
+
+        // Stamped whether or not the agent goes on to reply, since the point
+        // is not to repeat the notice. The `set_extra` trigger merges, so this
+        // touches one key.
+        await client
+          .from("conversations")
+          .update({ extra: { away_sent: new Date().toISOString() } })
+          .eq("id", conv.id)
+          .throwOnError();
+      }
+
+      if (org.extra.pause_agent_when_closed) {
+        log.info(`Conversation ${conv.id} is out of hours. Skipping response.`);
+
+        return new Response("ok", { headers: corsHeaders });
+      }
+    }
   }
 
   // CHECK IF THERE ARE AI AGENTS
