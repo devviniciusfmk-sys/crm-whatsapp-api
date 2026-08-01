@@ -63,6 +63,16 @@ export type ConversationExtra = {
   archived?: string;
   pinned?: string;
   default_agent_id?: string;
+  // Written by the `transfer_to_human_agent` tool. Kept separate from `paused`
+  // on purpose: `paused` alone cannot say who paused, and the difference
+  // matters to whoever opens the list. A conversation someone muted by hand
+  // needs nothing; one the agent gave up on is waiting for a person, and it
+  // says so here, along with what it could not resolve.
+  handoff?: {
+    at: string;
+    reason: string;
+    agent_id: string;
+  };
   /*
   test_run?: {
     reference_conversation: {

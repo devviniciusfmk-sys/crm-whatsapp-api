@@ -740,7 +740,17 @@ Deno.serve(async (req) => {
           switch (toolInfo.type) {
             case "custom":
             case "function": {
-              const result = await agentTool.implementation(args);
+              // Same four arguments the http/sql branch below passes. Built-in
+              // tools used to get the input alone, which meant one could only
+              // compute — never touch the conversation it was called from.
+              // `transfer_to_human_agent` is the first that needs to.
+              // - 2026/08/01
+              const result = await agentTool.implementation(
+                args,
+                undefined,
+                context,
+                client,
+              );
 
               parts = [
                 {
