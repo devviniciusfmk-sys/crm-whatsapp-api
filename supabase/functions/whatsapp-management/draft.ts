@@ -146,6 +146,23 @@ const SCHEMA = {
   required: ["name", "category", "body", "examples"],
 };
 
+/**
+ * The rules come from Meta's own documentation rather than from a summary of
+ * it, because the expensive mistake here is a judgement call and the wording
+ * decides it:
+ *
+ *   developers.facebook.com/documentation/business-messaging/whatsapp/
+ *     templates/template-categorization
+ *   developers.facebook.com/docs/whatsapp/updates-to-pricing/
+ *     new-template-guidelines
+ *
+ * The mixed-content rule is the one worth reading twice. A utility template
+ * with a promotional line in it is silently recategorised as marketing, and
+ * marketing costs more and needs consent — so the business ends up paying the
+ * higher price for a message it thought was an order update. That failure is
+ * invisible: the template is approved, it sends, and the bill is different.
+ * - 2026/08/01
+ */
 function buildPrompt(
   description: string,
   language: string,
@@ -157,11 +174,21 @@ The business describes what they want to send. Produce ONE template.
 
 Rules, all mandatory:
 - Write the body in this language: ${language}. Never in another language.
-- UTILITY is for messages about something that already happened between the
-  business and that specific person: an order, a booking, a delivery, a delay.
-  MARKETING is for anything promotional, or for reopening a conversation.
-  Choosing MARKETING when UTILITY fits costs the business more money, and
-  choosing UTILITY for a promotion gets the template rejected.
+- Category, in Meta's own terms. UTILITY requires BOTH of these to hold:
+  (a) non-promotional — no promotional or persuasive intent anywhere in it;
+  (b) specific to or requested by the user, OR essential/critical to them.
+  MARKETING is everything else: awareness, offers, sales, win-backs.
+  Meta's own examples —
+    UTILITY:   "Thank you! Your order {{1}} is confirmed. We will let you know
+                once your package is on its way."
+    MARKETING: "As a thank you for your last order, please enjoy {{1}}% off
+                your next order. Use code {{2}} at checkout."
+- Never mix the two. Meta recategorises a utility template to marketing the
+  moment it carries an offer, a discount, an upsell or a call to buy — "an
+  order update with a promo" is their example. The business then pays the
+  marketing price without ever choosing it. So if the description asks for an
+  order update, write ONLY the order update: no "and enjoy 10% off next time",
+  no "come visit us again", no invitation to purchase.
 - Use {{1}}, {{2}}, … for the parts that change per customer. Number them from
   1 with no gaps, in the order they appear.
 - The body must NOT begin or end with a variable. Put a word before and after.
