@@ -82,34 +82,14 @@ async function inspectToken(token: string) {
     });
   }
 
-  // Multi-app deploys keep several ids in one variable, pipe-separated. Any of
-  // them recognising the token is enough.
-  const ids = APP_ID.split("|");
-  const secrets = APP_SECRET.split("|");
+  const data = await inspectTokenRaw(token);
 
-  for (let index = 0; index < ids.length; index++) {
-    const appToken = `${ids[index]}|${secrets[index]}`;
+  if (!data) return null;
 
-    const response = await fetch(
-      `https://graph.facebook.com/${API_VERSION}/debug_token?input_token=${
-        encodeURIComponent(token)
-      }&access_token=${encodeURIComponent(appToken)}`,
-    );
-
-    const body = await response.json().catch(() => ({}));
-
-    if (response.ok && body?.data?.is_valid) {
-      return {
-        app_id: String(body.data.app_id ?? ids[index]),
-        /** 0 means "never", which is what a system user token should say. */
-        expires_at: Number(body.data.expires_at ?? 0),
-        type: String(body.data.type ?? ""),
-        scopes: (body.data.scopes ?? []) as string[],
-      };
-    }
-  }
-
-  return null;
+  return {
+    /** 0 means "never", which is what a system user token should say. */
+    expires_at: Number(data.expires_at ?? 0),
+  };
 }
 
 /**
@@ -230,6 +210,211 @@ export async function listWabaNumbers(
       ...number,
       connected: connected.has(number.id),
     })),
+  };
+}
+
+/**
+ * Which WhatsApp Business Account actually owns a connected number.
+ *
+ * `extra.waba_id` is written once, at connection time, and nothing has ever
+ * checked it since. It can be wrong — a number moved between accounts, a
+ * signup that recorded the account it was standing in rather than the one the
+ * number ended up in — and when it is wrong the number keeps sending and
+ * receiving perfectly, because messaging goes by phone number id. What breaks
+ * is everything read by account: templates, conversation analytics, account
+ * health. The first symptom is "my approved templates are not showing", which
+ * reads like a bug in the template screen and is not.
+ *
+ * The token knows which accounts it can reach — `debug_token` lists them under
+ * granular scopes — so the account that holds this number can be found rather
+ * than guessed. - 2026/08/02
+ */
+/** Best-effort Graph read: a source that cannot answer contributes nothing. */
+async function graphIds(path: string, token: string): Promise<string[]> {
+  const body = await fetch(
+    `https://graph.facebook.com/${API_VERSION}/${path}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  ).then((response) => response.ok ? response.json() : null).catch(() => null);
+
+  return ((body?.data ?? []) as { id?: string }[])
+    .map((row) => row.id)
+    .filter((id): id is string => !!id);
+}
+
+async function candidateWabas(token: string, recorded?: string) {
+  const ids = new Set<string>();
+
+  if (recorded) ids.add(recorded);
+
+  // Source one: what the token itself was scoped to. Comes back empty for
+  // tokens issued before granular scopes, and for the deploy-wide fallback
+  // token — which is why there is a second source.
+  const inspected = await inspectTokenRaw(token);
+
+  for (const scope of inspected?.granular_scopes ?? []) {
+    for (const id of scope.target_ids ?? []) ids.add(id);
+  }
+
+  // Source two: the businesses this token can see, and the accounts they own
+  // or administer. `client_` covers the partner arrangement, where the account
+  // belongs to the customer and the business only manages it — which is
+  // exactly the setup where the recorded account drifts.
+  for (
+    const business of (await graphIds("me/businesses?limit=10", token))
+      .slice(0, 5)
+  ) {
+    for (
+      const waba of [
+        ...await graphIds(
+          `${business}/owned_whatsapp_business_accounts?limit=50`,
+          token,
+        ),
+        ...await graphIds(
+          `${business}/client_whatsapp_business_accounts?limit=50`,
+          token,
+        ),
+      ]
+    ) {
+      ids.add(waba);
+    }
+  }
+
+  // Bounded on purpose: this walks Graph once per candidate, and a token with
+  // access to a hundred accounts should not turn one screen into a hundred
+  // round trips.
+  return [...ids].slice(0, 25);
+}
+
+async function inspectTokenRaw(token: string) {
+  if (!APP_ID || !APP_SECRET) return null;
+
+  const ids = APP_ID.split("|");
+  const secrets = APP_SECRET.split("|");
+
+  for (let index = 0; index < ids.length; index++) {
+    const appToken = `${ids[index]}|${secrets[index]}`;
+
+    const response = await fetch(
+      `https://graph.facebook.com/${API_VERSION}/debug_token?input_token=${
+        encodeURIComponent(token)
+      }&access_token=${encodeURIComponent(appToken)}`,
+    );
+
+    const body = await response.json().catch(() => ({}));
+
+    if (response.ok && body?.data?.is_valid) {
+      return body.data as {
+        app_id?: string;
+        expires_at?: number;
+        granular_scopes?: { scope: string; target_ids?: string[] }[];
+      };
+    }
+  }
+
+  return null;
+}
+
+export type DetectAccountPayload = {
+  organization_id: string;
+  organization_address: string;
+  /** Write the detected account onto the address instead of only reporting. */
+  apply?: boolean;
+};
+
+export async function detectAccount(
+  client: ReturnType<typeof createClient>,
+  payload: DetectAccountPayload,
+) {
+  if (!payload.organization_id || !payload.organization_address) {
+    throw new HTTPException(400, {
+      message:
+        "Missing 'organization_id' or 'organization_address' body param!",
+    });
+  }
+
+  const { data: address, error } = await client
+    .from("organizations_addresses")
+    .select()
+    .eq("organization_id", payload.organization_id)
+    .eq("address", payload.organization_address)
+    .eq("service", "whatsapp")
+    .single();
+
+  if (error || !address) {
+    throw new HTTPException(404, { message: "No such WhatsApp number here." });
+  }
+
+  const extra = (address.extra ?? {}) as { waba_id?: string };
+  const recorded = extra.waba_id;
+
+  const token = await getWhatsAppAccessToken(
+    client,
+    payload.organization_id,
+    payload.organization_address,
+  );
+
+  const candidates = await candidateWabas(token, recorded);
+
+  let detected: string | null = null;
+
+  for (const waba_id of candidates) {
+    // A candidate this token cannot read is not an answer; skip it rather than
+    // failing the whole check on one inaccessible account.
+    const numbers = await fetch(
+      `https://graph.facebook.com/${API_VERSION}/${waba_id}/phone_numbers?fields=id&limit=100`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    ).then((response) => response.ok ? response.json() : null).catch(() =>
+      null
+    );
+
+    const found = (numbers?.data ?? []).some((row: { id: string }) =>
+      row.id === payload.organization_address
+    );
+
+    if (found) {
+      detected = waba_id;
+      break;
+    }
+  }
+
+  const mismatch = !!detected && detected !== recorded;
+
+  if (payload.apply && mismatch) {
+    log.info("Correcting the recorded WhatsApp Business Account", {
+      organization_id: payload.organization_id,
+      address: payload.organization_address,
+      from: recorded,
+      to: detected,
+    });
+
+    // merge_update on `extra` keeps everything else on the row untouched.
+    await client
+      .from("organizations_addresses")
+      .update({ extra: { waba_id: detected } })
+      .eq("organization_id", payload.organization_id)
+      .eq("address", payload.organization_address)
+      .throwOnError();
+
+    await client.from("logs").insert({
+      organization_id: payload.organization_id,
+      organization_address: payload.organization_address,
+      category: "signup",
+      service: "whatsapp",
+      level: "info",
+      message:
+        `WhatsApp Business Account corrected from ${recorded} to ${detected}`,
+    });
+  }
+
+  return {
+    recorded_waba_id: recorded ?? null,
+    detected_waba_id: detected,
+    /** True when the recorded account is not the one holding this number. */
+    mismatch,
+    /** True when no reachable account holds it — nothing to correct to. */
+    undetermined: !detected,
+    applied: !!payload.apply && mismatch,
+    checked: candidates.length,
   };
 }
 

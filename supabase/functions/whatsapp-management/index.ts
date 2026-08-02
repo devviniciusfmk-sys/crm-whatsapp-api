@@ -33,6 +33,8 @@ import {
   SignupPayload,
 } from "./embedded_signup.ts";
 import {
+  detectAccount,
+  type DetectAccountPayload,
   listWabaNumbers,
   type ManualSignupPayload,
   performManualSignup,
@@ -506,6 +508,42 @@ app.post("/whatsapp-management/signup", requireRoles(["owner"]), async (c) => {
     throw error;
   }
 });
+
+// Which account really owns a connected number. Read-only unless `apply`.
+app.post(
+  "/whatsapp-management/account",
+  requireRoles(["member", "admin", "owner"]),
+  async (c) => {
+    const payload = await c.req.json<DetectAccountPayload>();
+
+    // Correcting the stored account is an owner's call; reading is not.
+    if (payload.apply) {
+      const client = c.get("supabase");
+      const user = c.get("user");
+
+      const { data: agent } = user
+        ? await client
+          .from("agents")
+          .select("extra")
+          .eq("user_id", user.id)
+          .eq("organization_id", payload.organization_id)
+          .maybeSingle()
+        : { data: null };
+
+      const role = (agent?.extra as { role?: string } | null)?.role;
+
+      if (user && role !== "owner") {
+        throw new HTTPException(403, {
+          message: "Only an owner can correct the account of a number.",
+        });
+      }
+    }
+
+    const result = await detectAccount(createUnsecureClient(), payload);
+
+    return c.json(result);
+  },
+);
 
 // The numbers of a WABA, so the second one is a click instead of a form.
 app.post(

@@ -662,6 +662,40 @@ async function processMessage(request: Request): Promise<Response> {
       const organization_id = orgAddressRow.organization_id;
       const organization_address = orgAddressRow.address;
 
+      // Meta names the owning account on every delivery, while `extra.waba_id`
+      // is written once at connection time and never checked again. When the
+      // two disagree, the stored one is the stale one — a number moved between
+      // accounts, or a signup that recorded the account someone happened to be
+      // standing in. Messaging keeps working either way, because that goes by
+      // phone number id. What silently reads from the wrong account is
+      // templates, conversation analytics and account health, and the symptom
+      // is "my approved templates are not showing" — which looks like a bug in
+      // the template screen and is not.
+      //
+      // Corrected here rather than behind a button because this payload is the
+      // only place the truth arrives on its own. - 2026/08/02
+      const recordedWaba =
+        (orgAddressRow.extra as { waba_id?: string } | null)?.waba_id;
+
+      if (waba_id && recordedWaba !== waba_id) {
+        log.warn("Correcting a stale WhatsApp Business Account id", {
+          organization_id,
+          organization_address,
+          from: recordedWaba,
+          to: waba_id,
+        });
+
+        // `extra` merges on update, so nothing else on the row is touched.
+        await client
+          .from("organizations_addresses")
+          .update({ extra: { waba_id } })
+          .eq("organization_id", organization_id)
+          .eq("address", organization_address)
+          .throwOnError();
+
+        orgAddressRow.extra = { ...(orgAddressRow.extra ?? {}), waba_id };
+      }
+
       if (
         (field === "messages" || field === "smb_message_echoes" ||
           field === "history") && "contacts" in value
