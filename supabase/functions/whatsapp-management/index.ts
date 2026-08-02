@@ -26,6 +26,7 @@ import {
   updateProfile,
 } from "./profile.ts";
 import { draftTemplate, transcribe } from "./draft.ts";
+import { fetchAnalytics } from "./analytics.ts";
 import {
   deleteSignup,
   performEmbeddedSignup,
@@ -43,6 +44,12 @@ type ProfilePayload = {
   organization_id: string;
   organization_address: string;
   profile?: BusinessProfile;
+};
+
+type AnalyticsPayload = {
+  organization_id: string;
+  organization_address: string;
+  days?: number;
 };
 
 type DraftPayload = {
@@ -353,6 +360,24 @@ app.post(
         organization_id,
         organization_address,
         profile,
+      ),
+    );
+  },
+);
+
+app.put(
+  "/whatsapp-management/analytics",
+  requireRoles(["member", "admin", "owner"]),
+  async (c) => {
+    const { organization_id, organization_address, days } = await c.req
+      .json<AnalyticsPayload>();
+
+    return c.json(
+      await fetchAnalytics(
+        c.get("supabase"),
+        organization_id,
+        organization_address,
+        Math.min(Math.max(days ?? 30, 1), 90),
       ),
     );
   },
