@@ -40,6 +40,14 @@ import {
 const FunctionTools = [
   CalculatorTool,
   TransferToHumanAgentTool,
+  // As três da agenda andam juntas: quem pode marcar precisa poder consultar
+  // antes e desmarcar depois. Sem esta linha o interruptor da tela liga uma
+  // ferramenta que não existe aqui, e o agente responde "Tool
+  // list_appointments not found" a cada pedido — foi assim que a primeira
+  // simulação as pegou faltando. - 2026/08/02
+  ListAppointmentsTool,
+  BookAppointmentTool,
+  CancelAppointmentTool,
 ];
 const CustomTools: unknown[] = [];
 

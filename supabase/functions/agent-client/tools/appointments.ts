@@ -100,6 +100,22 @@ export function utcToLocal(date: Date, timeZone: string): string {
   return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}`;
 }
 
+/**
+ * O horário de atendimento, quando de fato existe.
+ *
+ * A semana começa como sete `null` — a forma que a tela grava enquanto
+ * ninguém ligou nenhum dia. Isso é "não configurado", e não "fechado a semana
+ * inteira": uma empresa que fecha todos os dias não existe, e tratar assim
+ * recusaria todo agendamento de toda organização que nunca abriu essa tela.
+ * Só vale como regra quando ao menos um dia tem horário. - 2026/08/02
+ */
+function businessHoursOf(context: RequestContext) {
+  const extra = (context.organization.extra ?? {}) as OrganizationExtra;
+  const hours = extra.business_hours;
+
+  return hours?.some((day) => !!day) ? hours : null;
+}
+
 function timezoneOf(context: RequestContext): string {
   const extra = (context.organization.extra ?? {}) as OrganizationExtra;
 
@@ -139,7 +155,6 @@ async function listImplementation(
   supabaseClient: SupabaseClient,
 ): Promise<z.infer<typeof ListOutputSchema>> {
   const timeZone = timezoneOf(context);
-  const extra = (context.organization.extra ?? {}) as OrganizationExtra;
 
   const from = localToUtc(`${input.date} 00:00`, timeZone);
 
@@ -153,9 +168,8 @@ async function listImplementation(
   // responderia "não" para toda loja que abre às 9h.
   const noon = new Date(from.getTime() + 12 * 60 * 60 * 1000);
 
-  const open = extra.business_hours
-    ? isOpenAt(extra.business_hours, timeZone, noon)
-    : true;
+  const hours = businessHoursOf(context);
+  const open = hours ? isOpenAt(hours, timeZone, noon) : true;
 
   const { data } = await supabaseClient
     .from("appointments")
@@ -302,7 +316,6 @@ async function bookImplementation(
   supabaseClient: SupabaseClient,
 ): Promise<z.infer<typeof BookOutputSchema>> {
   const timeZone = timezoneOf(context);
-  const extra = (context.organization.extra ?? {}) as OrganizationExtra;
 
   const refuse = (reason: string) => ({
     booked: false,
@@ -321,9 +334,9 @@ async function bookImplementation(
     return refuse("That time is in the past.");
   }
 
-  if (
-    extra.business_hours && !isOpenAt(extra.business_hours, timeZone, startsAt)
-  ) {
+  const hours = businessHoursOf(context);
+
+  if (hours && !isOpenAt(hours, timeZone, startsAt)) {
     return refuse("The business is closed at that time.");
   }
 
