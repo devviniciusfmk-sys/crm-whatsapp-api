@@ -59,6 +59,39 @@ const PAUSED_CONV_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
  * notices is reasonable, not a bug. - 2026/08/01
  */
 const AWAY_MESSAGE_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
+
+/**
+ * O erro que vai para a conversa, com o que o provedor de fato disse.
+ *
+ * A mensagem do SDK sozinha é "422 Provider returned error" — que não diz
+ * nada. O motivo real vem dentro do corpo da resposta, e num caso concreto era
+ * "no online provider for model gpt-oss-20b advertises inference for
+ * tool_choice required": a rota gratuita daquele modelo não aceita o modo de
+ * chamada de ferramenta que este backend usa.
+ *
+ * Sem o detalhe, a conclusão natural é "as ferramentas estão quebradas".
+ * Custou uma investigação inteira descobrir que era o modelo escolhido, e
+ * quem só tem a tela na frente não teria como chegar lá. - 2026/08/02
+ */
+function describeError(error: unknown): string {
+  const base = error instanceof Error ? error.message : String(error);
+
+  // O SDK da OpenAI guarda o corpo do provedor em `error.error`.
+  const detail = (error as { error?: { metadata?: { raw?: string } } })?.error
+    ?.metadata?.raw;
+
+  if (!detail) return base;
+
+  try {
+    const parsed = JSON.parse(detail) as { error?: { message?: string } };
+    const message = parsed.error?.message;
+
+    return message ? `${base}: ${message}` : base;
+  } catch {
+    return `${base}: ${detail}`.slice(0, 500);
+  }
+}
+
 const MESSAGES_TIME_LIMIT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MESSAGES_QUANTITY_LIMIT = 50;
 const RESPONSE_DELAY_SECS = 3; // 3 seconds
@@ -956,7 +989,7 @@ Deno.serve(async (req) => {
             version: "1" as const,
             type: "text",
             kind: "text",
-            text: error instanceof Error ? error.message : String(error),
+            text: describeError(error),
           },
         },
       ];
