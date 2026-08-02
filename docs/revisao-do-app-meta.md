@@ -34,8 +34,10 @@ Sem isto a submissão nem abre, ou volta recusada sem análise:
    empresa, e demora — comece por aqui.
 2. **App vinculado a esse portfólio.**
 3. **Política de privacidade publicada, com URL própria.** Obrigatória.
-   ⚠️ **Este produto não tem uma hoje.** Não existe rota de privacidade nem de
-   termos no app. É preciso escrever e publicar antes de submeter.
+   Existe em `/privacidade` (e os termos em `/termos`), públicas, sem login.
+   Os dados da empresa vêm das variáveis `VITE_COMPANY_*` — precisam estar
+   definidas no servidor, senão a página abre com um aviso de documento
+   incompleto. Falta a revisão jurídica antes de publicar.
 4. **Termos de serviço**, mesma coisa, na prática sempre pedidos.
 5. **Ícone, categoria e e-mail de contato** preenchidos no app.
 6. **Data Use Checkup**, quando a Meta pedir. Ele vence de tempos em tempos e
