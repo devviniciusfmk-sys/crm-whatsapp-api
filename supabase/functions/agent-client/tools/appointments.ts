@@ -309,6 +309,56 @@ async function scheduleReminder(
   return error ? null : at;
 }
 
+/** Quando a duração não é dita, meia hora é o palpite menos ruim. */
+const ASSUMED_MINUTES = 30;
+
+/**
+ * Um compromisso já marcado que se sobrepõe a este.
+ *
+ * Comparar só o instante de início não basta, e a primeira simulação mostrou
+ * por quê: uma limpeza de uma hora às 10h e outra às 10h30 passavam as duas,
+ * porque os `starts_at` são diferentes. Duas pessoas na mesma cadeira.
+ *
+ * Duração ausente vira meia hora dos dois lados. É palpite, e é melhor que o
+ * contrário — tratar como instante deixaria passar exatamente o caso que este
+ * teste pegou. - 2026/08/02
+ */
+async function findConflict(
+  supabaseClient: SupabaseClient,
+  organizationId: string,
+  startsAt: Date,
+  durationMinutes?: number,
+): Promise<Date | null> {
+  const minutes = durationMinutes ?? ASSUMED_MINUTES;
+  const endsAt = new Date(startsAt.getTime() + minutes * 60 * 1000);
+
+  // Uma janela generosa em volta, para não trazer o dia inteiro nem perder um
+  // compromisso longo que começou antes.
+  const from = new Date(startsAt.getTime() - 12 * 60 * 60 * 1000);
+  const to = new Date(endsAt.getTime() + 12 * 60 * 60 * 1000);
+
+  const { data } = await supabaseClient
+    .from("appointments")
+    .select("starts_at, duration_minutes")
+    .eq("organization_id", organizationId)
+    .eq("status", "scheduled")
+    .gte("starts_at", from.toISOString())
+    .lte("starts_at", to.toISOString());
+
+  for (const row of data ?? []) {
+    const otherStart = new Date(row.starts_at as string);
+    const otherEnd = new Date(
+      otherStart.getTime() +
+        ((row.duration_minutes as number | null) ?? ASSUMED_MINUTES) * 60 *
+          1000,
+    );
+
+    if (startsAt < otherEnd && otherStart < endsAt) return otherStart;
+  }
+
+  return null;
+}
+
 async function bookImplementation(
   input: z.infer<typeof BookInputSchema>,
   _config: void,
@@ -317,11 +367,18 @@ async function bookImplementation(
 ): Promise<z.infer<typeof BookOutputSchema>> {
   const timeZone = timezoneOf(context);
 
+  // A recusa carrega a data de hoje. Um modelo pequeno erra "quinta-feira" e
+  // manda uma data da semana passada; recebendo só "está no passado" ele
+  // repete o erro, e foi exatamente o que a segunda simulação mostrou — sete
+  // turnos tentando marcar num dia que já tinha ido embora. Com a âncora, ele
+  // tem como recalcular. - 2026/08/02
+  const today = utcToLocal(new Date(), timeZone).slice(0, 10);
+
   const refuse = (reason: string) => ({
     booked: false,
     starts_at: null,
     reminder_at: null,
-    refused: reason,
+    refused: `${reason} (today is ${today})`,
   });
 
   const startsAt = localToUtc(input.starts_at, timeZone);
@@ -344,18 +401,19 @@ async function bookImplementation(
     return refuse("This conversation has no phone number to book for.");
   }
 
-  // Conflito: mesmo instante, qualquer cliente. Sem esta conferência, dois
-  // clientes conversando ao mesmo tempo marcam as 15h e só a loja descobre.
-  const { data: clash } = await supabaseClient
-    .from("appointments")
-    .select("id")
-    .eq("organization_id", context.organization.id)
-    .eq("status", "scheduled")
-    .eq("starts_at", startsAt.toISOString())
-    .limit(1);
+  const conflict = await findConflict(
+    supabaseClient,
+    context.organization.id,
+    startsAt,
+    input.duration_minutes,
+  );
 
-  if (clash?.length) {
-    return refuse("That slot is already taken. Offer another time.");
+  if (conflict) {
+    return refuse(
+      `That time overlaps an appointment already booked at ${
+        utcToLocal(conflict, timeZone).slice(11)
+      }. Offer another time.`,
+    );
   }
 
   const { data, error } = await supabaseClient
@@ -434,7 +492,9 @@ async function cancelImplementation(
   if (!startsAt) {
     return {
       cancelled: false,
-      refused: "The date could not be read. Use 'YYYY-MM-DD HH:MM'.",
+      refused: `The date could not be read. Use 'YYYY-MM-DD HH:MM'. (today is ${
+        utcToLocal(new Date(), timeZone).slice(0, 10)
+      })`,
     };
   }
 
@@ -471,4 +531,123 @@ export const CancelAppointmentTool: ToolDefinition<
   inputSchema: z.toJSONSchema(CancelInputSchema),
   outputSchema: z.toJSONSchema(CancelOutputSchema),
   implementation: cancelImplementation,
+};
+
+// ---------------------------------------------------------------------------
+// Remarcar
+// ---------------------------------------------------------------------------
+
+/**
+ * Mover um compromisso, em vez de marcar outro por cima.
+ *
+ * Sem esta ferramenta o modelo não tinha como atender "pode ser 10h30 em vez
+ * de 10h": ele chamava `book_appointment` de novo e o cliente ficava com dois
+ * horários, um deles fantasma. Foi o que a primeira simulação produziu — e
+ * nenhuma instrução de prompt conserta a falta de um verbo. - 2026/08/02
+ */
+const RescheduleInputSchema = z.object({
+  from: z.string().describe(
+    "The appointment's current start, as 'YYYY-MM-DD HH:MM' in the business's own timezone.",
+  ),
+  to: z.string().describe(
+    "The new start, same format. The appointment keeps its title and duration.",
+  ),
+});
+
+const RescheduleOutputSchema = z.object({
+  rescheduled: z.boolean(),
+  starts_at: z.string().nullable(),
+  refused: z.string().nullable(),
+});
+
+async function rescheduleImplementation(
+  input: z.infer<typeof RescheduleInputSchema>,
+  _config: void,
+  context: RequestContext,
+  supabaseClient: SupabaseClient,
+): Promise<z.infer<typeof RescheduleOutputSchema>> {
+  const timeZone = timezoneOf(context);
+
+  const today = utcToLocal(new Date(), timeZone).slice(0, 10);
+
+  const refuse = (reason: string) => ({
+    rescheduled: false,
+    starts_at: null,
+    refused: `${reason} (today is ${today})`,
+  });
+
+  const from = localToUtc(input.from, timeZone);
+  const to = localToUtc(input.to, timeZone);
+
+  if (!from || !to) {
+    return refuse("A date could not be read. Use 'YYYY-MM-DD HH:MM'.");
+  }
+
+  if (to.getTime() <= Date.now()) {
+    return refuse("The new time is in the past.");
+  }
+
+  const hours = businessHoursOf(context);
+
+  if (hours && !isOpenAt(hours, timeZone, to)) {
+    return refuse("The business is closed at the new time.");
+  }
+
+  // Só os desta conversa: mover o compromisso de outra pessoa seria o mesmo
+  // estrago que cancelar o dela.
+  const { data: mine } = await supabaseClient
+    .from("appointments")
+    .select("id, duration_minutes")
+    .eq("organization_id", context.organization.id)
+    .eq("contact_address", context.conversation.contact_address ?? "")
+    .eq("starts_at", from.toISOString())
+    .eq("status", "scheduled")
+    .limit(1);
+
+  const appointment = mine?.[0];
+
+  if (!appointment) {
+    return refuse("No appointment of yours was found at that time.");
+  }
+
+  const conflict = await findConflict(
+    supabaseClient,
+    context.organization.id,
+    to,
+    (appointment.duration_minutes as number | null) ?? undefined,
+  );
+
+  // O próprio compromisso não conta como conflito consigo mesmo.
+  if (conflict && conflict.getTime() !== from.getTime()) {
+    return refuse(
+      `The new time overlaps an appointment already booked at ${
+        utcToLocal(conflict, timeZone).slice(11)
+      }. Offer another time.`,
+    );
+  }
+
+  await supabaseClient
+    .from("appointments")
+    .update({ starts_at: to.toISOString() })
+    .eq("id", appointment.id as string);
+
+  return {
+    rescheduled: true,
+    starts_at: utcToLocal(to, timeZone),
+    refused: null,
+  };
+}
+
+export const RescheduleAppointmentTool: ToolDefinition<
+  typeof RescheduleInputSchema,
+  typeof RescheduleOutputSchema
+> = {
+  provider: "local",
+  type: "function",
+  name: "reschedule_appointment",
+  description:
+    "Move an existing appointment of the person you are talking to, to a new day or time. USE THIS instead of booking again when the customer changes their mind about a time they already have — booking again leaves them with two appointments. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
+  inputSchema: z.toJSONSchema(RescheduleInputSchema),
+  outputSchema: z.toJSONSchema(RescheduleOutputSchema),
+  implementation: rescheduleImplementation,
 };

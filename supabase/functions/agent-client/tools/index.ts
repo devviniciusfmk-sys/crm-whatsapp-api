@@ -31,6 +31,7 @@ import {
   BookAppointmentTool,
   CancelAppointmentTool,
   ListAppointmentsTool,
+  RescheduleAppointmentTool,
 } from "./appointments.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
@@ -47,6 +48,7 @@ const FunctionTools = [
   // simulação as pegou faltando. - 2026/08/02
   ListAppointmentsTool,
   BookAppointmentTool,
+  RescheduleAppointmentTool,
   CancelAppointmentTool,
 ];
 const CustomTools: unknown[] = [];
