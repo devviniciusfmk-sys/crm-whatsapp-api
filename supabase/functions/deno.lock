@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@hono/hono@*": "4.12.24",
+    "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/csv@*": "1.0.6",
     "jsr:@std/encoding@*": "1.0.10",

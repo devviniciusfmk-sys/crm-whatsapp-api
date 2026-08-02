@@ -27,6 +27,11 @@ import { HTTPTools } from "./http.ts";
 import { SQLTools } from "./sql.ts";
 import { CalculatorTool } from "./calculator.ts";
 import { TransferToHumanAgentTool } from "./handoff.ts";
+import {
+  BookAppointmentTool,
+  CancelAppointmentTool,
+  ListAppointmentsTool,
+} from "./appointments.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
 // also live in this folder and are deliberately absent: both are skeletons, and

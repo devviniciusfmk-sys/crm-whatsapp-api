@@ -69,6 +69,24 @@ export type OrganizationExtra = {
    * WhatsApp Business behaviour — a notice and nothing else — needs it true.
    */
   pause_agent_when_closed?: boolean;
+  /**
+   * Lembrete de compromisso, escolhido na tela de configurações.
+   *
+   * Precisa ser modelo aprovado: um lembrete de véspera cai fora da janela de
+   * 24 horas da Meta, onde texto livre não passa. Sem `template` está
+   * desligado.
+   *
+   * `variables` é gravado por quem escolheu o modelo, e não descoberto aqui:
+   * perguntar à Meta a cada agendamento custaria uma ida à rede para saber
+   * algo que já era sabido. As variáveis são preenchidas em ordem fixa —
+   * {{1}} nome, {{2}} data, {{3}} hora.
+   */
+  appointment_reminder?: {
+    template?: string;
+    language?: string;
+    hours_before?: number;
+    variables?: number;
+  };
 };
 
 export type WhatsAppOrganizationAddressExtra = {
