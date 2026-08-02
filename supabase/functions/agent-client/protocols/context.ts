@@ -87,7 +87,9 @@ export function isOpenAt(
     // A day that ends earlier than it starts runs past midnight.
     const overnight = today.to <= today.from;
 
-    if (overnight ? time >= today.from : time >= today.from && time < today.to) {
+    if (
+      overnight ? time >= today.from : time >= today.from && time < today.to
+    ) {
       return true;
     }
   }
@@ -116,15 +118,26 @@ export function buildRuntimeContext(context: RequestContext) {
 
   const { weekday, date, time } = wallClock(new Date(), timezone);
 
+  // `hours?.length` não bastava: a tela grava a semana como sete `null`
+  // enquanto ninguém ligou nenhum dia, e sete nulos têm comprimento sete. O
+  // agente recebia "closed" em todos os dias e passava a conversa inteira
+  // dizendo ao cliente que a empresa nunca abre — foi o que uma simulação de
+  // dez turnos produziu, com o modelo se comportando bem a partir de uma
+  // informação errada.
+  //
+  // Semana sem nenhum dia é "não configurado": melhor o agente não falar de
+  // horário do que inventar um fechamento permanente. - 2026/08/02
+  const configured = hours?.some((day) => !!day) ? hours : undefined;
+
   return {
     now: `${weekday}, ${date} ${time} (${timezone})`,
-    ...(hours?.length
+    ...(configured
       ? {
-        business_hours: describeHours(hours),
+        business_hours: describeHours(configured),
         // Stated plainly because it is the fact that changes what the agent
         // should say — whether to promise someone will look now, or to say
         // it will be tomorrow.
-        open_now: isOpenAt(hours, timezone),
+        open_now: isOpenAt(configured, timezone),
       }
       : {}),
     user: {

@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { isOpenAt } from "./context.ts";
+import { buildRuntimeContext, isOpenAt } from "./context.ts";
 import type { BusinessHours } from "../../_shared/types/extra_types.ts";
 
 /**
@@ -46,7 +46,12 @@ const cases: [string, BusinessHours, string, boolean][] = [
   // The reason the timezone exists: 21:00 in São Paulo is already midnight of
   // the following day in UTC, so a UTC clock reads Wednesday and the whole
   // schedule shifts by a day.
-  ["21:00 local, already tomorrow in UTC", office, "2026-08-05T00:00:00Z", false],
+  [
+    "21:00 local, already tomorrow in UTC",
+    office,
+    "2026-08-05T00:00:00Z",
+    false,
+  ],
   ["open on Friday night", bar, "2026-08-08T02:00:00Z", true],
   ["still open after midnight", bar, "2026-08-08T04:00:00Z", true],
   ["closed once the overnight range ends", bar, "2026-08-08T06:00:00Z", false],
@@ -60,3 +65,51 @@ for (const [name, hours, instant, expected] of cases) {
     assertEquals(isOpenAt(hours, TZ, new Date(instant)), expected);
   });
 }
+
+Deno.test("semana sem nenhum dia não vira 'fechado todos os dias'", () => {
+  // Sete `null` é como a tela grava enquanto ninguém ligou um dia sequer.
+  // Descrever isso como fechado fez o agente passar dez turnos dizendo ao
+  // cliente que a empresa nunca abre. - 2026/08/02
+  const context = {
+    organization: {
+      extra: {
+        timezone: "America/Sao_Paulo",
+        business_hours: [null, null, null, null, null, null, null],
+      },
+    },
+    conversation: { contact_address: "5511999999999" },
+    contact: undefined,
+  } as unknown as Parameters<typeof buildRuntimeContext>[0];
+
+  const runtime = buildRuntimeContext(context);
+
+  assertEquals("business_hours" in runtime, false);
+  assertEquals("open_now" in runtime, false);
+});
+
+Deno.test("semana com um dia configurado continua sendo descrita", () => {
+  const hours = [
+    null,
+    { from: "09:00", to: "18:00" },
+    null,
+    null,
+    null,
+    null,
+    null,
+  ];
+
+  const context = {
+    organization: {
+      extra: { timezone: "America/Sao_Paulo", business_hours: hours },
+    },
+    conversation: { contact_address: "5511999999999" },
+    contact: undefined,
+  } as unknown as Parameters<typeof buildRuntimeContext>[0];
+
+  const runtime = buildRuntimeContext(context) as {
+    business_hours?: Record<string, string>;
+  };
+
+  assertEquals(runtime.business_hours?.monday, "09:00-18:00");
+  assertEquals(runtime.business_hours?.sunday, "closed");
+});
