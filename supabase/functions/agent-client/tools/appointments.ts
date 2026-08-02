@@ -101,6 +101,22 @@ export function utcToLocal(date: Date, timeZone: string): string {
 }
 
 /**
+ * O dia da semana daquele instante, em inglês minúsculo.
+ *
+ * Devolvido junto com a data porque o modelo erra o nome do dia mesmo quando
+ * acerta a data: numa simulação de vinte clientes ele marcou certo em
+ * 2026-08-05 e chamou de "quinta-feira" ao confirmar, sendo quarta. O cliente
+ * lê o nome, não a data — e aparece no dia errado. Contar dias é aritmética, e
+ * a mesma razão que tirou a comparação de horário do modelo tira esta.
+ * - 2026/08/02
+ */
+export function weekdayOf(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" })
+    .format(date)
+    .toLowerCase();
+}
+
+/**
  * O horário de atendimento, quando de fato existe.
  *
  * A semana começa como sete `null` — a forma que a tela grava enquanto
@@ -134,6 +150,9 @@ const ListInputSchema = z.object({
 
 const ListOutputSchema = z.object({
   date: z.string(),
+  weekday: z.string().describe(
+    "Which day of the week that date falls on. Use THIS when you name the day to the customer — do not work it out yourself.",
+  ),
   open: z.boolean().describe(
     "False when the business does not open at all on that day. Do not offer times on a closed day.",
   ),
@@ -159,7 +178,7 @@ async function listImplementation(
   const from = localToUtc(`${input.date} 00:00`, timeZone);
 
   if (!from) {
-    return { date: input.date, open: false, taken: [] };
+    return { date: input.date, weekday: "", open: false, taken: [] };
   }
 
   const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
@@ -182,6 +201,7 @@ async function listImplementation(
 
   return {
     date: input.date,
+    weekday: weekdayOf(noon, timeZone),
     open,
     taken: (data ?? []).map((row) => ({
       starts_at: utcToLocal(new Date(row.starts_at as string), timeZone).slice(
@@ -229,6 +249,9 @@ const BookInputSchema = z.object({
 const BookOutputSchema = z.object({
   booked: z.boolean(),
   starts_at: z.string().nullable().describe("Local time actually recorded."),
+  weekday: z.string().nullable().describe(
+    "Which day of the week that is. Use THIS when confirming to the customer — do not work it out yourself.",
+  ),
   reminder_at: z.string().nullable().describe(
     "When the customer will be reminded, local time, or null when no reminder was scheduled.",
   ),
@@ -377,6 +400,7 @@ async function bookImplementation(
   const refuse = (reason: string) => ({
     booked: false,
     starts_at: null,
+    weekday: null,
     reminder_at: null,
     refused: `${reason} (today is ${today})`,
   });
@@ -446,6 +470,7 @@ async function bookImplementation(
   return {
     booked: true,
     starts_at: utcToLocal(startsAt, timeZone),
+    weekday: weekdayOf(startsAt, timeZone),
     reminder_at: reminderAt ? utcToLocal(reminderAt, timeZone) : null,
     refused: null,
   };
@@ -557,6 +582,9 @@ const RescheduleInputSchema = z.object({
 const RescheduleOutputSchema = z.object({
   rescheduled: z.boolean(),
   starts_at: z.string().nullable(),
+  weekday: z.string().nullable().describe(
+    "Which day of the week the new time falls on. Use THIS when confirming.",
+  ),
   refused: z.string().nullable(),
 });
 
@@ -573,6 +601,7 @@ async function rescheduleImplementation(
   const refuse = (reason: string) => ({
     rescheduled: false,
     starts_at: null,
+    weekday: null,
     refused: `${reason} (today is ${today})`,
   });
 
@@ -634,6 +663,7 @@ async function rescheduleImplementation(
   return {
     rescheduled: true,
     starts_at: utcToLocal(to, timeZone),
+    weekday: weekdayOf(to, timeZone),
     refused: null,
   };
 }
