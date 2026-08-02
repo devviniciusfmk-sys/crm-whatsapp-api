@@ -113,3 +113,27 @@ Deno.test("semana com um dia configurado continua sendo descrita", () => {
   assertEquals(runtime.business_hours?.monday, "09:00-18:00");
   assertEquals(runtime.business_hours?.sunday, "closed");
 });
+
+Deno.test("canais de conversa recebem as regras; e-mail e afins não", () => {
+  const make = (service: string) =>
+    buildRuntimeContext(
+      {
+        organization: { extra: { timezone: "America/Sao_Paulo" } },
+        conversation: { contact_address: "5511999999999", service },
+        contact: undefined,
+      } as unknown as Parameters<typeof buildRuntimeContext>[0],
+    ) as {
+      channel?: { formatting: string };
+    };
+
+  // Um asterisco é o negrito do WhatsApp; dois chegam como caractere.
+  assertEquals(
+    make("whatsapp").channel?.formatting.includes("ONE asterisk"),
+    true,
+  );
+  assertEquals(make("whatsapp-web").channel !== undefined, true);
+  // A conversa de teste segue as mesmas regras: um ensaio com outras regras
+  // é um ensaio que mente.
+  assertEquals(make("local").channel !== undefined, true);
+  assertEquals(make("email").channel, undefined);
+});

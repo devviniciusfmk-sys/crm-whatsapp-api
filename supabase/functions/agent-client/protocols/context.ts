@@ -112,6 +112,43 @@ function describeHours(hours: BusinessHours): Record<string, string> {
   );
 }
 
+/**
+ * O que o canal aceita, e como se escreve nele.
+ *
+ * Metade disto é fato, não gosto: o WhatsApp marca negrito com um asterisco,
+ * não dois. Um modelo treinado em markdown escreve `**10:30**`, e o cliente
+ * recebe os asteriscos na tela. Título com `#`, tabela com `|`, link em
+ * colchetes — nada disso existe ali; chega como sujeira.
+ *
+ * A outra metade é o que faz parecer gente. Resposta de WhatsApp é curta e
+ * corrida; lista com marcadores, negrito em cada horário e emoji de abertura
+ * são a assinatura visual de um robô. Um atendente escreveria "tenho 10:30,
+ * meio-dia ou 13:30, qual fica melhor?" — numa linha.
+ *
+ * Fica no contexto e não no prompt de cada organização porque é verdade sobre
+ * o meio, igual ao relógio e ao horário de atendimento. Quem quiser outra voz
+ * escreve nas instruções do agente, que vêm depois e mandam mais. - 2026/08/02
+ */
+function channelOf(service: string) {
+  // `local` entra junto de propósito: é a conversa de teste do próprio
+  // produto, e existe para ensaiar o que vai acontecer no WhatsApp. Um ensaio
+  // que segue outras regras é um ensaio que mente — exatamente o defeito que
+  // este projeto passou o dia caçando.
+  const conversational = ["whatsapp", "whatsapp-web", "local"];
+
+  if (!conversational.includes(service)) return {};
+
+  return {
+    channel: {
+      name: "WhatsApp",
+      formatting:
+        "*bold* with ONE asterisk, _italic_, ~strikethrough~, ```code```. Markdown does NOT render here: never write **double asterisks**, # headings, | tables |, or [links](url) — they reach the customer as literal characters.",
+      style:
+        "Write like a person typing on a phone: short, direct, no bullet lists, at most one emoji and usually none. Offer options inside a sentence instead of as a list. Do not restate what the customer just said before answering it.",
+    },
+  };
+}
+
 export function buildRuntimeContext(context: RequestContext) {
   const timezone = context.organization.extra?.timezone || DEFAULT_TIMEZONE;
   const hours = context.organization.extra?.business_hours;
@@ -131,6 +168,7 @@ export function buildRuntimeContext(context: RequestContext) {
 
   return {
     now: `${weekday}, ${date} ${time} (${timezone})`,
+    ...channelOf(context.conversation.service),
     ...(configured
       ? {
         business_hours: describeHours(configured),
