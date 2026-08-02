@@ -177,7 +177,7 @@ export async function listWabaNumbers(
   }
 
   const numbers = await graph(
-    `${payload.waba_id}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status&limit=100`,
+    `${payload.waba_id}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status&limit=100`,
     token,
     "Could not list the numbers of this WhatsApp Business Account. Check the WABA id and that the system user has access to it.",
   ) as {
@@ -187,6 +187,9 @@ export async function listWabaNumbers(
       verified_name?: string;
       quality_rating?: string;
       code_verification_status?: string;
+      /** "CLOUD_API" once the number is registered for the API. */
+      platform_type?: string;
+      status?: string;
     }[];
   };
 
