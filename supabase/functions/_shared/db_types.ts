@@ -627,7 +627,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          key: string
+          key_hash: string
           name: string
           organization_id: string
           role: Database["public"]["Enums"]["role"]
@@ -636,7 +636,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
-          key: string
+          key_hash: string
           name: string
           organization_id: string
           role?: Database["public"]["Enums"]["role"]
@@ -645,7 +645,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
-          key?: string
+          key_hash?: string
           name?: string
           organization_id?: string
           role?: Database["public"]["Enums"]["role"]
@@ -654,6 +654,75 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "api_keys_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      appointments: {
+        Row: {
+          contact_address: string
+          conversation_id: string | null
+          created_at: string
+          duration_minutes: number | null
+          external_id: string | null
+          extra: Json
+          id: string
+          notes: string | null
+          organization_address: string
+          organization_id: string
+          service: Database["public"]["Enums"]["service"]
+          starts_at: string
+          status: Database["public"]["Enums"]["appointment_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          contact_address: string
+          conversation_id?: string | null
+          created_at?: string
+          duration_minutes?: number | null
+          external_id?: string | null
+          extra?: Json
+          id?: string
+          notes?: string | null
+          organization_address: string
+          organization_id: string
+          service: Database["public"]["Enums"]["service"]
+          starts_at: string
+          status?: Database["public"]["Enums"]["appointment_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          contact_address?: string
+          conversation_id?: string | null
+          created_at?: string
+          duration_minutes?: number | null
+          external_id?: string | null
+          extra?: Json
+          id?: string
+          notes?: string | null
+          organization_address?: string
+          organization_id?: string
+          service?: Database["public"]["Enums"]["service"]
+          starts_at?: string
+          status?: Database["public"]["Enums"]["appointment_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "appointments_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1141,6 +1210,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      cancel_scheduled_message: {
+        Args: { p_message_id: string }
+        Returns: undefined
+      }
       contact_address_update_rules: {
         Args: {
           p_address: string
@@ -1151,10 +1224,30 @@ export type Database = {
         }
         Returns: boolean
       }
+      create_api_key: {
+        Args: {
+          p_name: string
+          p_organization_id: string
+          p_role?: Database["public"]["Enums"]["role"]
+        }
+        Returns: {
+          api_key: string
+          api_key_id: string
+        }[]
+      }
+      delete_whatsapp_access_token: {
+        Args: { p_address: string; p_organization_id: string }
+        Returns: undefined
+      }
       get_authorized_orgs: {
         Args: { role?: Database["public"]["Enums"]["role"] }
         Returns: string[]
       }
+      get_whatsapp_access_token: {
+        Args: { p_address: string; p_organization_id: string }
+        Returns: string
+      }
+      hash_api_key: { Args: { p_key: string }; Returns: string }
       init_data: {
         Args: {
           p_limit?: number
@@ -1183,8 +1276,29 @@ export type Database = {
         Args: { p_id: string; p_name: string }
         Returns: boolean
       }
+      set_contact_address_blocked: {
+        Args: {
+          p_address: string
+          p_blocked?: boolean
+          p_service: Database["public"]["Enums"]["service"]
+        }
+        Returns: undefined
+      }
+      set_message_hidden: {
+        Args: { p_hidden?: boolean; p_message_id: string }
+        Returns: undefined
+      }
+      set_whatsapp_access_token: {
+        Args: { p_address: string; p_organization_id: string; p_token: string }
+        Returns: undefined
+      }
+      whatsapp_token_secret_name: {
+        Args: { p_address: string; p_organization_id: string }
+        Returns: string
+      }
     }
     Enums: {
+      appointment_status: "scheduled" | "done" | "cancelled" | "no_show"
       direction: "incoming" | "outgoing" | "internal"
       log_level: "info" | "warning" | "error"
       role: "owner" | "admin" | "member"
@@ -1879,6 +1993,7 @@ export const Constants = {
   },
   public: {
     Enums: {
+      appointment_status: ["scheduled", "done", "cancelled", "no_show"],
       direction: ["incoming", "outgoing", "internal"],
       log_level: ["info", "warning", "error"],
       role: ["owner", "admin", "member"],
