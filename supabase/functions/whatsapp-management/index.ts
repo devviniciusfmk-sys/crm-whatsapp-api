@@ -32,6 +32,10 @@ import {
   performEmbeddedSignup,
   SignupPayload,
 } from "./embedded_signup.ts";
+import {
+  type ManualSignupPayload,
+  performManualSignup,
+} from "./manual_signup.ts";
 import { type User } from "@supabase/supabase-js";
 
 type TemplatePayload = {
@@ -500,6 +504,53 @@ app.post("/whatsapp-management/signup", requireRoles(["owner"]), async (c) => {
     throw error;
   }
 });
+
+// Manual connection, for accounts that will not use the Facebook dialog. Owner
+// only, same as the embedded flow: it takes a permanent token.
+app.post(
+  "/whatsapp-management/signup/manual",
+  requireRoles(["owner"]),
+  async (c) => {
+    const payload = await c.req.json<ManualSignupPayload>();
+
+    // The token is deliberately absent from this log line. Everything else
+    // about the payload is an id.
+    log.info("Manual signup payload", { ...payload, access_token: undefined });
+
+    const unsecureClient = createUnsecureClient();
+
+    try {
+      const address = await performManualSignup(unsecureClient, payload);
+
+      log.info("Manual signup completed", {
+        organization_id: payload.organization_id,
+        address: address.address,
+      });
+
+      return c.json(address);
+    } catch (error) {
+      if (error instanceof HTTPException) {
+        log.error(error.message, error);
+
+        await unsecureClient
+          .from("logs")
+          .insert({
+            organization_id: payload.organization_id,
+            category: "signup",
+            service: "whatsapp",
+            level: "error",
+            message: error.message,
+            metadata: error.cause as Json,
+          })
+          .throwOnError();
+      } else {
+        log.error("Manual signup failed", error);
+      }
+
+      throw error;
+    }
+  },
+);
 
 app.delete(
   "/whatsapp-management/signup",

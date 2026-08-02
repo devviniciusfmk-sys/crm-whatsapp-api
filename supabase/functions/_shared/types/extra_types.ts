@@ -76,7 +76,15 @@ export type WhatsAppOrganizationAddressExtra = {
   business_id?: string;
   phone_number?: string;
   verified_name?: string;
-  flow_type?: "only_waba" | "new_phone_number" | "existing_phone_number";
+  // "manual" is the connection made by pasting a system user token instead of
+  // going through Meta's dialog — see whatsapp-management/manual_signup.ts.
+  flow_type?:
+    | "only_waba"
+    | "new_phone_number"
+    | "existing_phone_number"
+    | "manual";
+  /** ISO, or null when the token never expires. Only set by the manual flow. */
+  token_expires_at?: string | null;
   // No `access_token` here on purpose: the Meta token is a Vault secret, read
   // through `getWhatsAppAccessToken` (_shared/whatsapp_token.ts). `extra` is
   // member-readable via RLS and is echoed to customer webhooks.
