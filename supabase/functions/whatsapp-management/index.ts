@@ -33,8 +33,10 @@ import {
   SignupPayload,
 } from "./embedded_signup.ts";
 import {
+  listWabaNumbers,
   type ManualSignupPayload,
   performManualSignup,
+  type WabaNumbersPayload,
 } from "./manual_signup.ts";
 import { type User } from "@supabase/supabase-js";
 
@@ -504,6 +506,21 @@ app.post("/whatsapp-management/signup", requireRoles(["owner"]), async (c) => {
     throw error;
   }
 });
+
+// The numbers of a WABA, so the second one is a click instead of a form.
+app.post(
+  "/whatsapp-management/signup/manual/numbers",
+  requireRoles(["owner"]),
+  async (c) => {
+    const payload = await c.req.json<WabaNumbersPayload>();
+
+    log.info("WABA numbers payload", { ...payload, access_token: undefined });
+
+    const result = await listWabaNumbers(createUnsecureClient(), payload);
+
+    return c.json(result);
+  },
+);
 
 // Manual connection, for accounts that will not use the Facebook dialog. Owner
 // only, same as the embedded flow: it takes a permanent token.

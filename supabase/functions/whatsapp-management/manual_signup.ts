@@ -2,7 +2,10 @@ import * as log from "../_shared/logger.ts";
 import { HTTPException } from "jsr:@hono/hono/http-exception";
 import type { createClient } from "../_shared/supabase.ts";
 import { ContentfulStatusCode } from "jsr:@hono/hono/utils/http-status";
-import { setWhatsAppAccessToken } from "../_shared/whatsapp_token.ts";
+import {
+  getWhatsAppAccessToken,
+  setWhatsAppAccessToken,
+} from "../_shared/whatsapp_token.ts";
 
 /**
  * Connecting a number without the Facebook popup.
@@ -109,11 +112,133 @@ async function inspectToken(token: string) {
   return null;
 }
 
+/**
+ * The token this organization already holds for a WhatsApp Business Account.
+ *
+ * A WABA usually carries more than one number, and the credential belongs to
+ * the account rather than to any one of them. Asking for it again to connect
+ * the second number would be asking someone to go back to Business Manager and
+ * mint a token they already gave us — the kind of friction that ends with the
+ * same token pasted into a notes file so it is at hand next time.
+ *
+ * It is stored per address in the Vault, so any connected number of that WABA
+ * can answer for it. - 2026/08/02
+ */
+async function storedTokenFor(
+  client: ReturnType<typeof createClient>,
+  organization_id: string,
+  waba_id: string,
+): Promise<string | null> {
+  const { data } = await client
+    .from("organizations_addresses")
+    .select("address")
+    .eq("organization_id", organization_id)
+    .eq("service", "whatsapp")
+    .eq("status", "connected")
+    .eq("extra->>waba_id", waba_id)
+    .limit(1);
+
+  const address = data?.[0]?.address;
+
+  if (!address) return null;
+
+  try {
+    return await getWhatsAppAccessToken(client, organization_id, address);
+  } catch {
+    // A connected row whose secret is missing is a broken connection, not a
+    // reason to fail the lookup: the caller falls back to asking for a token.
+    return null;
+  }
+}
+
+export type WabaNumbersPayload = {
+  organization_id: string;
+  waba_id: string;
+  /** Omitted when the organization already connected a number of this WABA. */
+  access_token?: string;
+};
+
+/**
+ * The numbers of a WhatsApp Business Account, and which are already connected.
+ *
+ * This exists so nobody has to type a phone number id. It is a long run of
+ * digits that looks exactly like the WABA id sitting above it in the same
+ * console, and swapping the two was the likeliest mistake on the manual
+ * screen. Meta knows which numbers belong to the account; asking it is both
+ * easier and correct by construction.
+ */
+export async function listWabaNumbers(
+  client: ReturnType<typeof createClient>,
+  payload: WabaNumbersPayload,
+) {
+  if (!payload.organization_id || !payload.waba_id) {
+    throw new HTTPException(400, {
+      message: "Missing 'organization_id' or 'waba_id' body param!",
+    });
+  }
+
+  const token = payload.access_token?.trim() ||
+    await storedTokenFor(client, payload.organization_id, payload.waba_id);
+
+  if (!token) {
+    throw new HTTPException(400, {
+      message:
+        "No stored token for this WhatsApp Business Account. Paste a system user token.",
+    });
+  }
+
+  const inspected = await inspectToken(token);
+
+  if (!inspected) {
+    throw new HTTPException(400, {
+      message:
+        "This token was not issued to this platform's Meta app. Messages are delivered to the app that owns the token, so this number would send but never receive. Create the system user token from inside the app this platform uses.",
+    });
+  }
+
+  const numbers = await graph(
+    `${payload.waba_id}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status&limit=100`,
+    token,
+    "Could not list the numbers of this WhatsApp Business Account. Check the WABA id and that the system user has access to it.",
+  ) as {
+    data?: {
+      id: string;
+      display_phone_number?: string;
+      verified_name?: string;
+      quality_rating?: string;
+      code_verification_status?: string;
+    }[];
+  };
+
+  const { data: existing } = await client
+    .from("organizations_addresses")
+    .select("address, status")
+    .eq("organization_id", payload.organization_id)
+    .eq("service", "whatsapp");
+
+  const connected = new Set(
+    (existing ?? []).filter((row) => row.status === "connected").map((row) =>
+      row.address
+    ),
+  );
+
+  return {
+    token_expires_at: inspected.expires_at
+      ? new Date(inspected.expires_at * 1000).toISOString()
+      : null,
+    numbers: (numbers.data ?? []).map((number) => ({
+      ...number,
+      connected: connected.has(number.id),
+    })),
+  };
+}
+
 export type ManualSignupPayload = {
   organization_id: string;
   phone_number_id: string;
   waba_id: string;
-  access_token: string;
+  /** Omitted when the organization already connected a number of this WABA. */
+  access_token?: string;
   business_id?: string;
   callback_url?: string;
   verify_token?: string;
@@ -127,7 +252,6 @@ export async function performManualSignup(
     "organization_id",
     "phone_number_id",
     "waba_id",
-    "access_token",
   ];
 
   for (const field of required) {
@@ -138,7 +262,15 @@ export async function performManualSignup(
     }
   }
 
-  const token = payload.access_token.trim();
+  const token = payload.access_token?.trim() ||
+    await storedTokenFor(client, payload.organization_id, payload.waba_id);
+
+  if (!token) {
+    throw new HTTPException(400, {
+      message:
+        "No stored token for this WhatsApp Business Account. Paste a system user token.",
+    });
+  }
 
   const ctx = {
     organization_id: payload.organization_id,
