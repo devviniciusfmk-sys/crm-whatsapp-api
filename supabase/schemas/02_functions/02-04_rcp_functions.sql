@@ -155,3 +155,42 @@ from public;
 grant execute on function
   public.set_contact_address_blocked(text, public.service, boolean)
 to anon, authenticated, service_role;
+
+-- Cancels a message that was scheduled and has not gone out yet.
+--
+-- Deleting, not hiding. A future-dated row is not a message: nothing reached
+-- WhatsApp, nobody saw it, and there is no history worth keeping — unlike
+-- public.set_message_hidden, which deals with messages the customer already
+-- received and whose copy cannot be recalled.
+--
+-- Goes through a function for the same reason everything else here does:
+-- public.messages grants clients no delete at all, and the blanket rule is
+-- worth keeping. What this opens is narrow and checked in one place: a row of
+-- this member's organization, outgoing, still in the future, and still only
+-- pending. A message already accepted, sent, delivered or failed is history
+-- and stays.
+--
+-- The window matters. `timestamp > now()` is what makes this safe to expose:
+-- the dispatcher only picks up rows whose hour has come, so anything this
+-- function can delete is provably unsent. - 2026/08/02
+create function public.cancel_scheduled_message(p_message_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $$
+begin
+  delete from public.messages
+  where id = p_message_id
+    and organization_id in (select public.get_authorized_orgs('member'))
+    and direction = 'outgoing'::public.direction
+    and timestamp > now()
+    and status ? 'pending'
+    and not (status ?| array['accepted', 'sent', 'delivered', 'read', 'failed']);
+
+  if not found then
+    raise exception 'scheduled message not found, already sent, or not authorized'
+      using errcode = 'insufficient_privilege';
+  end if;
+end;
+$$;
