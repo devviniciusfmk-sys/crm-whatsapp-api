@@ -509,6 +509,70 @@ app.post("/whatsapp-management/signup", requireRoles(["owner"]), async (c) => {
   }
 });
 
+/**
+ * Whether this platform attends a number, without touching Meta.
+ *
+ * Disconnecting used to mean one thing only: deregistering the number from the
+ * Cloud API, which is destructive, needs the 2FA PIN to undo, and the code
+ * refuses it for every number that was not created through the dialog — so
+ * most numbers had no way back at all. Meanwhile the webhook already keys off
+ * this status: a row that is not "connected" stops receiving.
+ *
+ * So attendance is a flag, and a reversible one. Deregistering stays where it
+ * was, under its own name, for whoever actually means it. - 2026/08/02
+ */
+app.put(
+  "/whatsapp-management/attendance",
+  requireRoles(["owner"]),
+  async (c) => {
+    const { organization_id, organization_address, connected } = await c.req
+      .json<{
+        organization_id: string;
+        organization_address: string;
+        connected: boolean;
+      }>();
+
+    if (!organization_address || typeof connected !== "boolean") {
+      throw new HTTPException(400, {
+        message: "Missing 'organization_address' or 'connected' body param!",
+      });
+    }
+
+    const client = createUnsecureClient();
+
+    const { data } = await client
+      .from("organizations_addresses")
+      .update({ status: connected ? "connected" : "disconnected" })
+      .eq("organization_id", organization_id)
+      .eq("address", organization_address)
+      .eq("service", "whatsapp")
+      .select()
+      .maybeSingle()
+      .throwOnError();
+
+    // `single()` here turned a wrong id into a 500 and an "Internal Server
+    // Error" on screen, which tells whoever is reading it nothing at all.
+    if (!data) {
+      throw new HTTPException(404, {
+        message: "No such WhatsApp number in this organization.",
+      });
+    }
+
+    await client.from("logs").insert({
+      organization_id,
+      organization_address,
+      category: "signup",
+      service: "whatsapp",
+      level: "info",
+      message: connected
+        ? "WhatsApp number attended again"
+        : "WhatsApp number no longer attended",
+    });
+
+    return c.json(data);
+  },
+);
+
 // Which account really owns a connected number. Read-only unless `apply`.
 app.post(
   "/whatsapp-management/account",

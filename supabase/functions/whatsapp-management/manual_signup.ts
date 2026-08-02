@@ -202,6 +202,12 @@ export async function listWabaNumbers(
     ),
   );
 
+  // A number this organization has already met, whether or not it is being
+  // attended right now. `connected` alone would offer a number that is sitting
+  // on the same screen a few rows up, marked as not attended — the same number
+  // twice, in two different words.
+  const known = new Set((existing ?? []).map((row) => row.address));
+
   return {
     token_expires_at: inspected.expires_at
       ? new Date(inspected.expires_at * 1000).toISOString()
@@ -209,6 +215,7 @@ export async function listWabaNumbers(
     numbers: (numbers.data ?? []).map((number) => ({
       ...number,
       connected: connected.has(number.id),
+      known: known.has(number.id),
     })),
   };
 }
