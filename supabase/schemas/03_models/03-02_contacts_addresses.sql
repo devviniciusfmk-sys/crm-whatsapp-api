@@ -67,6 +67,16 @@ execute function public.manage_contact_on_address_sync();
 
 -- Runs before cleanup_unlinked_address_if_empty (alphabetical order) so that
 -- the orphaned contact is deleted before the current address (if any) is.
+-- Depois do gatilho de sincronização (ordem alfabética: create_ < manage_ é
+-- falso, então o nome escolhido garante que este rode antes e desista quando
+-- houver `synced`). Ambos são BEFORE e ambos checam contact_id, então a ordem
+-- entre eles não muda o resultado. - 2026/08/03
+create trigger create_contact_on_first_address
+before insert
+on public.contacts_addresses
+for each row
+execute function public.create_contact_on_first_address();
+
 create trigger cleanup_orphaned_contact_on_sync
 after update
 on public.contacts_addresses

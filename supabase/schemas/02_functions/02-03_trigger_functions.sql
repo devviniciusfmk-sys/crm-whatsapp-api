@@ -413,3 +413,49 @@ begin
   return new;
 end;
 $$;
+
+-- BEFORE trigger: dá ficha a quem escreve pela primeira vez.
+--
+-- O sistema já guardava número e nome do perfil em contacts_addresses, mas a
+-- ficha em public.contacts só nascia na migração de uma conta do app WhatsApp
+-- Business — o gatilho ao lado só dispara com `extra.synced`. Quem simplesmente
+-- mandou mensagem ficava sem ficha: numa instalação real, 33 endereços
+-- conversados e zero contatos. A tela de Contatos lê `contacts`, então ela
+-- aparecia vazia para quem já tinha atendido dezenas de pessoas.
+--
+-- E sem ficha não há agrupar, marcar nem montar lista — que é o que uma
+-- campanha precisa.
+--
+-- O nome inicial é o do perfil do WhatsApp, escolhido pela própria pessoa:
+-- vem "Ju 💅" e vem "Não atende". Serve de ponto de partida, e a ficha é
+-- editável na tela.
+--
+-- Só na inserção, e só quando ninguém já ligou uma ficha. Atualização não
+-- entra: renomear o perfil no WhatsApp não deve criar uma segunda ficha nem
+-- sobrescrever o nome que a equipe corrigiu à mão. - 2026/08/03
+create function public.create_contact_on_first_address() returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.contact_id is not null then
+    return new;
+  end if;
+
+  -- O caminho da sincronização tem dono: manage_contact_on_address_sync roda
+  -- antes e usa o nome de lá. Duas funções criando ficha para a mesma linha
+  -- criariam duas fichas.
+  if new.extra->'synced' is not null then
+    return new;
+  end if;
+
+  insert into public.contacts (organization_id, name)
+  values (
+    new.organization_id,
+    nullif(new.extra->>'name', '')
+  )
+  returning id into new.contact_id;
+
+  return new;
+end;
+$$;
