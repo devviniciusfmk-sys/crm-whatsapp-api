@@ -603,9 +603,26 @@ export class ChatCompletionsHandler
         .throwOnError();
     }
 
+    // Nem toda resposta 200 traz uma resposta. Há provedor que devolve o erro
+    // dentro do corpo, com `choices` ausente, e `choices[0]` estourava
+    // "Cannot read properties of undefined (reading '0')" — que era o que
+    // chegava na conversa, sem dizer nada a ninguém. Apareceu ao trocar o
+    // modelo para um servido pela Groq, e custou uma investigação inteira para
+    // descobrir que não era a agenda nem o modelo, era o corpo da resposta.
+    // - 2026/08/03
+    const choice = response.choices?.[0];
+
+    if (!choice) {
+      const detail =
+        (response as unknown as { error?: { message?: string } }).error
+          ?.message ?? JSON.stringify(response).slice(0, 300);
+
+      throw new Error(`The model returned no answer: ${detail}`);
+    }
+
     return {
-      finish_reason: response.choices[0].finish_reason,
-      message: response.choices[0].message,
+      finish_reason: choice.finish_reason,
+      message: choice.message,
     };
   }
 
