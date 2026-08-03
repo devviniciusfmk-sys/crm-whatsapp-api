@@ -112,8 +112,15 @@ export type OrganizationExtra = {
     default_minutes?: number;
     /** Folga depois de cada compromisso, em minutos. */
     buffer_minutes?: number;
-    /** Serviços com duração própria. Vazio significa "todos duram o padrão". */
-    services?: { name: string; minutes: number }[];
+    /**
+     * Serviços com duração própria. Vazio significa "todos duram o padrão".
+     *
+     * `price` é o valor sugerido, e vai para o compromisso na hora de marcar —
+     * o preço de lá é que vale depois, porque preço muda e o histórico tem de
+     * continuar dizendo o que foi cobrado naquele dia. Ausente é serviço sem
+     * preço cadastrado, e o compromisso nasce sem valor.
+     */
+    services?: { name: string; minutes: number; price?: number }[];
   };
 };
 

@@ -666,6 +666,7 @@ export type Database = {
           contact_address: string
           conversation_id: string | null
           created_at: string
+          deposit: number | null
           duration_minutes: number | null
           external_id: string | null
           extra: Json
@@ -673,6 +674,7 @@ export type Database = {
           notes: string | null
           organization_address: string
           organization_id: string
+          price: number | null
           service: Database["public"]["Enums"]["service"]
           starts_at: string
           status: Database["public"]["Enums"]["appointment_status"]
@@ -683,6 +685,7 @@ export type Database = {
           contact_address: string
           conversation_id?: string | null
           created_at?: string
+          deposit?: number | null
           duration_minutes?: number | null
           external_id?: string | null
           extra?: Json
@@ -690,6 +693,7 @@ export type Database = {
           notes?: string | null
           organization_address: string
           organization_id: string
+          price?: number | null
           service: Database["public"]["Enums"]["service"]
           starts_at: string
           status?: Database["public"]["Enums"]["appointment_status"]
@@ -700,6 +704,7 @@ export type Database = {
           contact_address?: string
           conversation_id?: string | null
           created_at?: string
+          deposit?: number | null
           duration_minutes?: number | null
           external_id?: string | null
           extra?: Json
@@ -707,6 +712,7 @@ export type Database = {
           notes?: string | null
           organization_address?: string
           organization_id?: string
+          price?: number | null
           service?: Database["public"]["Enums"]["service"]
           starts_at?: string
           status?: Database["public"]["Enums"]["appointment_status"]

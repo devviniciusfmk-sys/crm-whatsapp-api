@@ -33,6 +33,20 @@ create table public.appointments (
   -- começar.
   duration_minutes integer,
   status public.appointment_status default 'scheduled'::public.appointment_status not null,
+  -- Quanto custa e quanto já entrou.
+  --
+  -- Guardado no compromisso, e não só no catálogo de serviços, porque preço
+  -- muda: o corte que custa 45 hoje custa 55 em outubro, e o histórico tem de
+  -- continuar dizendo o que foi cobrado naquele dia. O catálogo é o valor
+  -- sugerido na hora de marcar; isto é o valor daquele atendimento.
+  --
+  -- `numeric`, como o resto do dinheiro deste banco (billing.payments.amount).
+  -- Nulo é "ninguém precificou", que não é a mesma coisa que zero — zero é o
+  -- atendimento de cortesia, e a diferença aparece em qualquer relatório.
+  price numeric,
+  -- Sinal pago para segurar o horário. Só registro: nada aqui move dinheiro, e
+  -- quem confirma o recebimento é quem atende. - 2026/08/03
+  deposit numeric,
   notes text,
   -- Evento correspondente no Google Calendar, quando sincronizado.
   external_id text,

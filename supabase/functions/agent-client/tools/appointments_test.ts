@@ -4,6 +4,7 @@ import {
   fitsOpeningHours,
   localToUtc,
   minutesFor,
+  priceFor,
   utcToLocal,
 } from "./appointments.ts";
 import type { BusinessHours } from "../../_shared/types/extra_types.ts";
@@ -80,8 +81,10 @@ Deno.test("horário de verão: a segunda passada é o que acerta", () => {
 
 const CATALOG = {
   services: [
-    { name: "Corte", minutes: 30 },
-    { name: "Coloração", minutes: 120 },
+    { name: "Corte", minutes: 30, price: 45 },
+    { name: "Coloração", minutes: 120, price: 180 },
+    // Sem preço: existe, atende, mas ninguém precificou.
+    { name: "Barba", minutes: 20 },
   ],
 };
 
@@ -124,6 +127,25 @@ Deno.test("o título serve quando o serviço não vem separado", () => {
 
 Deno.test("serviço fora do catálogo é recusa, não palpite", () => {
   assertEquals(minutesFor({ service: "manicure" }, CATALOG), null);
+});
+
+// ---------------------------------------------------------------------------
+// Preço
+// ---------------------------------------------------------------------------
+
+Deno.test("o preço sai do catálogo", () => {
+  assertEquals(priceFor({ service: "Coloração" }, CATALOG), 180);
+  assertEquals(priceFor({ title: "corte" }, CATALOG), 45);
+});
+
+Deno.test("serviço sem preço cadastrado fica sem valor, e não em zero", () => {
+  // Zero é o atendimento de cortesia; ausente é ninguém ter precificado. Um
+  // relatório que somasse os dois diria que a barba não fatura.
+  assertEquals(priceFor({ service: "Barba" }, CATALOG), null);
+});
+
+Deno.test("sem catálogo não há preço a sugerir", () => {
+  assertEquals(priceFor({ title: "Corte" }, { default_minutes: 30 }), null);
 });
 
 // ---------------------------------------------------------------------------

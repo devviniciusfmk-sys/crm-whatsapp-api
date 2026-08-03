@@ -211,12 +211,40 @@ export function minutesFor(
 
   if (!catalog.length) return input.duration_minutes ?? fallbackMinutes(config);
 
-  // O `title` também porque ele costuma ser o nome do serviço nas palavras do
-  // cliente; exigir os dois campos preenchidos seria recusar o acerto.
-  const asked = input.service?.trim() || input.title?.trim() || "";
-  const found = catalog.find((service) => sameService(service.name, asked));
+  const found = serviceIn(catalog, input);
 
   return found ? found.minutes : null;
+}
+
+/**
+ * O serviço do catálogo que corresponde ao pedido.
+ *
+ * O `title` também entra na busca porque ele costuma ser o nome do serviço nas
+ * palavras do cliente; exigir os dois campos preenchidos seria recusar o
+ * acerto.
+ */
+function serviceIn(
+  catalog: NonNullable<AppointmentsConfig["services"]>,
+  input: { service?: string; title?: string },
+) {
+  const asked = input.service?.trim() || input.title?.trim() || "";
+
+  return catalog.find((service) => sameService(service.name, asked));
+}
+
+/**
+ * Quanto custa, pelo catálogo.
+ *
+ * `null` quando não há preço cadastrado — que não é zero. Zero é o atendimento
+ * de cortesia, e a diferença aparece em qualquer relatório. - 2026/08/03
+ */
+export function priceFor(
+  input: { service?: string; title?: string },
+  config: AppointmentsConfig,
+): number | null {
+  const found = serviceIn(config.services ?? [], input);
+
+  return found?.price ?? null;
 }
 
 /**
@@ -318,9 +346,15 @@ const ListOutputSchema = z.object({
     "Free time kept after every appointment. The next one can only start this many minutes after the previous one ends.",
   ),
   services: z.array(
-    z.object({ name: z.string(), minutes: z.number() }),
+    z.object({
+      name: z.string(),
+      minutes: z.number(),
+      price: z.number().nullable().describe(
+        "What it costs. Null means the business has not priced it — say you will confirm, never guess a number.",
+      ),
+    }),
   ).describe(
-    "What this business offers, and how long each takes. WHEN THIS LIST IS NOT EMPTY, `book_appointment` accepts only these names: offer them by name, pass the name you agreed on, and never invent a duration.",
+    "What this business offers, how long each takes and what it costs. WHEN THIS LIST IS NOT EMPTY, `book_appointment` accepts only these names: offer them by name, pass the name you agreed on, and never invent a duration or a price.",
   ),
   days: z.array(DaySchema),
 });
@@ -339,7 +373,11 @@ async function listImplementation(
   const header = {
     default_duration_minutes: fallbackMinutes(config),
     buffer_minutes: config.buffer_minutes ?? 0,
-    services: config.services ?? [],
+    services: (config.services ?? []).map((service) => ({
+      name: service.name,
+      minutes: service.minutes,
+      price: service.price ?? null,
+    })),
   };
 
   const from = localToUtc(`${input.date} 00:00`, timeZone);
@@ -455,6 +493,9 @@ const BookOutputSchema = z.object({
   ),
   reminder_at: z.string().nullable().describe(
     "When the customer will be reminded, local time, or null when no reminder was scheduled.",
+  ),
+  price: z.number().nullable().describe(
+    "What was recorded for this appointment, from the business's own price list. Null means it is not priced — do not quote a figure of your own.",
   ),
   refused: z.string().nullable().describe(
     "Why it could not be booked. Tell the customer this reason and offer another time.",
@@ -593,6 +634,7 @@ async function bookImplementation(
     starts_at: null,
     weekday: null,
     reminder_at: null,
+    price: null,
     refused: `${reason} (today is ${today})`,
   });
 
@@ -660,8 +702,9 @@ async function bookImplementation(
       // A duração resolvida, e não a que veio na chamada: é ela que reservou o
       // espaço, e gravar `null` obrigaria todo mundo a adivinhar de novo
       // depois — inclusive a tela da agenda, que mostraria "sem duração" para
-      // um compromisso de duas horas.
+      // um compromisso de duas horas. Vale igual para o preço.
       duration_minutes: minutes,
+      price: priceFor(input, config),
       notes: input.notes ?? null,
     })
     .select()
@@ -683,6 +726,7 @@ async function bookImplementation(
     starts_at: utcToLocal(startsAt, timeZone),
     weekday: weekdayOf(startsAt, timeZone),
     reminder_at: reminderAt ? utcToLocal(reminderAt, timeZone) : null,
+    price: (data.price as number | null) ?? null,
     refused: null,
   };
 }
