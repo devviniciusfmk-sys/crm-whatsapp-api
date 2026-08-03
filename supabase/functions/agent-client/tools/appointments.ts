@@ -116,6 +116,21 @@ export function weekdayOf(date: Date, timeZone: string): string {
     .toLowerCase();
 }
 
+/** Índice do dia na semana como `BusinessHours` a guarda: domingo primeiro. */
+const WEEKDAY_ORDER = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+function wallClockDayIndex(date: Date, timeZone: string): number {
+  return WEEKDAY_ORDER.indexOf(weekdayOf(date, timeZone));
+}
+
 /**
  * O horário de atendimento, quando de fato existe.
  *
@@ -144,11 +159,14 @@ function timezoneOf(context: RequestContext): string {
 
 const ListInputSchema = z.object({
   date: z.string().describe(
-    "The day to look at, as YYYY-MM-DD in the business's own timezone. Use the current date you were given to resolve words like 'tomorrow'.",
+    "The first day to look at, as YYYY-MM-DD in the business's own timezone. Use the current date you were given to resolve words like 'tomorrow'.",
+  ),
+  until: z.string().optional().describe(
+    "Last day to look at, YYYY-MM-DD, inclusive. Use it whenever the customer asks about more than one day — 'this week', 'any day', 'the next few days' — so you get the answer in ONE call instead of one call per day.",
   ),
 });
 
-const ListOutputSchema = z.object({
+const DaySchema = z.object({
   date: z.string(),
   weekday: z.string().describe(
     "Which day of the week that date falls on. Use THIS when you name the day to the customer — do not work it out yourself.",
@@ -156,6 +174,8 @@ const ListOutputSchema = z.object({
   open: z.boolean().describe(
     "False when the business does not open at all on that day. Do not offer times on a closed day.",
   ),
+  opens_at: z.string().nullable().describe("Opening time, HH:MM, or null."),
+  closes_at: z.string().nullable().describe("Closing time, HH:MM, or null."),
   taken: z.array(
     z.object({
       starts_at: z.string().describe("Local time, HH:MM."),
@@ -165,6 +185,10 @@ const ListOutputSchema = z.object({
   ).describe(
     "Slots already booked that day, for every customer. Offer times that do not collide with these.",
   ),
+});
+
+const ListOutputSchema = z.object({
+  days: z.array(DaySchema),
 });
 
 async function listImplementation(
@@ -177,19 +201,28 @@ async function listImplementation(
 
   const from = localToUtc(`${input.date} 00:00`, timeZone);
 
-  if (!from) {
-    return { date: input.date, weekday: "", open: false, taken: [] };
-  }
+  if (!from) return { days: [] };
 
-  const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
+  // Um intervalo, e não um dia, porque "quando vocês têm livre?" é a pergunta
+  // mais comum e era a mais cara: o modelo consultava dia a dia, uma ida ao
+  // provedor por dia, e uma cliente ficou sem resposta enquanto ele varria a
+  // semana. Catorze dias no máximo — além disso o cliente não está mais
+  // escolhendo horário, está navegando. - 2026/08/02
+  const lastRequested = input.until
+    ? localToUtc(`${input.until} 00:00`, timeZone)
+    : from;
 
-  // Meio-dia, e não meia-noite: perguntar "abre neste dia" à meia-noite
-  // responderia "não" para toda loja que abre às 9h.
-  const noon = new Date(from.getTime() + 12 * 60 * 60 * 1000);
+  const last = lastRequested && lastRequested > from ? lastRequested : from;
 
+  const dayCount = Math.min(
+    14,
+    Math.round((last.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)) + 1,
+  );
+
+  const to = new Date(from.getTime() + dayCount * 24 * 60 * 60 * 1000);
   const hours = businessHoursOf(context);
-  const open = hours ? isOpenAt(hours, timeZone, noon) : true;
 
+  // Uma consulta ao banco para o intervalo inteiro, repartida em memória.
   const { data } = await supabaseClient
     .from("appointments")
     .select("starts_at, duration_minutes, title")
@@ -199,18 +232,40 @@ async function listImplementation(
     .lt("starts_at", to.toISOString())
     .order("starts_at", { ascending: true });
 
-  return {
-    date: input.date,
-    weekday: weekdayOf(noon, timeZone),
-    open,
-    taken: (data ?? []).map((row) => ({
-      starts_at: utcToLocal(new Date(row.starts_at as string), timeZone).slice(
-        11,
-      ),
-      duration_minutes: (row.duration_minutes as number | null) ?? null,
-      title: row.title as string,
-    })),
-  };
+  const days = [];
+
+  for (let index = 0; index < dayCount; index++) {
+    const start = new Date(from.getTime() + index * 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+
+    // Meio-dia, e não meia-noite: perguntar "abre neste dia" à meia-noite
+    // responderia "não" para toda loja que abre às 9h.
+    const noon = new Date(start.getTime() + 12 * 60 * 60 * 1000);
+    const range = hours?.[wallClockDayIndex(noon, timeZone)];
+
+    days.push({
+      date: utcToLocal(noon, timeZone).slice(0, 10),
+      weekday: weekdayOf(noon, timeZone),
+      open: hours ? isOpenAt(hours, timeZone, noon) : true,
+      // O horário do dia junto: sem ele o modelo teria de lembrar a tabela da
+      // semana para saber até que horas pode oferecer.
+      opens_at: range?.from ?? null,
+      closes_at: range?.to ?? null,
+      taken: (data ?? [])
+        .filter((row) => {
+          const at = new Date(row.starts_at as string);
+          return at >= start && at < end;
+        })
+        .map((row) => ({
+          starts_at: utcToLocal(new Date(row.starts_at as string), timeZone)
+            .slice(11),
+          duration_minutes: (row.duration_minutes as number | null) ?? null,
+          title: row.title as string,
+        })),
+    });
+  }
+
+  return { days };
 }
 
 export const ListAppointmentsTool: ToolDefinition<
@@ -221,7 +276,7 @@ export const ListAppointmentsTool: ToolDefinition<
   type: "function",
   name: "list_appointments",
   description:
-    "See what is already booked on a given day, and whether the business opens that day. Call this BEFORE offering times to a customer, so you never offer a slot that is taken or a day that is closed. It returns every booking of the business that day, not only this customer's.",
+    "See what is already booked, and when the business opens. Call this BEFORE offering times, so you never offer a taken slot or a closed day. Pass `until` to cover a range in ONE call whenever the customer asks about more than one day — asking day by day is slow and the customer waits. It returns every booking of the business, not only this customer's.",
   inputSchema: z.toJSONSchema(ListInputSchema),
   outputSchema: z.toJSONSchema(ListOutputSchema),
   implementation: listImplementation,
