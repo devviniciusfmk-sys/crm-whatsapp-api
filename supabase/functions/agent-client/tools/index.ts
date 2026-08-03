@@ -33,6 +33,7 @@ import {
   ListAppointmentsTool,
   RescheduleAppointmentTool,
 } from "./appointments.ts";
+import { SaveContactDetailsTool } from "./contact_details.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
 // also live in this folder and are deliberately absent: both are skeletons, and
@@ -50,6 +51,10 @@ const FunctionTools = [
   BookAppointmentTool,
   RescheduleAppointmentTool,
   CancelAppointmentTool,
+  // Sozinha, e desligada por padrão: guardar documento de quem não pediu é
+  // tratamento de dado pessoal por conta própria, e essa é decisão de quem
+  // opera. Estar aqui só a torna disponível; quem liga é a tela. - 2026/08/03
+  SaveContactDetailsTool,
 ];
 const CustomTools: unknown[] = [];
 
