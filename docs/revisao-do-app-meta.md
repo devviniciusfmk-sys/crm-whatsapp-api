@@ -33,25 +33,24 @@ Sem isto a submissão nem abre, ou volta recusada sem análise:
 1. **Portfólio comercial verificado** (Business Verification). É documento de
    empresa, e demora — comece por aqui.
 2. **App vinculado a esse portfólio.**
-3. **Política de privacidade publicada, com URL própria.** Obrigatória.
-   Existe em `/privacidade` (e os termos em `/termos`), públicas, sem login.
-   Os dados da empresa vêm das variáveis `VITE_COMPANY_*` — precisam estar
-   definidas no servidor, senão a página abre com um aviso de documento
-   incompleto. Falta a revisão jurídica antes de publicar.
+3. **Política de privacidade publicada, com URL própria.** Obrigatória. Existe
+   em `/privacidade` (e os termos em `/termos`), públicas, sem login. Os dados
+   da empresa vêm das variáveis `VITE_COMPANY_*` — precisam estar definidas no
+   servidor, senão a página abre com um aviso de documento incompleto. Falta a
+   revisão jurídica antes de publicar.
 4. **Termos de serviço**, mesma coisa, na prática sempre pedidos.
 5. **Ícone, categoria e e-mail de contato** preenchidos no app.
 6. **Data Use Checkup**, quando a Meta pedir. Ele vence de tempos em tempos e
-   derruba o acesso avançado se ficar sem resposta — não é só uma etapa
-   inicial.
+   derruba o acesso avançado se ficar sem resposta — não é só uma etapa inicial.
 
 ## As permissões
 
 App Review → Permissions and Features → pedir **acesso avançado** para:
 
-| Permissão | Para que este produto usa |
-|---|---|
+| Permissão                      | Para que este produto usa                                                                                                    |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `whatsapp_business_management` | Conectar números, ler e criar modelos, ler e editar o perfil da empresa, ler qualidade do número e estatísticas de conversas |
-| `whatsapp_business_messaging` | Receber as mensagens dos clientes e responder |
+| `whatsapp_business_messaging`  | Receber as mensagens dos clientes e responder                                                                                |
 
 O texto de justificativa que o projeto original usou está no
 [README](../README.md#allowed-usage) e serve de base:
@@ -67,7 +66,7 @@ O texto de justificativa que o projeto original usou está no
 A Meta pede uma gravação de tela mostrando o uso real de cada permissão. O
 README traz as gravações do projeto original.
 
-**Grave as suas.** Não é preciosismo: o revisor está avaliando o *seu* app, com
+**Grave as suas.** Não é preciosismo: o revisor está avaliando o _seu_ app, com
 a sua marca e o seu domínio na tela, e um vídeo de outra instalação é uma
 resposta sobre outra coisa. Além disso as suas telas já estão em português e
 mostram o produto como o seu cliente vai ver.
@@ -82,8 +81,8 @@ Um take só, sem cortes, mostrando o ciclo inteiro:
 2. **Integrações → WhatsApp → Conectar número** — o diálogo da Meta abrindo e o
    número aparecendo conectado ao final.
 3. Abrir o número → **Modelos de mensagens**: a lista carregada, e criar um
-   modelo novo (o gerador por descrição serve, e mostra bem para que a
-   permissão é usada).
+   modelo novo (o gerador por descrição serve, e mostra bem para que a permissão
+   é usada).
 4. Abrir o número → **Perfil da empresa**: mostrar os dados vindos da Meta e
    salvar uma alteração.
 5. **Estatísticas → Saúde do número**: qualidade e limite lidos da conta.
@@ -95,7 +94,7 @@ Um take só, sem cortes, mostrando o ciclo inteiro:
 3. Responder pelo sistema.
 4. Mostrar a mensagem chegando no celular.
 
-Os dois lados na mesma gravação. É isso que prova recebimento *e* envio.
+Os dois lados na mesma gravação. É isso que prova recebimento _e_ envio.
 
 ## A ordem
 

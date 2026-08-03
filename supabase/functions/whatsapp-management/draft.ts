@@ -103,7 +103,9 @@ function problemsWith(draft: TemplateDraft): string[] {
   if (!body) problems.push("The body is empty.");
 
   if (!/^[a-z0-9_]{1,512}$/.test(draft.name ?? "")) {
-    problems.push("The name must be lowercase letters, digits and underscores.");
+    problems.push(
+      "The name must be lowercase letters, digits and underscores.",
+    );
   }
 
   if (!["MARKETING", "UTILITY"].includes(draft.category)) {

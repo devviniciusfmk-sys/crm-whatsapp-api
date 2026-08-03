@@ -674,8 +674,8 @@ async function processMessage(request: Request): Promise<Response> {
       //
       // Corrected here rather than behind a button because this payload is the
       // only place the truth arrives on its own. - 2026/08/02
-      const recordedWaba =
-        (orgAddressRow.extra as { waba_id?: string } | null)?.waba_id;
+      const recordedWaba = (orgAddressRow.extra as { waba_id?: string } | null)
+        ?.waba_id;
 
       if (waba_id && recordedWaba !== waba_id) {
         log.warn("Correcting a stale WhatsApp Business Account id", {
