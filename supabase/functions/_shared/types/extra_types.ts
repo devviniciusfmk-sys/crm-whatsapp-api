@@ -87,6 +87,34 @@ export type OrganizationExtra = {
     hours_before?: number;
     variables?: number;
   };
+  /**
+   * Quanto tempo um compromisso ocupa, e quanto sobra depois dele.
+   *
+   * Sem isto a duração vinha do modelo em cada agendamento — e quando ele não
+   * a mandava, meia hora era assumida no código. Numa organização que atende
+   * duas horas por cliente, isso é o bastante para marcar o segundo em cima do
+   * primeiro: os `starts_at` são diferentes, a sobreposição não aparecia, e
+   * duas pessoas chegavam para o mesmo horário. Instrução no prompt não
+   * resolve, porque cada organização escreve as suas e nem todas escrevem
+   * esta.
+   *
+   * `services` é o que tira a conta do modelo de vez: com catálogo, a duração
+   * sai do nome do serviço e o `duration_minutes` que o modelo mandar é
+   * ignorado. Sem catálogo — que é o caso de quem atende sempre o mesmo tempo
+   * — vale `default_minutes`.
+   *
+   * A folga conta DEPOIS do compromisso: é o tempo de arrumar entre um cliente
+   * e o próximo, e não entra na conta do horário de fechamento (arrumar depois
+   * de fechar é trabalho de quem fica, não de quem marca). - 2026/08/03
+   */
+  appointments?: {
+    /** Duração quando o serviço não disser outra, em minutos. */
+    default_minutes?: number;
+    /** Folga depois de cada compromisso, em minutos. */
+    buffer_minutes?: number;
+    /** Serviços com duração própria. Vazio significa "todos duram o padrão". */
+    services?: { name: string; minutes: number }[];
+  };
 };
 
 export type WhatsAppOrganizationAddressExtra = {

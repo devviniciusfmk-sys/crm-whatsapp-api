@@ -3,7 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolDefinition } from "./base.ts";
 import type { RequestContext } from "../protocols/base.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "../protocols/context.ts";
-import type { OrganizationExtra } from "../../_shared/types/extra_types.ts";
+import type {
+  BusinessHours,
+  OrganizationExtra,
+} from "../../_shared/types/extra_types.ts";
 
 /**
  * Marcar, consultar e cancelar compromissos pela conversa.
@@ -154,6 +157,126 @@ function timezoneOf(context: RequestContext): string {
 }
 
 // ---------------------------------------------------------------------------
+// Duração e folga
+// ---------------------------------------------------------------------------
+
+type AppointmentsConfig = NonNullable<OrganizationExtra["appointments"]>;
+
+function appointmentsConfigOf(context: RequestContext): AppointmentsConfig {
+  const extra = (context.organization.extra ?? {}) as OrganizationExtra;
+
+  return extra.appointments ?? {};
+}
+
+/** Quando ninguém configurou nada, meia hora é o palpite menos ruim. */
+export const ASSUMED_MINUTES = 30;
+
+function fallbackMinutes(config: AppointmentsConfig): number {
+  return config.default_minutes ?? ASSUMED_MINUTES;
+}
+
+/**
+ * O mesmo serviço escrito de outro jeito.
+ *
+ * O modelo repete o nome do catálogo com a caixa da frase — "Coloração" vira
+ * "coloração" no meio de "quero agendar uma coloração" — e o cliente escreve
+ * sem acento. Comparar byte a byte recusaria o serviço que a organização
+ * oferece por causa de um til.
+ */
+export function sameService(a: string, b: string): boolean {
+  const fold = (name: string) =>
+    name.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+
+  return fold(a) === fold(b);
+}
+
+/**
+ * Quantos minutos este compromisso ocupa.
+ *
+ * Com catálogo, a duração sai dele e só dele: o `duration_minutes` que o
+ * modelo mandar é ignorado, porque a organização já disse quanto leva cada
+ * serviço e um número inventado no meio da conversa não tem por que ganhar
+ * dela. `null` é o serviço que não está no catálogo — recusa, com a lista, em
+ * vez de marcar pelo palpite errado.
+ *
+ * Sem catálogo continua valendo o que o modelo disser, e o padrão da
+ * organização quando ele não disser nada. É o caso de quem atende sempre o
+ * mesmo tempo e não tem o que cadastrar. - 2026/08/03
+ */
+export function minutesFor(
+  input: { service?: string; title?: string; duration_minutes?: number },
+  config: AppointmentsConfig,
+): number | null {
+  const catalog = config.services ?? [];
+
+  if (!catalog.length) return input.duration_minutes ?? fallbackMinutes(config);
+
+  // O `title` também porque ele costuma ser o nome do serviço nas palavras do
+  // cliente; exigir os dois campos preenchidos seria recusar o acerto.
+  const asked = input.service?.trim() || input.title?.trim() || "";
+  const found = catalog.find((service) => sameService(service.name, asked));
+
+  return found ? found.minutes : null;
+}
+
+/**
+ * O compromisso já marcado que colide com este, ou `null`.
+ *
+ * A folga entra dos dois lados do cálculo, e não só depois do que já estava
+ * marcado: quem chega antes também precisa terminar cedo o bastante. Somá-la
+ * apenas a um dos lados deixaria passar o compromisso novo que termina em cima
+ * do começo do seguinte.
+ */
+export function findOverlap(
+  booked: { starts_at: string; duration_minutes: number | null }[],
+  startsAt: Date,
+  minutes: number,
+  config: AppointmentsConfig,
+): Date | null {
+  const buffer = (config.buffer_minutes ?? 0) * 60 * 1000;
+  const endsAt = new Date(startsAt.getTime() + minutes * 60 * 1000 + buffer);
+
+  for (const row of booked) {
+    const otherStart = new Date(row.starts_at);
+    const otherEnd = new Date(
+      otherStart.getTime() +
+        (row.duration_minutes ?? fallbackMinutes(config)) * 60 * 1000 + buffer,
+    );
+
+    if (startsAt < otherEnd && otherStart < endsAt) return otherStart;
+  }
+
+  return null;
+}
+
+/**
+ * O compromisso inteiro cabe no horário de atendimento — não só o começo.
+ *
+ * Só o início era conferido, o que bastava enquanto tudo durava meia hora e
+ * deixou de bastar no dia em que passou a durar duas: fechando às 18h, um
+ * serviço marcado para 17h50 era aceito e terminava às 19h50, com o cliente na
+ * cadeira e a loja fechada.
+ *
+ * A folga fica de fora desta conta de propósito: arrumar depois de fechar é
+ * trabalho de quem fica, não motivo para recusar o último horário do dia.
+ * - 2026/08/03
+ */
+export function fitsOpeningHours(
+  hours: BusinessHours,
+  timeZone: string,
+  startsAt: Date,
+  minutes: number,
+): boolean {
+  if (!isOpenAt(hours, timeZone, startsAt)) return false;
+
+  // O último instante dentro, e não o instante do fim: um corte que termina às
+  // 18:00 em ponto acabou em tempo, e às 18:00 a loja já está fechada.
+  const lastMoment = new Date(startsAt.getTime() + minutes * 60 * 1000 - 1);
+
+  return isOpenAt(hours, timeZone, lastMoment);
+}
+
+// ---------------------------------------------------------------------------
 // Consultar o dia
 // ---------------------------------------------------------------------------
 
@@ -188,6 +311,17 @@ const DaySchema = z.object({
 });
 
 const ListOutputSchema = z.object({
+  default_duration_minutes: z.number().describe(
+    "How long an appointment takes when nothing else says otherwise. Use it to work out whether a time still fits before closing.",
+  ),
+  buffer_minutes: z.number().describe(
+    "Free time kept after every appointment. The next one can only start this many minutes after the previous one ends.",
+  ),
+  services: z.array(
+    z.object({ name: z.string(), minutes: z.number() }),
+  ).describe(
+    "What this business offers, and how long each takes. WHEN THIS LIST IS NOT EMPTY, `book_appointment` accepts only these names: offer them by name, pass the name you agreed on, and never invent a duration.",
+  ),
   days: z.array(DaySchema),
 });
 
@@ -198,10 +332,19 @@ async function listImplementation(
   supabaseClient: SupabaseClient,
 ): Promise<z.infer<typeof ListOutputSchema>> {
   const timeZone = timezoneOf(context);
+  const config = appointmentsConfigOf(context);
+
+  // Repetido nas duas saídas porque o modelo precisa da duração mesmo quando
+  // não há dia nenhum para mostrar: é com ela que ele decide o que oferecer.
+  const header = {
+    default_duration_minutes: fallbackMinutes(config),
+    buffer_minutes: config.buffer_minutes ?? 0,
+    services: config.services ?? [],
+  };
 
   const from = localToUtc(`${input.date} 00:00`, timeZone);
 
-  if (!from) return { days: [] };
+  if (!from) return { ...header, days: [] };
 
   // Um intervalo, e não um dia, porque "quando vocês têm livre?" é a pergunta
   // mais comum e era a mais cara: o modelo consultava dia a dia, uma ida ao
@@ -265,7 +408,7 @@ async function listImplementation(
     });
   }
 
-  return { days };
+  return { ...header, days };
 }
 
 export const ListAppointmentsTool: ToolDefinition<
@@ -293,8 +436,11 @@ const BookInputSchema = z.object({
   starts_at: z.string().describe(
     "When, as 'YYYY-MM-DD HH:MM' in the business's own timezone. Never convert to UTC — send the wall-clock time you agreed with the customer.",
   ),
+  service: z.string().optional().describe(
+    "Which service, by the name `list_appointments` gave you. Required when that list is not empty — it is what says how long the appointment takes.",
+  ),
   duration_minutes: z.number().int().positive().optional().describe(
-    "How long it takes. Omit if you do not know; do not invent one.",
+    "How long it takes. Omit if you do not know; do not invent one. Ignored when the business lists its services: there the duration comes from the service.",
   ),
   notes: z.string().optional().describe(
     "Anything the staff should know before the customer arrives. Optional.",
@@ -387,9 +533,6 @@ async function scheduleReminder(
   return error ? null : at;
 }
 
-/** Quando a duração não é dita, meia hora é o palpite menos ruim. */
-const ASSUMED_MINUTES = 30;
-
 /**
  * Um compromisso já marcado que se sobrepõe a este.
  *
@@ -397,17 +540,16 @@ const ASSUMED_MINUTES = 30;
  * por quê: uma limpeza de uma hora às 10h e outra às 10h30 passavam as duas,
  * porque os `starts_at` são diferentes. Duas pessoas na mesma cadeira.
  *
- * Duração ausente vira meia hora dos dois lados. É palpite, e é melhor que o
- * contrário — tratar como instante deixaria passar exatamente o caso que este
- * teste pegou. - 2026/08/02
+ * A conta em si é do `findOverlap`, que não toca no banco e por isso pode ser
+ * testado. Aqui fica só a janela de busca. - 2026/08/02
  */
 async function findConflict(
   supabaseClient: SupabaseClient,
   organizationId: string,
   startsAt: Date,
-  durationMinutes?: number,
+  minutes: number,
+  config: AppointmentsConfig,
 ): Promise<Date | null> {
-  const minutes = durationMinutes ?? ASSUMED_MINUTES;
   const endsAt = new Date(startsAt.getTime() + minutes * 60 * 1000);
 
   // Uma janela generosa em volta, para não trazer o dia inteiro nem perder um
@@ -423,18 +565,12 @@ async function findConflict(
     .gte("starts_at", from.toISOString())
     .lte("starts_at", to.toISOString());
 
-  for (const row of data ?? []) {
-    const otherStart = new Date(row.starts_at as string);
-    const otherEnd = new Date(
-      otherStart.getTime() +
-        ((row.duration_minutes as number | null) ?? ASSUMED_MINUTES) * 60 *
-          1000,
-    );
-
-    if (startsAt < otherEnd && otherStart < endsAt) return otherStart;
-  }
-
-  return null;
+  return findOverlap(
+    (data ?? []) as { starts_at: string; duration_minutes: number | null }[],
+    startsAt,
+    minutes,
+    config,
+  );
 }
 
 async function bookImplementation(
@@ -470,10 +606,25 @@ async function bookImplementation(
     return refuse("That time is in the past.");
   }
 
+  const config = appointmentsConfigOf(context);
+  const minutes = minutesFor(input, config);
+
+  if (minutes === null) {
+    return refuse(
+      `"${
+        input.service ?? input.title
+      }" is not one of the services this business offers. Ask the customer to pick one of: ${
+        (config.services ?? []).map((service) => service.name).join(", ")
+      }.`,
+    );
+  }
+
   const hours = businessHoursOf(context);
 
-  if (hours && !isOpenAt(hours, timeZone, startsAt)) {
-    return refuse("The business is closed at that time.");
+  if (hours && !fitsOpeningHours(hours, timeZone, startsAt, minutes)) {
+    return refuse(
+      `The business is not open for the whole appointment — it takes ${minutes} minutes from that time.`,
+    );
   }
 
   if (!context.conversation.contact_address) {
@@ -484,7 +635,8 @@ async function bookImplementation(
     supabaseClient,
     context.organization.id,
     startsAt,
-    input.duration_minutes,
+    minutes,
+    config,
   );
 
   if (conflict) {
@@ -505,7 +657,11 @@ async function bookImplementation(
       conversation_id: context.conversation.id,
       title: input.title,
       starts_at: startsAt.toISOString(),
-      duration_minutes: input.duration_minutes ?? null,
+      // A duração resolvida, e não a que veio na chamada: é ela que reservou o
+      // espaço, e gravar `null` obrigaria todo mundo a adivinhar de novo
+      // depois — inclusive a tela da agenda, que mostraria "sem duração" para
+      // um compromisso de duas horas.
+      duration_minutes: minutes,
       notes: input.notes ?? null,
     })
     .select()
@@ -671,12 +827,6 @@ async function rescheduleImplementation(
     return refuse("The new time is in the past.");
   }
 
-  const hours = businessHoursOf(context);
-
-  if (hours && !isOpenAt(hours, timeZone, to)) {
-    return refuse("The business is closed at the new time.");
-  }
-
   // Só os desta conversa: mover o compromisso de outra pessoa seria o mesmo
   // estrago que cancelar o dela.
   const { data: mine } = await supabaseClient
@@ -694,11 +844,28 @@ async function rescheduleImplementation(
     return refuse("No appointment of yours was found at that time.");
   }
 
+  const config = appointmentsConfigOf(context);
+
+  // A duração é a que já estava gravada: remarcar move o compromisso, não o
+  // troca por outro. Conferida contra o horário só depois de encontrá-lo, para
+  // não recusar por tamanho um compromisso que nem é desta pessoa.
+  const minutes = (appointment.duration_minutes as number | null) ??
+    fallbackMinutes(config);
+
+  const hours = businessHoursOf(context);
+
+  if (hours && !fitsOpeningHours(hours, timeZone, to, minutes)) {
+    return refuse(
+      `The business is not open for the whole appointment at the new time — it takes ${minutes} minutes.`,
+    );
+  }
+
   const conflict = await findConflict(
     supabaseClient,
     context.organization.id,
     to,
-    (appointment.duration_minutes as number | null) ?? undefined,
+    minutes,
+    config,
   );
 
   // O próprio compromisso não conta como conflito consigo mesmo.
