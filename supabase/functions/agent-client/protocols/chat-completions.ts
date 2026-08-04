@@ -763,7 +763,14 @@ export class ChatCompletionsHandler
 
       if (respondCall) {
         const messages = await this.processRespondCall(respondCall);
-        return { messages };
+
+        return {
+          messages,
+          ...(messages.length ? {} : {
+            silence:
+              "o modelo chamou `respond` sem nenhuma mensagem dentro, o que no protocolo significa 'não responder'",
+          }),
+        };
       }
 
       // Regular tool calls — existing logic
@@ -870,6 +877,8 @@ export class ChatCompletionsHandler
 
     return {
       messages: [],
+      silence:
+        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório`,
     };
   }
 }

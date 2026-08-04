@@ -26,6 +26,16 @@ export interface ResponseContext {
   messages?: MessageInsert[];
   contact?: ContactRow;
   agent?: AgentRowWithExtra;
+  /**
+   * Por que esta rodada não produziu mensagem para o contato.
+   *
+   * O aviso de "não respondeu" já existia e já pegou um caso real — mas dizia
+   * só que não houve resposta, não qual das duas coisas aconteceu: o modelo
+   * chamar `respond` com lista vazia, ou terminar sem texto nenhum. As duas se
+   * parecem de fora e pedem consertos diferentes, e sem distinguir sobra
+   * adivinhação. O protocolo sabe qual foi; o laço só repete. - 2026/08/04
+   */
+  silence?: string;
 }
 
 export function contextHeaders(

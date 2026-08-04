@@ -591,6 +591,9 @@ Deno.serve(async (req) => {
   // segundos de diferença fariam a tela acusar mudez numa conversa respondida.
   let answeredContact = false;
 
+  // O último motivo declarado pelo protocolo para não ter havido mensagem.
+  let silence: string | undefined;
+
   // Basic ReAct algorithm: stop if no tool uses are found.
   while (shouldContinue) {
     iteration++;
@@ -608,7 +611,9 @@ Deno.serve(async (req) => {
         throw new Error(
           `The model took too long to answer: ${
             Math.round((Date.now() - startedAt) / 1000)
-          }s over ${iteration - 1} call(s), and there was not enough time left ` +
+          }s over ${
+            iteration - 1
+          } call(s), and there was not enough time left ` +
             `to finish this conversation. Nothing was sent to the contact. ` +
             `A faster model fixes this.`,
         );
@@ -792,6 +797,10 @@ Deno.serve(async (req) => {
       const agentResponse = await handler.sendRequest(agentRequest);
 
       response = await handler.processResponse(agentResponse);
+
+      // Guardado para o aviso do fim: quando ninguém responder, o motivo é o
+      // da última rodada, que é a que decidiu calar.
+      if (response.silence) silence = response.silence;
 
       if (!response.messages?.length) {
         response.messages = [];
@@ -1088,7 +1097,7 @@ Deno.serve(async (req) => {
    * não tem o que dizer, quem diz é uma pessoa. - 2026/08/04
    */
   if (!answeredContact) {
-    log.warn("Agent produced no answer for the contact");
+    log.warn("Agent produced no answer for the contact", { reason: silence });
 
     await client.from("messages").insert({
       organization_id,
@@ -1102,8 +1111,10 @@ Deno.serve(async (req) => {
         version: "1" as const,
         type: "text" as const,
         kind: "text" as const,
-        text:
+        text: [
           "O assistente não produziu resposta para esta mensagem. Nada foi enviado ao contato.",
+          silence ? `Motivo: ${silence}.` : undefined,
+        ].filter(Boolean).join(" "),
       },
     });
   }
