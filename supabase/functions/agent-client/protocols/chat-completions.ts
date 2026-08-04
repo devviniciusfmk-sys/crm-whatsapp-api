@@ -572,6 +572,33 @@ export class ChatCompletionsHandler
       ? (agent.extra.provider ?? { sort: "throughput" })
       : undefined;
 
+    /**
+     * Quanto o modelo pode pensar antes de responder.
+     *
+     * O parâmetro estava escrito e comentado aqui desde sempre, então nunca
+     * saiu: modelo de raciocínio como o gpt-oss vinha pensando no padrão dele.
+     * O preço apareceu em produção como `finish_reason: "length"` — o
+     * raciocínio consumiu o orçamento inteiro de saída e não sobrou nada para a
+     * resposta. O cliente escreveu "gostaria de marcar uma consulta para dia
+     * 30" e não recebeu nada.
+     *
+     * Medido na mesma pergunta: sem esforço declarado, 39 a 128 tokens de
+     * raciocínio; com `low`, 21 a 30. Quatro vezes menos, com a mesma escolha
+     * de ferramenta e o mesmo tempo de resposta.
+     *
+     * `low` como padrão porque isto é atendimento: turnos curtos, decisões
+     * simples, e o que custa caro é a demora. Quem precisar de mais muda em
+     * `extra.thinking`, que já existia na tela e não chegava a lugar nenhum.
+     *
+     * Pela chave `reasoning` na OpenRouter, que normaliza entre modelos e
+     * ignora em quem não raciocina; pelo `reasoning_effort` da OpenAI nos
+     * demais. - 2026/08/04
+     */
+    const effort = agent.extra.thinking ?? "low";
+    const thinking = isOpenRouter
+      ? { reasoning: { effort } }
+      : { reasoning_effort: effort };
+
     while (true) {
       try {
         response = await openai.chat.completions.create({
@@ -585,9 +612,7 @@ export class ChatCompletionsHandler
           tool_choice: MULTI_MESSAGE_RESPONSE ? "required" : undefined,
           parallel_tool_calls: request.tools.length ? true : undefined,
           // THINKING
-          // ts-expect-error
-          //thinking: { type: "enabled", budget_tokens: 2000 },
-          //reasoning_effort: agent.extra.thinking || "low",
+          ...thinking,
         });
 
         break;
