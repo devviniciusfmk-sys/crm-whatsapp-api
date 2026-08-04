@@ -848,13 +848,61 @@ export class ChatCompletionsHandler
 
     // TODO: finish reasons: length, content filter
 
-    if (finish_reason === "stop" && message.content) {
-      if (MULTI_MESSAGE_RESPONSE) {
-        log.warn(
-          "Unexpected stop finish_reason with tool_choice: required. Falling back to text response.",
-        );
-      }
+    /**
+     * Texto solto quando a ferramenta era obrigatória: não vai para o cliente.
+     *
+     * Este atalho existia para modelos que ignoram `tool_choice` e respondem em
+     * texto — e mandava esse texto ao contato. Em produção ele entregou isto,
+     * e o cliente leu:
+     *
+     *   "analysisWe have a user wanting to schedule a consulta for day 30.
+     *    They said 'dia 30'. Probably referring to August 30... Let's check
+     *    if Monday 31 is open.assistantcommentary to=functions.list_appointments
+     *    json{"date":"2026-08-31"}"
+     *
+     * É o formato de canais do gpt-oss (`analysis`, `commentary`, `final`)
+     * chegando cru, sem o provedor ter separado o raciocínio da resposta. O
+     * atalho não tinha como saber disso — para ele era só `content` — e
+     * despachou o pensamento do modelo, em inglês, com a sintaxe da chamada de
+     * ferramenta no meio, para o WhatsApp de um cliente.
+     *
+     * Com `tool_choice` obrigatório, o único caminho autorizado até o contato é
+     * a ferramenta `respond`. Texto que chega por fora dela não é resposta: é
+     * defeito. Fica gravado como mensagem interna, para quem atende ver o que o
+     * modelo disse e poder responder à mão, e não sai daqui.
+     *
+     * Sem `tool_choice` obrigatório o atalho continua valendo: ali o texto é a
+     * resposta mesmo. - 2026/08/04
+     */
+    if (finish_reason === "stop" && message.content && MULTI_MESSAGE_RESPONSE) {
+      log.warn(
+        "Model answered with loose text while tool_choice was required. Kept internal.",
+      );
 
+      return {
+        messages: [
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "internal" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text:
+                `O modelo respondeu em texto solto em vez de usar a ferramenta de resposta, então nada foi enviado ao contato. O que ele produziu:\n\n${message.content}`,
+            },
+          },
+        ],
+        silence:
+          "o modelo respondeu em texto solto em vez de chamar `respond`; o texto ficou interno para não ir ao cliente",
+      };
+    }
+
+    if (finish_reason === "stop" && message.content) {
       return {
         messages: [
           {
