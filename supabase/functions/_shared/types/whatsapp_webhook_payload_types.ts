@@ -242,6 +242,29 @@ export type WebhookValueUserIdUpdate = {
   user_id_update: WebhookUserIdUpdate[];
 };
 
+// Value type for user_preferences webhooks: a user turned marketing messages
+// off or back on, from the tooltip WhatsApp shows on marketing templates.
+//
+// É a saída oficial, e é a que vale: quando alguém para por aqui, a Meta deixa
+// de entregar marketing daquele número para aquela pessoa, com ou sem a nossa
+// concordância. Guardar do nosso lado serve para não gastar tentativa, não
+// sujar a taxa de entrega, e poder mostrar na ficha por que aquela pessoa não
+// recebeu a campanha.
+export type WebhookUserPreference = {
+  wa_id: string; // The user, phone- or BSUID-keyed like everywhere else.
+  detail: string; // Human-readable description of the change.
+  category: "marketing_messages"; // The only category today.
+  value: "stop" | "resume";
+  timestamp: number; // Unix seconds.
+};
+
+export type WebhookValueUserPreferences = {
+  messaging_product: "whatsapp";
+  metadata: WebhookMetadata;
+  contacts?: WebhookContact[];
+  user_preferences: WebhookUserPreference[];
+};
+
 // Change object that discriminates based on field value
 export type WebhookChange =
   | {
@@ -273,6 +296,10 @@ export type WebhookChange =
   | {
     field: "user_id_update";
     value: WebhookValueUserIdUpdate;
+  }
+  | {
+    field: "user_preferences";
+    value: WebhookValueUserPreferences;
   };
 
 // Entry object that contains one or more changes
