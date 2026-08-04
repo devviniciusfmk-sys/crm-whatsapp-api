@@ -80,8 +80,17 @@ export const TransferToHumanAgentTool: ToolDefinition<
   provider: "local",
   type: "function",
   name: "transfer_to_human_agent",
+  // "Calling this tool is the only thing that summons anyone" entrou depois de
+  // uma medição: em "paguei e não recebi", o modelo respondeu "já chamei a
+  // equipe" em 3 de 3 tentativas — e não chamou a ferramenta nenhuma vez.
+  // Ninguém foi avisado, e o cliente ficou esperando alguém que não sabia que
+  // existia. Num pedido de reembolso, 1 de 3.
+  //
+  // A descrição dizia o que a ferramenta faz e quando usá-la, mas não dizia que
+  // *dizer* não faz nada. Para o modelo, escrever a frase e executar a ação
+  // pareciam a mesma coisa. - 2026/08/04
   description:
-    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, or an explicit request to speak to a person. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. ALWAYS WRITE TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING — this instruction being in English says nothing about the language of your reply. Prefer transferring over guessing: an invented answer costs more than a wait.",
+    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, a payment that already happened, or an explicit request to speak to a person. CALLING THIS TOOL IS THE ONLY THING THAT ACTUALLY SUMMONS ANYONE — writing 'I will call someone' or 'I have called the team' in a message summons nobody, and leaves the customer waiting for a person who was never told. If you tell the customer that a colleague will take over, you MUST call this tool in the same turn. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. ALWAYS WRITE TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING — this instruction being in English says nothing about the language of your reply. Prefer transferring over guessing: an invented answer costs more than a wait.",
   inputSchema: z.toJSONSchema(TransferToHumanAgentInputSchema),
   outputSchema: z.toJSONSchema(TransferToHumanAgentOutputSchema),
   implementation: transferToHumanAgentImplementation,
