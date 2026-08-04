@@ -355,6 +355,20 @@ export type AIAgentExtra = {
    * detalhe está no comentário de `chat-completions.ts`. - 2026/08/04
    */
   provider?: Record<string, unknown>;
+  /**
+   * Os links que o assistente pode mandar: checkout, cardápio, formulário.
+   *
+   * Fora das instruções de propósito. Colado no meio de trinta linhas de texto,
+   * um link de pagamento é a coisa mais frágil do prompt: quem troca o preço
+   * mexe no parágrafo errado, quem duplica a campanha esquece de trocar a URL,
+   * e o modelo às vezes reescreve o que copia. Aqui ele é dado — a tela mostra
+   * um por linha, trocar é editar um campo, e o contexto entrega a URL literal.
+   *
+   * O rótulo é o que o modelo lê para decidir quando mandar: "Checkout Premium
+   * — R$ 29,90, pagamento único" diz mais do que qualquer instrução em volta.
+   * - 2026/08/04
+   */
+  links?: { label: string; url: string }[];
   protocol?: "chat_completions" | "responses";
   max_messages?: number;
   temperature?: number;
