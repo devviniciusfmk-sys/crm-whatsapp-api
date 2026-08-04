@@ -34,6 +34,7 @@ import {
   RescheduleAppointmentTool,
 } from "./appointments.ts";
 import { SaveContactDetailsTool } from "./contact_details.ts";
+import { TagContactTool } from "./tag_contact.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
 // also live in this folder and are deliberately absent: both are skeletons, and
@@ -55,6 +56,11 @@ const FunctionTools = [
   // tratamento de dado pessoal por conta própria, e essa é decisão de quem
   // opera. Estar aqui só a torna disponível; quem liga é a tela. - 2026/08/03
   SaveContactDetailsTool,
+  // Etiqueta é grupo, não dado pessoal, mas continua sendo classificação de
+  // cliente — e por isso vem desligada como a de cima. Registrar aqui é o passo
+  // que já foi esquecido uma vez: sem esta linha, o interruptor da tela liga
+  // uma ferramenta que o agente não encontra. - 2026/08/04
+  TagContactTool,
 ];
 const CustomTools: unknown[] = [];
 
