@@ -183,6 +183,10 @@ export function buildRuntimeContext(context: RequestContext) {
       phone: context.conversation.contact_address
         ? "+" + context.conversation.contact_address
         : undefined,
+      // O que já se sabe desta pessoa, de conversas anteriores. Cinco linhas
+      // atravessam meses; a janela de contexto não. Sai quando não há nada,
+      // para não ensinar o modelo a inventar o que preencheria o campo.
+      about: context.contact?.extra?.summary || undefined,
     },
   };
 }
