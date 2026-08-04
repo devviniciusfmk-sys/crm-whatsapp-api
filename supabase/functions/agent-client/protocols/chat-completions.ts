@@ -37,12 +37,24 @@ const RESPOND_TOOL: ChatCompletionTool = {
   type: "function",
   function: {
     name: RESPOND_FUNCTION_NAME,
+    // A descrição antiga terminava em "Call with an empty messages array to
+    // skip responding", e o modelo aceitava o convite: em três de cada cinco
+    // saudações medidas ele chamou `respond` sem mensagem nenhuma. Do lado de
+    // fora isso é o cliente escrevendo "Bom dia!" e ninguém respondendo — e
+    // como nenhuma mensagem é gravada, não fica rastro de que houve decisão.
+    // Calar estava oferecido como opção normal, então virou uma.
+    //
+    // Quem não deve responder tem outra saída, e essa deixa rastro:
+    // transfer_to_human_agent. - 2026/08/04
     description:
-      "Default tool. Always call this to send messages to the user, unless you need to call another tool first. Call with an empty messages array to skip responding.",
+      "Send messages to the customer. This is how you talk to them: call it with everything you want to say. The customer is waiting for an answer, so send at least one message — never call this with an empty list. If you should not be the one answering, use transfer_to_human_agent instead of staying silent.",
     parameters: {
       type: "object",
       properties: {
         messages: {
+          // O esquema também recusa a lista vazia, para os provedores que o
+          // aplicam: a descrição convence, o esquema impede.
+          minItems: 1,
           type: "array",
           items: {
             anyOf: [
@@ -530,12 +542,43 @@ export class ChatCompletionsHandler
     let retries = 0;
     const maxRetries = 3;
 
+    /**
+     * Quem serve o modelo, quando o intermediário é a OpenRouter.
+     *
+     * Não é ajuste fino: o mesmo `openai/gpt-oss-120b`, na mesma requisição,
+     * medido em 8 chamadas por provedor no dia 2026/08/04 —
+     *
+     *   Cerebras   8 de 8 certas, 0,3 s
+     *   Together   7 de 8
+     *   Groq       5 de 8 (3 vezes não chamou ferramenta nenhuma)
+     *   Nebius     0 de 8: 2 com argumentos corrompidos, 6 sem ferramenta
+     *   Phala      8 erros do provedor
+     *
+     * Os argumentos corrompidos do Nebius são o mesmo `"2023….....…????…"` que
+     * chegou numa conversa de produção e fez o assistente tentar cancelar um
+     * compromisso que ninguém pediu. `require_parameters` não salva: o Nebius
+     * *anuncia* suporte a `tool_choice` e ainda assim devolve isso.
+     *
+     * Então o provedor é escolha, não sorteio. `agent.extra.provider` vai
+     * verbatim para a OpenRouter (`order`, `only`, `ignore`, `sort` — o que a
+     * documentação deles aceitar). Sem configuração, pede o mais rápido, que
+     * empurra para o lado bom da tabela sem casar o produto com um fornecedor.
+     *
+     * Ignorado por qualquer outro provedor: é um campo extra num corpo JSON.
+     * - 2026/08/04
+     */
+    const isOpenRouter = String(baseURL).includes("openrouter.ai");
+    const providerRouting = isOpenRouter
+      ? (agent.extra.provider ?? { sort: "throughput" })
+      : undefined;
+
     while (true) {
       try {
         response = await openai.chat.completions.create({
           model,
           temperature: agent.extra.temperature ?? undefined,
           max_completion_tokens: agent.extra.max_tokens ?? undefined,
+          ...(providerRouting ? { provider: providerRouting } : {}),
           messages: request.messages,
           // TOOLS
           tools: request.tools.length ? request.tools : undefined,
@@ -643,7 +686,12 @@ export class ChatCompletionsHandler
     };
 
     if (!args.messages?.length) {
-      log.info("Respond called with empty messages. No response to user.");
+      // Aviso, e não informação: se chegou aqui, o modelo ignorou a descrição e
+      // o `minItems`, e o contato ficou sem resposta. O laço grava a nota na
+      // conversa; isto é para quem for ler o log depois entender o porquê.
+      log.warn(
+        "Respond called with an empty list. The contact was left without an answer.",
+      );
       return [];
     }
 

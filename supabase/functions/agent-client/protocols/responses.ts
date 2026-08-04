@@ -46,13 +46,16 @@ const RESPOND_FUNCTION_NAME = "respond";
 const RESPOND_TOOL: ResponsesTool = {
   type: "function",
   name: RESPOND_FUNCTION_NAME,
+  // Mesma correção do protocolo chat-completions, pelo mesmo motivo medido:
+  // oferecer o silêncio como opção fazia o modelo escolhê-lo. - 2026/08/04
   description:
-    "Default tool. Always call this to send messages to the user, unless you need to call another tool first. Call with an empty messages array to skip responding.",
+    "Send messages to the customer. This is how you talk to them: call it with everything you want to say. The customer is waiting for an answer, so send at least one message — never call this with an empty list. If you should not be the one answering, use transfer_to_human_agent instead of staying silent.",
   strict: false,
   parameters: {
     type: "object",
     properties: {
       messages: {
+        minItems: 1,
         type: "array",
         items: {
           anyOf: [

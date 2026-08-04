@@ -303,6 +303,15 @@ export type AIAgentExtra = {
   api_url?: string;
   api_key?: string;
   model?: string;
+  /**
+   * Preferência de provedor, repassada verbatim quando o intermediário é a
+   * OpenRouter: `order`, `only`, `ignore`, `sort`, `allow_fallbacks`.
+   *
+   * Existe porque o mesmo modelo acerta ou erra conforme quem o serve — medido,
+   * com um provedor devolvendo argumentos corrompidos em 2 de 8 chamadas. O
+   * detalhe está no comentário de `chat-completions.ts`. - 2026/08/04
+   */
+  provider?: Record<string, unknown>;
   protocol?: "chat_completions" | "responses";
   max_messages?: number;
   temperature?: number;

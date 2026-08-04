@@ -566,6 +566,31 @@ Deno.serve(async (req) => {
   const max_iterations = 10;
   let shouldContinue = true;
 
+  /**
+   * Quanto tempo o laço pode gastar antes de desistir por conta própria.
+   *
+   * Havia teto de rodadas e não havia teto de relógio, e o que estoura primeiro
+   * é o relógio: a plataforma mata a função no meio da chamada seguinte, e o
+   * `catch` abaixo — que existe justamente para deixar rastro — nunca roda. O
+   * resultado é o pior que um atendimento pode ter: o cliente escreveu, o
+   * assistente calou, e não há uma linha em lugar nenhum dizendo por quê.
+   *
+   * Aconteceu com um "Bom dia!": o modelo levou 95 segundos para a primeira
+   * chamada, a segunda não coube, e a conversa terminou no resultado de uma
+   * ferramenta. Sem erro, sem resposta, sem nada.
+   *
+   * O número é folgado de propósito. Ele não corta chamada nenhuma pela metade
+   * — só recusa começar mais uma quando o que sobra não dá para terminá-la e
+   * ainda gravar o aviso. - 2026/08/04
+   */
+  const TIME_BUDGET_MS = 100_000;
+  const startedAt = Date.now();
+
+  // Marcado onde as mensagens são gravadas, e não conferido depois pelo
+  // `created_at`: o relógio do banco e o desta função não são o mesmo, e alguns
+  // segundos de diferença fariam a tela acusar mudez numa conversa respondida.
+  let answeredContact = false;
+
   // Basic ReAct algorithm: stop if no tool uses are found.
   while (shouldContinue) {
     iteration++;
@@ -575,6 +600,18 @@ Deno.serve(async (req) => {
     try {
       if (iteration > max_iterations) {
         throw new Error("Max LLM iterations reached!");
+      }
+
+      // Só a partir da segunda rodada: a primeira tem de acontecer, por mais
+      // lento que o modelo seja. Desistir antes de tentar seria calar sozinho.
+      if (iteration > 1 && Date.now() - startedAt > TIME_BUDGET_MS) {
+        throw new Error(
+          `The model took too long to answer: ${
+            Math.round((Date.now() - startedAt) / 1000)
+          }s over ${iteration - 1} call(s), and there was not enough time left ` +
+            `to finish this conversation. Nothing was sent to the contact. ` +
+            `A faster model fixes this.`,
+        );
       }
 
       // CHECK FOR PENDING PREPROCESSING
@@ -1020,6 +1057,10 @@ Deno.serve(async (req) => {
           .order("timestamp")
           .throwOnError();
 
+        if (inserted_messages.some((m) => m.direction === "outgoing")) {
+          answeredContact = true;
+        }
+
         // Append generated messages to the context
         messages.push(...inserted_messages);
       } catch (storageError) {
@@ -1031,6 +1072,41 @@ Deno.serve(async (req) => {
 
   // TODO: take care of the typing interval corner cases
   clearInterval(typingInterval);
+
+  /**
+   * Se o laço acabou sem uma palavra para o contato, diga isso na conversa.
+   *
+   * O laço termina quando não há mais chamada de ferramenta, e nada garante que
+   * tenha sobrado uma mensagem para a pessoa: o modelo pode devolver um `stop`
+   * sem texto, ou uma rodada inteira de ferramenta e mais nada. Nesses casos o
+   * assistente simplesmente emudecia — e emudecer não aparece em lugar nenhum,
+   * nem numa lista de erros, nem na tela. Quem atende só descobre pela
+   * reclamação do cliente, dias depois.
+   *
+   * Fica interna, como as mensagens de erro: quem tem de saber é a equipe. Ao
+   * contato não se manda um pedido de desculpas automático — se o assistente
+   * não tem o que dizer, quem diz é uma pessoa. - 2026/08/04
+   */
+  if (!answeredContact) {
+    log.warn("Agent produced no answer for the contact");
+
+    await client.from("messages").insert({
+      organization_id,
+      conversation_id: conv.id,
+      service: conv.service,
+      organization_address: conv.organization_address,
+      contact_address: conv.contact_address,
+      direction: "internal" as const,
+      agent_id: agent.id,
+      content: {
+        version: "1" as const,
+        type: "text" as const,
+        kind: "text" as const,
+        text:
+          "O assistente não produziu resposta para esta mensagem. Nada foi enviado ao contato.",
+      },
+    });
+  }
 
   // STORE RESPONSE
 
