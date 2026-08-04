@@ -644,6 +644,49 @@ async function processMessage(request: Request): Promise<Response> {
         continue;
       }
 
+      // Alguém desligou (ou religou) as mensagens de marketing pelo próprio
+      // WhatsApp, no aviso que a Meta mostra em cima do template.
+      //
+      // A partir daqui a Meta já não entrega marketing nossa para essa pessoa,
+      // concordando nós ou não. Gravar do nosso lado serve para três coisas:
+      // não gastar tentativa que já nasce recusada, não sujar a taxa de entrega
+      // da campanha, e poder dizer na ficha por que aquela pessoa ficou de fora.
+      //
+      // `resume` limpa a marca. Quem voltou atrás volta a receber — tratar a
+      // saída como definitiva seria punir quem mudou de ideia.
+      if (field === "user_preferences") {
+        const org = orgAddressMap.get(value.metadata.phone_number_id);
+
+        if (!org) {
+          log.warn("user_preferences: no organization for phone number", value);
+          continue;
+        }
+
+        for (const preference of value.user_preferences) {
+          if (preference.category !== "marketing_messages") continue;
+
+          const optedOutAt = preference.value === "stop"
+            ? new Date(preference.timestamp * 1000).toISOString()
+            : null;
+
+          const { count } = await client
+            .from("contacts_addresses")
+            .update({ marketing_opt_out_at: optedOutAt }, { count: "exact" })
+            .eq("organization_id", org.organization_id)
+            .eq("service", "whatsapp")
+            .eq("address", preference.wa_id)
+            .throwOnError();
+
+          log.info("user_preferences: marketing preference updated", {
+            organization_id: org.organization_id,
+            wa_id: preference.wa_id,
+            value: preference.value,
+            count,
+          });
+        }
+        continue;
+      }
+
       if (!("metadata" in value)) {
         continue;
       }

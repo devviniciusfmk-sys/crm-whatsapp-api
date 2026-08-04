@@ -9,6 +9,23 @@ create table public.contacts_addresses (
   address text not null,
   extra jsonb,
   status text default 'active'::text not null,
+  -- Quando esta pessoa pediu para não receber mais campanha de marketing.
+  --
+  -- Coluna, e não uma chave no `extra`, contrariando o padrão da casa de
+  -- propósito. Três razões, e as três são a mesma: isto não é metadado.
+  --
+  -- É consentimento, e a LGPD trata a retirada dele como obrigação — precisa
+  -- aparecer num `select` sem ninguém saber onde procurar dentro de um JSON.
+  -- Precisa ser indexável, porque entra no `where` de toda materialização de
+  -- público. E não pode depender de um merge de JSON dar certo: `extra` passa
+  -- pelo gatilho `merge_update`, e o dia em que um merge se perder o cliente
+  -- volta a receber promoção depois de ter pedido para sair.
+  --
+  -- `status = 'inactive'` não serve: endereço inativo é outra coisa (número que
+  -- não existe mais). Quem pediu para sair da lista continua sendo cliente e
+  -- continua recebendo utility — confirmação de horário, aviso de entrega.
+  -- Só marketing para. - 2026/08/03
+  marketing_opt_out_at timestamp with time zone,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
 );
