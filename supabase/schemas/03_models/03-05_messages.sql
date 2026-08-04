@@ -18,6 +18,18 @@ create table public.messages (
   -- timeline. Soft reference like content.re_message_id — not a FK, so it
   -- tolerates out-of-order arrival and out-of-window roots.
   thread_id text,
+  -- Campanha que gerou esta mensagem, quando houve uma. Nula na esmagadora
+  -- maioria das linhas.
+  --
+  -- Está aqui, e não numa tabela `campaign_recipients`, porque uma tabela de
+  -- destinatários seria uma segunda cópia do estado de entrega: o webhook
+  -- atualiza `messages`, alguém esquece de propagar, e o painel passa a mentir.
+  -- Com a coluna na própria mensagem, "enviadas / entregues / lidas / falhas" é
+  -- um `group by` sobre a fonte única, e não há o que divergir.
+  --
+  -- O custo é um uuid nulo numa tabela quente; os dois índices abaixo são
+  -- parciais, então linha sem campanha não paga por eles. - 2026/08/03
+  campaign_id uuid,
   ----
   content jsonb not null,
   status jsonb default jsonb_build_object('pending', now()) not null,
@@ -42,6 +54,15 @@ alter table only public.messages
 add constraint messages_agent_id_fkey
 foreign key (agent_id)
 references public.agents(id)
+on delete set null;
+
+-- Apagar a campanha não apaga o que foi enviado: a mensagem já saiu, o cliente
+-- já recebeu, e o histórico da conversa tem de continuar contando essa história
+-- mesmo depois que a campanha for descartada.
+alter table only public.messages
+add constraint messages_campaign_id_fkey
+foreign key (campaign_id)
+references public.campaigns(id)
 on delete set null;
 
 alter table only public.messages
@@ -86,6 +107,24 @@ create index messages_org_conv_timestamp_idx
 on public.messages
 using btree (organization_id, conversation_id, timestamp desc);
 
+-- A garantia de não enviar duas vezes.
+--
+-- Não há lógica de deduplicação em lugar nenhum: materializar a campanha é um
+-- `insert ... on conflict do nothing`, e rodar de novo — porque o operador
+-- clicou duas vezes, porque a transação caiu no meio, porque alguém retomou uma
+-- campanha pausada — não gera nem uma linha a mais. A idempotência é este
+-- índice, e é só isto.
+create unique index messages_campaign_recipient_key
+on public.messages
+using btree (campaign_id, contact_address)
+where campaign_id is not null;
+
+-- A fila do disparo e as estatísticas da tela saem daqui.
+create index messages_campaign_id_idx
+on public.messages
+using btree (campaign_id)
+where campaign_id is not null;
+
 create trigger handle_new_message
 before insert
 on public.messages
@@ -117,12 +156,24 @@ when (
 )
 execute function public.dispatcher_edge_function();
 
+-- `campaign_id is null` não é detalhe: é o que impede a campanha de furar a
+-- fila.
+--
+-- Este gatilho chama o dispatcher uma vez por linha inserida. Para a mensagem
+-- avulsa isso é o certo — sai na hora. Para uma campanha de cinquenta mil, um
+-- único `insert ... select` viraria cinquenta mil chamadas de edge function no
+-- mesmo instante, o que estoura o teto de mensagens por segundo da Meta,
+-- devolve `130429` e derruba a nota de qualidade do número.
+--
+-- Mensagem de campanha não é despachada na inserção. Ela espera a fila, que
+-- entrega no ritmo configurado. - 2026/08/03
 create trigger handle_outgoing_message_to_dispatcher
 after insert
 on public.messages
 for each row
 when (
   new.direction = 'outgoing'::public.direction
+  and new.campaign_id is null
   and new.timestamp <= now()
   and (new.status ->> 'pending') is not null
 )
@@ -136,12 +187,22 @@ execute function public.dispatcher_edge_function();
 --
 -- 1 and 2 do not set status.pending to avoid dispatch.
 -- 2 and 3 should pause the conversation.
+--
+-- Campanha é a quinta origem, e é a única que não deve pausar nada.
+--
+-- Pausar a conversa existe para não atropelar o humano: se alguém digitou, o
+-- agente cala a boca. Disparo em massa não é alguém digitando. Sem esta linha,
+-- uma campanha para cinquenta mil contatos pausaria cinquenta mil conversas de
+-- uma vez — o agente pararia de responder a base inteira, e ninguém ligaria uma
+-- coisa à outra até começarem a chegar reclamações de cliente sem resposta.
+-- - 2026/08/03
 create trigger pause_conversation_on_human_message
 after insert
 on public.messages
 for each row
 when (
   new.direction = 'outgoing'::public.direction
+  and new.campaign_id is null
   and new.service <> 'local'::public.service
   and new.timestamp <= now() -- messages not in the future
   and new.timestamp >= now() - interval '10 seconds' -- recent messages

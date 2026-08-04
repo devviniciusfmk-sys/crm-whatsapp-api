@@ -736,6 +736,80 @@ export type Database = {
           },
         ]
       }
+      campaigns: {
+        Row: {
+          audience: Json
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          extra: Json
+          id: string
+          name: string
+          organization_address: string
+          organization_id: string
+          scheduled_at: string | null
+          service: Database["public"]["Enums"]["service"]
+          started_at: string | null
+          status: Database["public"]["Enums"]["campaign_status"]
+          template_category: string
+          template_language: string
+          template_name: string
+          throughput_mps: number
+          updated_at: string
+          variables: Json
+        }
+        Insert: {
+          audience?: Json
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          extra?: Json
+          id?: string
+          name: string
+          organization_address: string
+          organization_id: string
+          scheduled_at?: string | null
+          service?: Database["public"]["Enums"]["service"]
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["campaign_status"]
+          template_category: string
+          template_language: string
+          template_name: string
+          throughput_mps?: number
+          updated_at?: string
+          variables?: Json
+        }
+        Update: {
+          audience?: Json
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          extra?: Json
+          id?: string
+          name?: string
+          organization_address?: string
+          organization_id?: string
+          scheduled_at?: string | null
+          service?: Database["public"]["Enums"]["service"]
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["campaign_status"]
+          template_category?: string
+          template_language?: string
+          template_name?: string
+          throughput_mps?: number
+          updated_at?: string
+          variables?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           created_at: string
@@ -744,6 +818,7 @@ export type Database = {
           name: string | null
           organization_id: string
           status: string
+          tags: string[]
           updated_at: string
         }
         Insert: {
@@ -753,6 +828,7 @@ export type Database = {
           name?: string | null
           organization_id: string
           status?: string
+          tags?: string[]
           updated_at?: string
         }
         Update: {
@@ -762,6 +838,7 @@ export type Database = {
           name?: string | null
           organization_id?: string
           status?: string
+          tags?: string[]
           updated_at?: string
         }
         Relationships: [
@@ -780,6 +857,7 @@ export type Database = {
           contact_id: string | null
           created_at: string
           extra: Json | null
+          marketing_opt_out_at: string | null
           organization_id: string
           service: Database["public"]["Enums"]["service"]
           status: string
@@ -790,6 +868,7 @@ export type Database = {
           contact_id?: string | null
           created_at?: string
           extra?: Json | null
+          marketing_opt_out_at?: string | null
           organization_id: string
           service: Database["public"]["Enums"]["service"]
           status?: string
@@ -800,6 +879,7 @@ export type Database = {
           contact_id?: string | null
           created_at?: string
           extra?: Json | null
+          marketing_opt_out_at?: string | null
           organization_id?: string
           service?: Database["public"]["Enums"]["service"]
           status?: string
@@ -940,6 +1020,7 @@ export type Database = {
       messages: {
         Row: {
           agent_id: string | null
+          campaign_id: string | null
           contact_address: string | null
           content: Json
           conversation_id: string
@@ -958,6 +1039,7 @@ export type Database = {
         }
         Insert: {
           agent_id?: string | null
+          campaign_id?: string | null
           contact_address?: string | null
           content: Json
           conversation_id: string
@@ -976,6 +1058,7 @@ export type Database = {
         }
         Update: {
           agent_id?: string | null
+          campaign_id?: string | null
           contact_address?: string | null
           content?: Json
           conversation_id?: string
@@ -998,6 +1081,13 @@ export type Database = {
             columns: ["agent_id"]
             isOneToOne: false
             referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
             referencedColumns: ["id"]
           },
           {
@@ -1216,10 +1306,47 @@ export type Database = {
         }
         Returns: boolean
       }
+      campaign_recipients: {
+        Args: { p_campaign: Database["public"]["Tables"]["campaigns"]["Row"] }
+        Returns: {
+          contact_address: string
+          content: Json
+          conversation_id: string
+        }[]
+      }
       cancel_scheduled_message: {
         Args: { p_message_id: string }
         Returns: undefined
       }
+      claim_pending_messages: {
+        Args: { p_budget_per_address?: number }
+        Returns: {
+          agent_id: string | null
+          campaign_id: string | null
+          contact_address: string | null
+          content: Json
+          conversation_id: string
+          created_at: string
+          direction: Database["public"]["Enums"]["direction"]
+          external_id: string | null
+          group_address: string | null
+          id: string
+          organization_address: string
+          organization_id: string
+          service: Database["public"]["Enums"]["service"]
+          status: Json
+          thread_id: string | null
+          timestamp: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      complete_finished_campaigns: { Args: never; Returns: number }
       contact_address_update_rules: {
         Args: {
           p_address: string
@@ -1229,6 +1356,19 @@ export type Database = {
           p_status: string
         }
         Returns: boolean
+      }
+      count_audience: {
+        Args: {
+          p_audience: Json
+          p_organization_address: string
+          p_organization_id: string
+          p_template_category: string
+        }
+        Returns: number
+      }
+      count_campaign_audience: {
+        Args: { p_campaign_id: string }
+        Returns: number
       }
       create_api_key: {
         Args: {
@@ -1264,6 +1404,13 @@ export type Database = {
         }
         Returns: Json
       }
+      matches_campaign_audience: {
+        Args: {
+          p_audience: Json
+          p_contact: Database["public"]["Tables"]["contacts"]["Row"]
+        }
+        Returns: boolean
+      }
       member_self_update_rules: {
         Args: {
           p_ai: boolean
@@ -1282,6 +1429,20 @@ export type Database = {
         Args: { p_id: string; p_name: string }
         Returns: boolean
       }
+      organization_tags: {
+        Args: { p_organization_id: string }
+        Returns: {
+          contacts: number
+          tag: string
+        }[]
+      }
+      render_campaign_template: {
+        Args: {
+          p_campaign: Database["public"]["Tables"]["campaigns"]["Row"]
+          p_contact: Database["public"]["Tables"]["contacts"]["Row"]
+        }
+        Returns: Json
+      }
       set_contact_address_blocked: {
         Args: {
           p_address: string
@@ -1298,6 +1459,7 @@ export type Database = {
         Args: { p_address: string; p_organization_id: string; p_token: string }
         Returns: undefined
       }
+      start_campaign: { Args: { p_campaign_id: string }; Returns: number }
       whatsapp_token_secret_name: {
         Args: { p_address: string; p_organization_id: string }
         Returns: string
@@ -1305,6 +1467,13 @@ export type Database = {
     }
     Enums: {
       appointment_status: "scheduled" | "done" | "cancelled" | "no_show"
+      campaign_status:
+        | "draft"
+        | "scheduled"
+        | "running"
+        | "paused"
+        | "completed"
+        | "canceled"
       direction: "incoming" | "outgoing" | "internal"
       log_level: "info" | "warning" | "error"
       role: "owner" | "admin" | "member"
@@ -2000,6 +2169,14 @@ export const Constants = {
   public: {
     Enums: {
       appointment_status: ["scheduled", "done", "cancelled", "no_show"],
+      campaign_status: [
+        "draft",
+        "scheduled",
+        "running",
+        "paused",
+        "completed",
+        "canceled",
+      ],
       direction: ["incoming", "outgoing", "internal"],
       log_level: ["info", "warning", "error"],
       role: ["owner", "admin", "member"],
