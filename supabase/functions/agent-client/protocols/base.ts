@@ -12,6 +12,19 @@ export type AgentRowWithExtra = Omit<AgentRow, "extra"> & {
   extra: AIAgentExtra;
 };
 
+/**
+ * Teto de saída da segunda tentativa, quando a primeira foi cortada no meio.
+ *
+ * Não é medida de tamanho de resposta: as nossas cabem em muito menos. É espaço
+ * para o raciocínio caber junto com a chamada de `respond`, que é o que faltou
+ * quando o corte aconteceu. Generoso de propósito — o custo de sobrar é alguns
+ * tokens não usados, o custo de faltar é o contato sem resposta.
+ *
+ * Aqui, e não em cada protocolo, porque os dois falham do mesmo jeito e não faz
+ * sentido um ceder antes do outro. - 2026/08/05
+ */
+export const CUT_SHORT_TOKEN_FLOOR = 4000;
+
 export interface RequestContext {
   organization: OrganizationRow;
   conversation: ConversationRow;

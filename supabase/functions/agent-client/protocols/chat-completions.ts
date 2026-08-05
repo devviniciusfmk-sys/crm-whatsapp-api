@@ -19,6 +19,7 @@ import type {
 import {
   type AgentProtocolHandler,
   contextHeaders,
+  CUT_SHORT_TOKEN_FLOOR,
   type RequestContext,
   type ResponseContext,
 } from "./base.ts";
@@ -594,17 +595,36 @@ export class ChatCompletionsHandler
      * ignora em quem não raciocina; pelo `reasoning_effort` da OpenAI nos
      * demais. - 2026/08/04
      */
-    const effort = agent.extra.thinking ?? "low";
-    const thinking = isOpenRouter
-      ? { reasoning: { effort } }
-      : { reasoning_effort: effort };
+    let effort = agent.extra.thinking ?? "low";
+    let maxTokens = agent.extra.max_tokens ?? undefined;
+
+    const thinkingFor = (effort: "minimal" | "low" | "medium" | "high") =>
+      isOpenRouter ? { reasoning: { effort } } : { reasoning_effort: effort };
+
+    /**
+     * A segunda chance, quando a primeira resposta foi cortada pelo limite.
+     *
+     * `reasoning: low` reduziu o raciocínio de 39–128 para 21–30 tokens, mas é
+     * pedido, não teto: nada impede o modelo de estourar de novo numa conversa
+     * mais longa. E quando estoura, `finish_reason: "length"` volta num HTTP
+     * 200 — o laço abaixo só retenta exceção com status 400, então isso passava
+     * reto até o silêncio, sem ninguém tentar de novo.
+     *
+     * Uma tentativa a mais, com o esforço no mínimo que dá para pedir e o teto
+     * elevado, e só depois o silêncio. Uma, e não um laço: se com 4000 tokens e
+     * esforço baixo ainda não coube, o problema é a configuração do agente, e
+     * insistir só queima crédito. - 2026/08/05
+     */
+    let widened = false;
+    let sendReasoning = true;
+    const discarded: NonNullable<ChatCompletion["usage"]>[] = [];
 
     while (true) {
       try {
         response = await openai.chat.completions.create({
           model,
           temperature: agent.extra.temperature ?? undefined,
-          max_completion_tokens: agent.extra.max_tokens ?? undefined,
+          max_completion_tokens: maxTokens,
           ...(providerRouting ? { provider: providerRouting } : {}),
           messages: request.messages,
           // TOOLS
@@ -612,11 +632,29 @@ export class ChatCompletionsHandler
           tool_choice: MULTI_MESSAGE_RESPONSE ? "required" : undefined,
           parallel_tool_calls: request.tools.length ? true : undefined,
           // THINKING
-          ...thinking,
+          ...(sendReasoning ? thinkingFor(effort) : {}),
         });
-
-        break;
       } catch (error) {
+        // Modelo que não raciocina recusa o parâmetro. Tirar e repetir uma vez,
+        // em vez de queimar as três tentativas mandando o que ele não aceita —
+        // e em vez de deixar o contato sem resposta por causa de um campo que
+        // nem se aplica a ele. - 2026/08/05
+        if (
+          sendReasoning &&
+          error instanceof Error &&
+          "status" in error &&
+          error.status === 400 &&
+          /reasoning/i.test(error.message)
+        ) {
+          sendReasoning = false;
+
+          log.warn(
+            "The model rejected the reasoning parameter. Retrying without it.",
+          );
+
+          continue;
+        }
+
         if (
           retries < maxRetries &&
           error instanceof Error &&
@@ -642,15 +680,56 @@ export class ChatCompletionsHandler
 
         throw error;
       }
+
+      const cut = response.choices?.[0];
+
+      // Cortado pelo limite e sem nada aproveitável: nem ferramenta, nem texto.
+      // Com qualquer um dos dois na mão o corte não custou a resposta, e mexer
+      // aqui só atrasaria o contato.
+      if (
+        !widened &&
+        cut?.finish_reason === "length" &&
+        !cut.message?.tool_calls?.length &&
+        !cut.message?.content
+      ) {
+        widened = true;
+
+        if (response.usage) discarded.push(response.usage);
+
+        // Baixar, nunca subir: quem já pedia `minimal` continua em `minimal`.
+        if (effort !== "minimal") effort = "low";
+
+        maxTokens = Math.max(maxTokens ?? 0, CUT_SHORT_TOKEN_FLOOR);
+
+        log.warn(
+          `Cut short by the output limit with nothing to send. Retrying with ` +
+            `effort "${effort}" and max_completion_tokens ${maxTokens}.`,
+        );
+
+        continue;
+      }
+
+      break;
     }
 
-    // Record AI usage in the ledger
-    if (response.usage) {
+    // Record AI usage in the ledger.
+    //
+    // A tentativa descartada gastou tokens de verdade: o provedor cobra o
+    // raciocínio que não virou resposta. Somar as duas, senão a retentativa
+    // vira consumo invisível na conta da organização. - 2026/08/05
+    const usages = [...discarded, ...(response.usage ? [response.usage] : [])];
+
+    if (usages.length) {
       const cost = costs
-        ? this.calculateCost(
-          response.usage,
-          costs.pricing as Record<string, number>,
-          costs.quantity,
+        ? usages.reduce(
+          (sum, usage) =>
+            sum +
+            this.calculateCost(
+              usage,
+              costs.pricing as Record<string, number>,
+              costs.quantity,
+            ),
+          0,
         )
         : 0;
 
@@ -666,7 +745,9 @@ export class ChatCompletionsHandler
           provider,
           model,
           billable,
-          metadata: response.usage,
+          metadata: discarded.length
+            ? { ...response.usage, discarded_attempts: discarded }
+            : response.usage,
         })
         .throwOnError();
     }
@@ -871,7 +952,7 @@ export class ChatCompletionsHandler
       };
     }
 
-    // TODO: finish reasons: length, content filter
+    // TODO: finish reason: content filter
 
     /**
      * Texto solto quando a ferramenta era obrigatória: não vai para o cliente.
@@ -945,6 +1026,18 @@ export class ChatCompletionsHandler
             },
           },
         ],
+      };
+    }
+
+    // Cortado pelo limite, e a segunda tentativa com teto maior também não
+    // coube. Dizer isso, e não "terminou sem texto": quem lê a nota precisa
+    // saber que o caminho é o `max_tokens` do agente, não o texto das
+    // instruções. - 2026/08/05
+    if (finish_reason === "length") {
+      return {
+        messages: [],
+        silence:
+          "o modelo estourou o limite de tokens de saída antes de escrever a resposta, e a tentativa com teto maior e menos raciocínio também não coube",
       };
     }
 
