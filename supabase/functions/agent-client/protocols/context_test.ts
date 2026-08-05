@@ -1,4 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
+import { coerceRespondMessages } from "./chat-completions.ts";
 import { buildRuntimeContext, isOpenAt } from "./context.ts";
 import type { BusinessHours } from "../../_shared/types/extra_types.ts";
 
@@ -190,4 +191,53 @@ Deno.test("os links do agente entram no contexto; incompletos ficam de fora", ()
   // convite para o modelo inventar uma URL.
   assertEquals(make(undefined).links, undefined);
   assertEquals(make([]).links, undefined);
+});
+
+Deno.test("respond: as formas que o modelo manda viram mensagem", () => {
+  // O leitor antigo só aceitava a forma do esquema; tudo o mais virava
+  // "silêncio", e o cliente ficava sem resposta. Cada caso aqui é uma forma
+  // vista ou plausível vinda do modelo. - 2026/08/05
+  assertEquals(coerceRespondMessages("Bom dia"), [
+    { type: "text", text: "Bom dia" },
+  ]);
+
+  assertEquals(coerceRespondMessages(["Oi", "tudo bem?"]), [
+    { type: "text", text: "Oi" },
+    { type: "text", text: "tudo bem?" },
+  ]);
+
+  assertEquals(coerceRespondMessages({ type: "text", text: "Olá" }), [
+    { type: "text", text: "Olá" },
+  ]);
+
+  assertEquals(coerceRespondMessages([{ content: "Olá" }]), [
+    { type: "text", text: "Olá" },
+  ]);
+
+  assertEquals(coerceRespondMessages([{ message: "Olá" }]), [
+    { type: "text", text: "Olá" },
+  ]);
+
+  // A forma do esquema continua passando intacta.
+  assertEquals(
+    coerceRespondMessages([{ type: "text", text: "certo" }]),
+    [{ type: "text", text: "certo" }],
+  );
+
+  // Arquivo mantém a URI, que é o que o resto do código usa para buscá-lo.
+  assertEquals(
+    coerceRespondMessages([{
+      type: "file",
+      uri: "internal://x",
+      name: "a.pdf",
+    }]),
+    [{ type: "file", uri: "internal://x", name: "a.pdf", text: undefined }],
+  );
+
+  // Sem texto nenhum continua sendo silêncio: tolerar forma não é inventar
+  // conteúdo.
+  assertEquals(coerceRespondMessages([]), []);
+  assertEquals(coerceRespondMessages(undefined), []);
+  assertEquals(coerceRespondMessages([{ type: "text", text: "  " }]), []);
+  assertEquals(coerceRespondMessages([{ algo: 1 }]), []);
 });

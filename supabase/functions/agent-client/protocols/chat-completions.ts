@@ -118,6 +118,70 @@ export interface ChatCompletionsResponse {
   };
 }
 
+type RespondMessage =
+  | { type: "text"; text: string }
+  | { type: "file"; uri: string; name?: string; text?: string };
+
+/**
+ * O que o modelo mandou em `respond`, na forma que o resto do código espera.
+ *
+ * O esquema pede uma lista de `{type:"text", text}` e o modelo nem sempre
+ * obedece. O leitor antigo exigia exatamente aquilo, e qualquer variação virava
+ * "lista vazia" — que o sistema tratava como "não responder". Do lado de fora:
+ * o cliente escreve e ninguém responde.
+ *
+ * Foi o que aconteceu em produção três vezes. Os números do aviso é que
+ * denunciaram: 81 tokens de saída para uma suposta lista vazia, quando
+ * `{"messages":[]}` custa oito. O modelo tinha escrito a resposta; o leitor é
+ * que não a reconheceu.
+ *
+ * As formas aceitas aqui são as que aparecem na prática:
+ *   "Bom dia"                          → texto solto no lugar da lista
+ *   ["Bom dia", "tudo bem?"]           → lista de textos soltos
+ *   {type:"text", text:"..."}          → uma mensagem fora de lista
+ *   {content:"..."} / {message:"..."}  → a chave com outro nome
+ *
+ * Ser tolerante aqui não afrouxa nada: o que entra continua sendo texto do
+ * modelo para o cliente, e o que não tiver texto nenhum continua sendo
+ * silêncio, agora com o argumento cru no aviso para não sobrar dúvida.
+ * - 2026/08/05
+ */
+export function coerceRespondMessages(raw: unknown): RespondMessage[] {
+  const one = (item: unknown): RespondMessage | null => {
+    if (typeof item === "string") {
+      return item.trim() ? { type: "text", text: item } : null;
+    }
+
+    if (!item || typeof item !== "object") return null;
+
+    const part = item as Record<string, unknown>;
+
+    if (part.type === "file" && typeof part.uri === "string") {
+      return {
+        type: "file",
+        uri: part.uri,
+        name: typeof part.name === "string" ? part.name : undefined,
+        text: typeof part.text === "string" ? part.text : undefined,
+      };
+    }
+
+    // `text` é o nome do esquema; os outros são os apelidos que o modelo usa.
+    const text = [part.text, part.content, part.message, part.body].find(
+      (value): value is string => typeof value === "string" && !!value.trim(),
+    );
+
+    return text ? { type: "text", text } : null;
+  };
+
+  if (Array.isArray(raw)) {
+    return raw.map(one).filter((item): item is RespondMessage => !!item);
+  }
+
+  const single = one(raw);
+
+  return single ? [single] : [];
+}
+
 /**
  * Os números da chamada, em uma linha, para o aviso de silêncio.
  *
@@ -752,6 +816,11 @@ export class ChatCompletionsHandler
       >;
     };
 
+    // Aceita as formas que o modelo insiste em usar, além da que o esquema pede.
+    args.messages = coerceRespondMessages(
+      (args as { messages?: unknown }).messages,
+    );
+
     if (!args.messages?.length) {
       // Aviso, e não informação: se chegou aqui, o modelo ignorou a descrição e
       // o `minItems`, e o contato ficou sem resposta. O laço grava a nota na
@@ -834,10 +903,16 @@ export class ChatCompletionsHandler
         return {
           messages,
           ...(messages.length ? {} : {
-            silence:
-              `o modelo chamou \`respond\` sem nenhuma mensagem dentro, o que no protocolo significa 'não responder' ${
-                describeUsage(response.usage)
-              }`,
+            // Com o argumento cru junto: depois de tolerar todas as formas
+            // conhecidas, o que sobrar aqui é forma nova — e adivinhar qual
+            // seria começar de novo a investigação que já custou dois dias.
+            silence: `o modelo chamou \`respond\` e não veio texto nenhum ${
+              describeUsage(response.usage)
+            }. O que ele mandou: ${
+              (respondCall.type === "function"
+                ? respondCall.function.arguments
+                : "").slice(0, 400)
+            }`,
           }),
         };
       }
