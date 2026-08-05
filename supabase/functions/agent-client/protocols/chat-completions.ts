@@ -561,8 +561,28 @@ export class ChatCompletionsHandler
 
     let provider = agent.extra.api_url;
     let baseURL = agent.extra.api_url;
-    let apiKey = agent.extra.api_key;
     let model = agent.extra.model;
+
+    /**
+     * A chave do provedor: primeiro o cofre da organização, depois o campo
+     * antigo do agente.
+     *
+     * `agents.extra.api_key` é jsonb, e a política "members can read their orgs
+     * agents" deixa qualquer atendente lê-la — quem foi contratado para
+     * responder mensagens tinha acesso ao crédito de IA da conta. A chave passou
+     * para o Vault, por organização, com o mesmo desenho que os tokens da Meta
+     * já usam.
+     *
+     * O campo antigo continua sendo lido, como segunda opção, para não quebrar
+     * quem já tinha chave gravada antes da migração. A migração esvazia esse
+     * campo, então ele fica só como caminho de compatibilidade — e no dia em que
+     * ninguém mais tiver nada ali, some. - 2026/08/05
+     */
+    const { data: vaultKey } = await this.client.rpc("get_model_api_key", {
+      p_organization_id: organization.id,
+    });
+
+    let apiKey = (vaultKey as string | null) || agent.extra.api_key;
 
     switch (baseURL) {
       case "groq":
@@ -595,7 +615,11 @@ export class ChatCompletionsHandler
     }
     // Note: for Bedrock, the base URL is https://${bedrock-runtime-endpoint}/openai/v1
 
-    const billable = !agent.extra.api_key;
+    // "Trouxe chave própria" agora inclui a chave do cofre. Deixar esta linha
+    // olhando só o campo antigo faria a organização que moveu a chave para o
+    // cofre passar a gastar crédito da plataforma com o modelo que ela mesma
+    // paga — cobrança dobrada, e silenciosa. - 2026/08/05
+    const billable = !apiKey;
 
     // Fetch cost pricing before the LLM call
     const { data: costs } = await this.client
