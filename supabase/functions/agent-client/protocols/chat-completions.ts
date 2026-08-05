@@ -33,7 +33,7 @@ import { inspect } from "node:util";
 const MULTI_MESSAGE_RESPONSE = true;
 const RESPOND_FUNCTION_NAME = "respond";
 
-const RESPOND_TOOL: ChatCompletionTool = {
+export const RESPOND_TOOL: ChatCompletionTool = {
   type: "function",
   function: {
     name: RESPOND_FUNCTION_NAME,
