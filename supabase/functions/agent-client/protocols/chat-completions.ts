@@ -95,6 +95,40 @@ export interface ChatCompletionsRequest {
 export interface ChatCompletionsResponse {
   finish_reason: ChatCompletion["choices"][number]["finish_reason"];
   message: ChatCompletionMessage;
+  /**
+   * O tamanho da chamada, para o aviso de silêncio poder dizer os números.
+   *
+   * O silêncio já diz o motivo, e mesmo assim não deu para achar a causa: cinco
+   * hipóteses testadas de fora — provedor, histórico sujo, as próprias notas
+   * internas no contexto, ferramentas do MCP, esforço de raciocínio — e todas
+   * responderam 8 de 8 em bancada. O defeito só acontece dentro, e medir de
+   * fora não alcança.
+   *
+   * Então o aviso passa a carregar o que só quem fez a chamada sabe: quantas
+   * mensagens foram, quanto entrou, quanto o modelo pensou e quanto sobrou para
+   * responder. Com isso, a próxima ocorrência é um diagnóstico em vez de mais
+   * uma rodada de palpite. - 2026/08/05
+   */
+  usage?: {
+    messages: number;
+    tools: number;
+    prompt: number;
+    completion: number;
+    reasoning: number;
+  };
+}
+
+/**
+ * Os números da chamada, em uma linha, para o aviso de silêncio.
+ *
+ * Sem eles a nota diz o que aconteceu e não deixa investigar: foi contexto
+ * grande demais? o raciocínio comeu o orçamento? sobrou espaço e mesmo assim
+ * veio vazio? São perguntas diferentes, com consertos diferentes. - 2026/08/05
+ */
+function describeUsage(usage?: ChatCompletionsResponse["usage"]): string {
+  if (!usage) return "";
+
+  return `(${usage.messages} mensagens, ${usage.tools} ferramentas, ${usage.prompt} tokens de entrada, ${usage.reasoning} de raciocínio, ${usage.completion} de saída)`;
 }
 
 export class ChatCompletionsHandler
@@ -691,6 +725,14 @@ export class ChatCompletionsHandler
     return {
       finish_reason: choice.finish_reason,
       message: choice.message,
+      usage: {
+        messages: request.messages.length,
+        tools: request.tools.length,
+        prompt: response.usage?.prompt_tokens ?? 0,
+        completion: response.usage?.completion_tokens ?? 0,
+        reasoning:
+          response.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+      },
     };
   }
 
@@ -793,7 +835,9 @@ export class ChatCompletionsHandler
           messages,
           ...(messages.length ? {} : {
             silence:
-              "o modelo chamou `respond` sem nenhuma mensagem dentro, o que no protocolo significa 'não responder'",
+              `o modelo chamou \`respond\` sem nenhuma mensagem dentro, o que no protocolo significa 'não responder' ${
+                describeUsage(response.usage)
+              }`,
           }),
         };
       }
@@ -951,7 +995,9 @@ export class ChatCompletionsHandler
     return {
       messages: [],
       silence:
-        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório`,
+        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório ${
+          describeUsage(response.usage)
+        }`,
     };
   }
 }
