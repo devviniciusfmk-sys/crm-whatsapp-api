@@ -1381,6 +1381,7 @@ export type Database = {
           api_key_id: string
         }[]
       }
+      delete_campaign: { Args: { p_campaign_id: string }; Returns: number }
       delete_whatsapp_access_token: {
         Args: { p_address: string; p_organization_id: string }
         Returns: undefined

@@ -455,3 +455,76 @@ begin
   return v_completed;
 end;
 $$;
+
+-- Apaga a campanha, e antes disso descarta o que ela ainda não enviou.
+--
+-- A ordem importa, e é a razão de isto ser função no banco em vez de um
+-- `delete` do navegador. A chave estrangeira de `messages.campaign_id` é
+-- `on delete set null`, de propósito: quem já recebeu tem de continuar vendo a
+-- mensagem na conversa depois que a campanha for descartada. Só que a fila
+-- despacha justamente `campaign_id is null or c.status = 'running'` — então
+-- apagar a linha da campanha e deixar as pendentes para trás transformaria o
+-- que ainda não saiu em mensagem solta, elegível na hora e na frente da fila,
+-- porque a prioridade de conversa é dada por `campaign_id is not null`.
+--
+-- Isto é, apagar dispararia o resto do disparo. O botão faria o oposto do nome.
+--
+-- Por isso as pendentes morrem primeiro, na mesma transação. "Pendente" é a
+-- mesma definição da fila: nada que já tenha sido aceito, enviado, entregue,
+-- lido ou falhado. O que chegou na Meta fica gravado — a pessoa recebeu, e
+-- história recebida não se reescreve; só perde o vínculo com a campanha.
+--
+-- **Correndo não apaga.** Não é preciosismo: uma linha reservada pela fila pode
+-- estar no meio do POST para a Meta neste instante, e apagá-la debaixo do
+-- remetente é a única forma de a mensagem sair sem ficar registro. Pausar
+-- primeiro fecha essa janela na rodada seguinte, e é um clique. Depois de
+-- pausada, apagar leva junto o que sobrou.
+--
+-- Admin, como o resto da tabela: quem pode disparar para a base inteira é quem
+-- pode apagar o disparo.
+--
+-- Devolve quantas mensagens não enviadas foram descartadas — a tela precisa
+-- disso para dizer "cancelei 812 que ainda não tinham saído" em vez de sumir
+-- com a campanha em silêncio. - 2026/08/04
+create function public.delete_campaign(p_campaign_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  v_campaign public.campaigns;
+  v_discarded integer;
+begin
+  select * into v_campaign
+  from public.campaigns
+  where id = p_campaign_id
+    and organization_id in (select public.get_authorized_orgs('admin'))
+  for update;
+
+  if not found then
+    raise exception 'campaign not found or not authorized'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if v_campaign.status = 'running'::public.campaign_status then
+    raise exception 'campaign % is running; pause it before deleting',
+      p_campaign_id;
+  end if;
+
+  delete from public.messages
+  where campaign_id = p_campaign_id
+    and status ->> 'accepted' is null
+    and status ->> 'sent' is null
+    and status ->> 'delivered' is null
+    and status ->> 'read' is null
+    and status ->> 'failed' is null;
+
+  get diagnostics v_discarded = row_count;
+
+  delete from public.campaigns
+  where id = p_campaign_id;
+
+  return v_discarded;
+end;
+$$;

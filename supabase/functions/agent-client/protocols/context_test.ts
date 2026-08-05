@@ -137,3 +137,57 @@ Deno.test("canais de conversa recebem as regras; e-mail e afins não", () => {
   assertEquals(make("local").channel !== undefined, true);
   assertEquals(make("email").channel, undefined);
 });
+
+Deno.test("a memória do cliente entra no contexto, e some quando está vazia", () => {
+  const make = (summary?: string) =>
+    buildRuntimeContext(
+      {
+        organization: { extra: { timezone: "America/Sao_Paulo" } },
+        conversation: { contact_address: "5511999999999", service: "whatsapp" },
+        contact: { name: "Maria", extra: summary ? { summary } : {} },
+      } as unknown as Parameters<typeof buildRuntimeContext>[0],
+    ) as { user?: { about?: string } };
+
+  assertEquals(
+    make("Faz limpeza de pele a cada 45 dias. Alérgica a ácido salicílico.")
+      .user?.about,
+    "Faz limpeza de pele a cada 45 dias. Alérgica a ácido salicílico.",
+  );
+
+  // Ausente, e não presente-e-vazio: um campo `about: ""` no contexto convida o
+  // modelo a preencher o que falta, e ficha inventada é pior que ficha vazia.
+  assertEquals(make(undefined).user?.about, undefined);
+  assertEquals(make("").user?.about, undefined);
+});
+
+Deno.test("os links do agente entram no contexto; incompletos ficam de fora", () => {
+  const make = (links?: unknown) =>
+    buildRuntimeContext(
+      {
+        organization: { extra: { timezone: "America/Sao_Paulo" } },
+        conversation: { contact_address: "5511999999999", service: "whatsapp" },
+        contact: undefined,
+        agent: { extra: { links } },
+      } as unknown as Parameters<typeof buildRuntimeContext>[0],
+    ) as { links?: { what: string; url: string }[] };
+
+  const runtime = make([
+    {
+      label: " Checkout Premium — R$ 29,90 ",
+      url: " https://pay.exemplo/premium ",
+    },
+    { label: "Sem endereço", url: "" },
+    { label: "", url: "https://pay.exemplo/orfao" },
+  ]);
+
+  // Aparado, e só o que está inteiro: rótulo sem URL é promessa que o modelo
+  // não consegue cumprir, e URL sem rótulo ele não sabe quando mandar.
+  assertEquals(runtime.links?.length, 1);
+  assertEquals(runtime.links?.[0].what, "Checkout Premium — R$ 29,90");
+  assertEquals(runtime.links?.[0].url, "https://pay.exemplo/premium");
+
+  // Sem links configurados, a chave não existe — campo vazio no contexto é
+  // convite para o modelo inventar uma URL.
+  assertEquals(make(undefined).links, undefined);
+  assertEquals(make([]).links, undefined);
+});

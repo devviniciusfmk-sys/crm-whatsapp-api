@@ -197,7 +197,50 @@ export type ConversationExtra = {
   */
 };
 
-export type ContactExtra = Record<PropertyKey, never>;
+/**
+ * A ficha do cliente.
+ *
+ * Estava declarada como objeto vazio enquanto `save_contact_details` já gravava
+ * e-mail, documento e endereço aqui, e a tela já os exibia. Tipo que mente não
+ * protege ninguém: quem fosse ler um campo daqui levava um erro de compilação
+ * por um dado que existe no banco desde ontem. - 2026/08/04
+ */
+export type ContactExtra = {
+  email?: string;
+  /** CPF ou CNPJ, como a pessoa informou. */
+  document?: string;
+  /** O endereço como o cliente escreveu na conversa. */
+  address?: string;
+  cep?: string;
+  street?: string;
+  address_number?: string;
+  complement?: string;
+  district?: string;
+  city?: string;
+  state?: string;
+  /** Nascimento em ISO (AAAA-MM-DD). */
+  birthday?: string;
+  /** Observação escrita por quem atende. Máquina nenhuma sobrescreve. */
+  notes?: string;
+  /**
+   * O que o sistema aprendeu deste cliente, em poucas linhas.
+   *
+   * Existe para o assistente não reler a conversa inteira a cada mensagem. Uma
+   * conversa de seis meses não cabe na janela de contexto, e o que cabe é
+   * sempre o pedaço errado — o começo, onde a pessoa disse que é alérgica,
+   * é o primeiro a sair. Cinco linhas atravessam meses; duzentas mensagens não.
+   *
+   * Separado de `notes` de propósito: `notes` é o que uma pessoa escreveu, e
+   * uma máquina não reescreve o que uma pessoa escreveu. É a mesma separação de
+   * `address` (o que o cliente disse) e `street` (o que a equipe conferiu).
+   *
+   * Editável e apagável na ficha: é texto sobre uma pessoa, gerado por máquina,
+   * e quem atende tem de poder corrigir e remover. - 2026/08/04
+   */
+  summary?: string;
+  /** Quando o resumo foi refeito, em ISO. */
+  summary_at?: string;
+};
 
 export type WhatsAppContactAddressExtra = {
   name?: string;
@@ -303,6 +346,29 @@ export type AIAgentExtra = {
   api_url?: string;
   api_key?: string;
   model?: string;
+  /**
+   * Preferência de provedor, repassada verbatim quando o intermediário é a
+   * OpenRouter: `order`, `only`, `ignore`, `sort`, `allow_fallbacks`.
+   *
+   * Existe porque o mesmo modelo acerta ou erra conforme quem o serve — medido,
+   * com um provedor devolvendo argumentos corrompidos em 2 de 8 chamadas. O
+   * detalhe está no comentário de `chat-completions.ts`. - 2026/08/04
+   */
+  provider?: Record<string, unknown>;
+  /**
+   * Os links que o assistente pode mandar: checkout, cardápio, formulário.
+   *
+   * Fora das instruções de propósito. Colado no meio de trinta linhas de texto,
+   * um link de pagamento é a coisa mais frágil do prompt: quem troca o preço
+   * mexe no parágrafo errado, quem duplica a campanha esquece de trocar a URL,
+   * e o modelo às vezes reescreve o que copia. Aqui ele é dado — a tela mostra
+   * um por linha, trocar é editar um campo, e o contexto entrega a URL literal.
+   *
+   * O rótulo é o que o modelo lê para decidir quando mandar: "Checkout Premium
+   * — R$ 29,90, pagamento único" diz mais do que qualquer instrução em volta.
+   * - 2026/08/04
+   */
+  links?: { label: string; url: string }[];
   protocol?: "chat_completions" | "responses";
   max_messages?: number;
   temperature?: number;

@@ -449,6 +449,28 @@ begin
     return new;
   end if;
 
+  -- Endereço que já existe não ganha ficha nova, mesmo estando num INSERT.
+  --
+  -- O Postgres dispara os gatilhos BEFORE INSERT *antes* de detectar o
+  -- conflito, e o que eles fizeram não volta atrás quando a linha cai no
+  -- `do update`. O webhook faz `upsert` de contacts_addresses a cada mensagem
+  -- recebida, sem `contact_id` — então toda mensagem que chegava criava uma
+  -- ficha aqui, o conflito devolvia a linha à ficha antiga, e a recém-criada
+  -- ficava órfã. Uma ficha fantasma por mensagem recebida, com o nome certo e
+  -- telefone nenhum, na tela de Contatos.
+  --
+  -- Apareceu em produção como um segundo "Ambern" sem telefone, criado no mesmo
+  -- microssegundo em que a mensagem chegou. - 2026/08/04
+  if exists (
+    select 1
+    from public.contacts_addresses as existing
+    where existing.organization_id = new.organization_id
+      and existing.service = new.service
+      and existing.address = new.address
+  ) then
+    return new;
+  end if;
+
   insert into public.contacts (organization_id, name)
   values (
     new.organization_id,

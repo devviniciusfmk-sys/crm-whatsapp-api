@@ -46,13 +46,16 @@ const RESPOND_FUNCTION_NAME = "respond";
 const RESPOND_TOOL: ResponsesTool = {
   type: "function",
   name: RESPOND_FUNCTION_NAME,
+  // Mesma correção do protocolo chat-completions, pelo mesmo motivo medido:
+  // oferecer o silêncio como opção fazia o modelo escolhê-lo. - 2026/08/04
   description:
-    "Default tool. Always call this to send messages to the user, unless you need to call another tool first. Call with an empty messages array to skip responding.",
+    "Send messages to the customer. This is how you talk to them: call it with everything you want to say. The customer is waiting for an answer, so send at least one message — never call this with an empty list. If you should not be the one answering, use transfer_to_human_agent instead of staying silent.",
   strict: false,
   parameters: {
     type: "object",
     properties: {
       messages: {
+        minItems: 1,
         type: "array",
         items: {
           anyOf: [
@@ -652,13 +655,40 @@ export class ResponsesHandler
       .join("\n")
       .trim();
 
-    if (text) {
-      if (MULTI_MESSAGE_RESPONSE) {
-        log.warn(
-          "Unexpected text output with tool_choice: required. Falling back to text response.",
-        );
-      }
+    // Mesmo corte do protocolo chat-completions, pelo mesmo motivo: com
+    // `tool_choice` obrigatório, o único caminho autorizado até o contato é a
+    // ferramenta `respond`. Texto que chega por fora dela não é resposta, é
+    // defeito — e num caso real o "defeito" era o raciocínio interno do modelo,
+    // que foi entregue e lido por um cliente. Fica interno. - 2026/08/04
+    if (text && MULTI_MESSAGE_RESPONSE) {
+      log.warn(
+        "Model answered with loose text while tool_choice was required. Kept internal.",
+      );
 
+      return {
+        messages: [
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "internal" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text:
+                `O modelo respondeu em texto solto em vez de usar a ferramenta de resposta, então nada foi enviado ao contato. O que ele produziu:\n\n${text}`,
+            },
+          },
+        ],
+        silence:
+          "o modelo respondeu em texto solto em vez de chamar `respond`; o texto ficou interno para não ir ao cliente",
+      };
+    }
+
+    if (text) {
       return {
         messages: [
           {

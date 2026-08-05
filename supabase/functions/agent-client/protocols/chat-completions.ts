@@ -37,12 +37,24 @@ const RESPOND_TOOL: ChatCompletionTool = {
   type: "function",
   function: {
     name: RESPOND_FUNCTION_NAME,
+    // A descrição antiga terminava em "Call with an empty messages array to
+    // skip responding", e o modelo aceitava o convite: em três de cada cinco
+    // saudações medidas ele chamou `respond` sem mensagem nenhuma. Do lado de
+    // fora isso é o cliente escrevendo "Bom dia!" e ninguém respondendo — e
+    // como nenhuma mensagem é gravada, não fica rastro de que houve decisão.
+    // Calar estava oferecido como opção normal, então virou uma.
+    //
+    // Quem não deve responder tem outra saída, e essa deixa rastro:
+    // transfer_to_human_agent. - 2026/08/04
     description:
-      "Default tool. Always call this to send messages to the user, unless you need to call another tool first. Call with an empty messages array to skip responding.",
+      "Send messages to the customer. This is how you talk to them: call it with everything you want to say. The customer is waiting for an answer, so send at least one message — never call this with an empty list. If you should not be the one answering, use transfer_to_human_agent instead of staying silent.",
     parameters: {
       type: "object",
       properties: {
         messages: {
+          // O esquema também recusa a lista vazia, para os provedores que o
+          // aplicam: a descrição convence, o esquema impede.
+          minItems: 1,
           type: "array",
           items: {
             anyOf: [
@@ -530,21 +542,77 @@ export class ChatCompletionsHandler
     let retries = 0;
     const maxRetries = 3;
 
+    /**
+     * Quem serve o modelo, quando o intermediário é a OpenRouter.
+     *
+     * Não é ajuste fino: o mesmo `openai/gpt-oss-120b`, na mesma requisição,
+     * medido em 8 chamadas por provedor no dia 2026/08/04 —
+     *
+     *   Cerebras   8 de 8 certas, 0,3 s
+     *   Together   7 de 8
+     *   Groq       5 de 8 (3 vezes não chamou ferramenta nenhuma)
+     *   Nebius     0 de 8: 2 com argumentos corrompidos, 6 sem ferramenta
+     *   Phala      8 erros do provedor
+     *
+     * Os argumentos corrompidos do Nebius são o mesmo `"2023….....…????…"` que
+     * chegou numa conversa de produção e fez o assistente tentar cancelar um
+     * compromisso que ninguém pediu. `require_parameters` não salva: o Nebius
+     * *anuncia* suporte a `tool_choice` e ainda assim devolve isso.
+     *
+     * Então o provedor é escolha, não sorteio. `agent.extra.provider` vai
+     * verbatim para a OpenRouter (`order`, `only`, `ignore`, `sort` — o que a
+     * documentação deles aceitar). Sem configuração, pede o mais rápido, que
+     * empurra para o lado bom da tabela sem casar o produto com um fornecedor.
+     *
+     * Ignorado por qualquer outro provedor: é um campo extra num corpo JSON.
+     * - 2026/08/04
+     */
+    const isOpenRouter = String(baseURL).includes("openrouter.ai");
+    const providerRouting = isOpenRouter
+      ? (agent.extra.provider ?? { sort: "throughput" })
+      : undefined;
+
+    /**
+     * Quanto o modelo pode pensar antes de responder.
+     *
+     * O parâmetro estava escrito e comentado aqui desde sempre, então nunca
+     * saiu: modelo de raciocínio como o gpt-oss vinha pensando no padrão dele.
+     * O preço apareceu em produção como `finish_reason: "length"` — o
+     * raciocínio consumiu o orçamento inteiro de saída e não sobrou nada para a
+     * resposta. O cliente escreveu "gostaria de marcar uma consulta para dia
+     * 30" e não recebeu nada.
+     *
+     * Medido na mesma pergunta: sem esforço declarado, 39 a 128 tokens de
+     * raciocínio; com `low`, 21 a 30. Quatro vezes menos, com a mesma escolha
+     * de ferramenta e o mesmo tempo de resposta.
+     *
+     * `low` como padrão porque isto é atendimento: turnos curtos, decisões
+     * simples, e o que custa caro é a demora. Quem precisar de mais muda em
+     * `extra.thinking`, que já existia na tela e não chegava a lugar nenhum.
+     *
+     * Pela chave `reasoning` na OpenRouter, que normaliza entre modelos e
+     * ignora em quem não raciocina; pelo `reasoning_effort` da OpenAI nos
+     * demais. - 2026/08/04
+     */
+    const effort = agent.extra.thinking ?? "low";
+    const thinking = isOpenRouter
+      ? { reasoning: { effort } }
+      : { reasoning_effort: effort };
+
     while (true) {
       try {
         response = await openai.chat.completions.create({
           model,
           temperature: agent.extra.temperature ?? undefined,
           max_completion_tokens: agent.extra.max_tokens ?? undefined,
+          ...(providerRouting ? { provider: providerRouting } : {}),
           messages: request.messages,
           // TOOLS
           tools: request.tools.length ? request.tools : undefined,
           tool_choice: MULTI_MESSAGE_RESPONSE ? "required" : undefined,
           parallel_tool_calls: request.tools.length ? true : undefined,
           // THINKING
-          // ts-expect-error
-          //thinking: { type: "enabled", budget_tokens: 2000 },
-          //reasoning_effort: agent.extra.thinking || "low",
+          ...thinking,
         });
 
         break;
@@ -643,7 +711,12 @@ export class ChatCompletionsHandler
     };
 
     if (!args.messages?.length) {
-      log.info("Respond called with empty messages. No response to user.");
+      // Aviso, e não informação: se chegou aqui, o modelo ignorou a descrição e
+      // o `minItems`, e o contato ficou sem resposta. O laço grava a nota na
+      // conversa; isto é para quem for ler o log depois entender o porquê.
+      log.warn(
+        "Respond called with an empty list. The contact was left without an answer.",
+      );
       return [];
     }
 
@@ -715,7 +788,14 @@ export class ChatCompletionsHandler
 
       if (respondCall) {
         const messages = await this.processRespondCall(respondCall);
-        return { messages };
+
+        return {
+          messages,
+          ...(messages.length ? {} : {
+            silence:
+              "o modelo chamou `respond` sem nenhuma mensagem dentro, o que no protocolo significa 'não responder'",
+          }),
+        };
       }
 
       // Regular tool calls — existing logic
@@ -793,13 +873,61 @@ export class ChatCompletionsHandler
 
     // TODO: finish reasons: length, content filter
 
-    if (finish_reason === "stop" && message.content) {
-      if (MULTI_MESSAGE_RESPONSE) {
-        log.warn(
-          "Unexpected stop finish_reason with tool_choice: required. Falling back to text response.",
-        );
-      }
+    /**
+     * Texto solto quando a ferramenta era obrigatória: não vai para o cliente.
+     *
+     * Este atalho existia para modelos que ignoram `tool_choice` e respondem em
+     * texto — e mandava esse texto ao contato. Em produção ele entregou isto,
+     * e o cliente leu:
+     *
+     *   "analysisWe have a user wanting to schedule a consulta for day 30.
+     *    They said 'dia 30'. Probably referring to August 30... Let's check
+     *    if Monday 31 is open.assistantcommentary to=functions.list_appointments
+     *    json{"date":"2026-08-31"}"
+     *
+     * É o formato de canais do gpt-oss (`analysis`, `commentary`, `final`)
+     * chegando cru, sem o provedor ter separado o raciocínio da resposta. O
+     * atalho não tinha como saber disso — para ele era só `content` — e
+     * despachou o pensamento do modelo, em inglês, com a sintaxe da chamada de
+     * ferramenta no meio, para o WhatsApp de um cliente.
+     *
+     * Com `tool_choice` obrigatório, o único caminho autorizado até o contato é
+     * a ferramenta `respond`. Texto que chega por fora dela não é resposta: é
+     * defeito. Fica gravado como mensagem interna, para quem atende ver o que o
+     * modelo disse e poder responder à mão, e não sai daqui.
+     *
+     * Sem `tool_choice` obrigatório o atalho continua valendo: ali o texto é a
+     * resposta mesmo. - 2026/08/04
+     */
+    if (finish_reason === "stop" && message.content && MULTI_MESSAGE_RESPONSE) {
+      log.warn(
+        "Model answered with loose text while tool_choice was required. Kept internal.",
+      );
 
+      return {
+        messages: [
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "internal" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text:
+                `O modelo respondeu em texto solto em vez de usar a ferramenta de resposta, então nada foi enviado ao contato. O que ele produziu:\n\n${message.content}`,
+            },
+          },
+        ],
+        silence:
+          "o modelo respondeu em texto solto em vez de chamar `respond`; o texto ficou interno para não ir ao cliente",
+      };
+    }
+
+    if (finish_reason === "stop" && message.content) {
       return {
         messages: [
           {
@@ -822,6 +950,8 @@ export class ChatCompletionsHandler
 
     return {
       messages: [],
+      silence:
+        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório`,
     };
   }
 }

@@ -166,9 +166,25 @@ export function buildRuntimeContext(context: RequestContext) {
   // horário do que inventar um fechamento permanente. - 2026/08/02
   const configured = hours?.some((day) => !!day) ? hours : undefined;
 
+  // Só os que têm as duas metades: um link com rótulo e sem URL é uma linha
+  // que o modelo lê como promessa e não consegue cumprir.
+  const links = context.agent?.extra?.links?.filter(
+    (link) => link?.label?.trim() && link?.url?.trim(),
+  );
+
   return {
     now: `${weekday}, ${date} ${time} (${timezone})`,
     ...channelOf(context.conversation.service),
+    // Entregues como dado, não como texto no meio das instruções: a URL chega
+    // literal, e trocar o preço de um plano não passa por reescrever prompt.
+    ...(links?.length
+      ? {
+        links: links.map((link) => ({
+          what: link.label.trim(),
+          url: link.url.trim(),
+        })),
+      }
+      : {}),
     ...(configured
       ? {
         business_hours: describeHours(configured),
@@ -183,6 +199,10 @@ export function buildRuntimeContext(context: RequestContext) {
       phone: context.conversation.contact_address
         ? "+" + context.conversation.contact_address
         : undefined,
+      // O que já se sabe desta pessoa, de conversas anteriores. Cinco linhas
+      // atravessam meses; a janela de contexto não. Sai quando não há nada,
+      // para não ensinar o modelo a inventar o que preencheria o campo.
+      about: context.contact?.extra?.summary || undefined,
     },
   };
 }
