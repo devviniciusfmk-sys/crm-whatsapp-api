@@ -15,6 +15,7 @@ import { commitDispatchedMessage } from "../_shared/dispatch.ts";
 import { Json } from "../_shared/db_types.ts";
 import { markdownToWhatsApp } from "../_shared/markdown.ts";
 import { getWhatsAppAccessToken } from "../_shared/whatsapp_token.ts";
+import { recordTemplateSend } from "../_shared/template_billing.ts";
 
 const API_VERSION = "v24.0";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -500,6 +501,20 @@ Deno.serve(async (req) => {
             .toISOString(),
         },
       });
+
+      // Depois do envio confirmado, e nunca antes: cobrar por mensagem que a
+      // Meta recusou seria pior que não cobrar. Só vale para modelo — conversa
+      // dentro da janela de atendimento não é tarifada por mensagem.
+      //
+      // Fora do caminho de erro do envio de propósito: se a contabilidade
+      // falhar, a mensagem já foi entregue e o cliente não pode receber um
+      // "falhou" por causa disso. O prejuízo de um registro perdido é uma linha
+      // no extrato; o de reenviar uma campanha é dinheiro. - 2026/08/06
+      try {
+        await recordTemplateSend({ client, message, to });
+      } catch (billingError) {
+        log.error("Failed to record template send", billingError as Error);
+      }
     } catch (error) {
       const isWhatsAppError = error instanceof WhatsAppError;
       const errorMessage = error instanceof Error
