@@ -10,6 +10,7 @@ import type {
 import {
   type AgentProtocolHandler,
   contextHeaders,
+  CUT_SHORT_TOKEN_FLOOR,
   type RequestContext,
   type ResponseContext,
 } from "./base.ts";
@@ -95,6 +96,12 @@ export interface ResponsesRequest {
 
 export interface ResponsesResponseWrapper {
   output: ResponseOutputItem[];
+  /**
+   * Cortado pelo limite de saída, e a segunda tentativa também não coube. O
+   * `status` da resposta não sobrevive a este embrulho, e sem ele o silêncio
+   * chegaria à conversa sem motivo nenhum. - 2026/08/05
+   */
+  cutShort?: boolean;
 }
 
 export class ResponsesHandler
@@ -423,6 +430,28 @@ export class ResponsesHandler
     const maxRetries = 3;
     let input = request.input;
 
+    /**
+     * Quanto o modelo pode pensar antes de responder, e o que fazer quando não
+     * couber.
+     *
+     * O `chat-completions.ts` ganhou isto em 2026/08/04, depois de o raciocínio
+     * consumir o orçamento inteiro de saída em produção e o contato ficar sem
+     * resposta. Este arquivo ficou de fora e seguia mandando modelo de
+     * raciocínio pensar no padrão dele — mesma exposição, protocolo diferente.
+     *
+     * Aqui o corte aparece como `status: "incomplete"` com
+     * `incomplete_details.reason: "max_output_tokens"`, num HTTP 200 — o laço
+     * abaixo só retenta exceção com status 400, então passava reto.
+     *
+     * Uma segunda tentativa, com o esforço no mínimo e o teto elevado, e só
+     * depois o silêncio. - 2026/08/05
+     */
+    let effort = agent.extra.thinking ?? "low";
+    let maxTokens = agent.extra.max_tokens ?? undefined;
+    let widened = false;
+    let sendReasoning = true;
+    const discarded: NonNullable<ResponsesResponse["usage"]>[] = [];
+
     while (true) {
       try {
         response = await openai.responses.create({
@@ -430,15 +459,34 @@ export class ResponsesHandler
           instructions: request.instructions,
           input,
           temperature: agent.extra.temperature ?? undefined,
-          max_output_tokens: agent.extra.max_tokens ?? undefined,
+          max_output_tokens: maxTokens,
           tools: request.tools.length ? request.tools : undefined,
           tool_choice: MULTI_MESSAGE_RESPONSE ? "required" : undefined,
           parallel_tool_calls: request.tools.length ? true : undefined,
           store: false,
+          ...(sendReasoning ? { reasoning: { effort } } : {}),
         });
-
-        break;
       } catch (error) {
+        // Modelo que não raciocina recusa o parâmetro. Tirar e repetir uma vez,
+        // em vez de queimar as três tentativas mandando o que ele não aceita —
+        // e em vez de deixar o contato sem resposta por causa de um campo que
+        // nem se aplica a ele. - 2026/08/05
+        if (
+          sendReasoning &&
+          error instanceof Error &&
+          "status" in error &&
+          error.status === 400 &&
+          /reasoning/i.test(error.message)
+        ) {
+          sendReasoning = false;
+
+          log.warn(
+            "The model rejected the reasoning parameter. Retrying without it.",
+          );
+
+          continue;
+        }
+
         if (
           retries < maxRetries &&
           error instanceof Error &&
@@ -461,15 +509,54 @@ export class ResponsesHandler
 
         throw error;
       }
+
+      // Cortado pelo limite e sem nada aproveitável. Com uma chamada de
+      // ferramenta na mão o corte não custou a resposta, e mexer aqui só
+      // atrasaria o contato.
+      if (
+        !widened &&
+        response.status === "incomplete" &&
+        response.incomplete_details?.reason === "max_output_tokens" &&
+        !response.output.some((item) => item.type === "function_call")
+      ) {
+        widened = true;
+
+        if (response.usage) discarded.push(response.usage);
+
+        // Baixar, nunca subir: quem já pedia `minimal` continua em `minimal`.
+        if (effort !== "minimal") effort = "low";
+
+        maxTokens = Math.max(maxTokens ?? 0, CUT_SHORT_TOKEN_FLOOR);
+
+        log.warn(
+          `Cut short by the output limit with nothing to send. Retrying with ` +
+            `effort "${effort}" and max_output_tokens ${maxTokens}.`,
+        );
+
+        continue;
+      }
+
+      break;
     }
 
     // Record AI usage in the ledger.
-    if (response.usage) {
+    //
+    // A tentativa descartada gastou tokens de verdade: o provedor cobra o
+    // raciocínio que não virou resposta. Somar as duas, senão a retentativa
+    // vira consumo invisível na conta da organização. - 2026/08/05
+    const usages = [...discarded, ...(response.usage ? [response.usage] : [])];
+
+    if (usages.length) {
       const cost = costs
-        ? this.calculateCost(
-          response.usage,
-          costs.pricing as Record<string, number>,
-          costs.quantity,
+        ? usages.reduce(
+          (sum, usage) =>
+            sum +
+            this.calculateCost(
+              usage,
+              costs.pricing as Record<string, number>,
+              costs.quantity,
+            ),
+          0,
         )
         : 0;
 
@@ -485,12 +572,18 @@ export class ResponsesHandler
           provider,
           model,
           billable,
-          metadata: response.usage,
+          metadata: discarded.length
+            ? { ...response.usage, discarded_attempts: discarded }
+            : response.usage,
         })
         .throwOnError();
     }
 
-    return { output: response.output };
+    return {
+      output: response.output,
+      cutShort: response.status === "incomplete" &&
+        response.incomplete_details?.reason === "max_output_tokens",
+    };
   }
 
   private async processRespondCall(
@@ -706,6 +799,18 @@ export class ResponsesHandler
             },
           },
         ],
+      };
+    }
+
+    // Cortado pelo limite, e a segunda tentativa com teto maior também não
+    // coube. Dizer isso, e não devolver o silêncio mudo de antes: quem lê a
+    // nota precisa saber que o caminho é o `max_tokens` do agente, não o texto
+    // das instruções. - 2026/08/05
+    if (response.cutShort) {
+      return {
+        messages: [],
+        silence:
+          "o modelo estourou o limite de tokens de saída antes de escrever a resposta, e a tentativa com teto maior e menos raciocínio também não coube",
       };
     }
 
