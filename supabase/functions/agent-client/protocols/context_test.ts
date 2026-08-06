@@ -266,3 +266,26 @@ Deno.test("a nota de silêncio carrega os números da chamada", () => {
   // Sem números, o motivo sozinho — e nunca um parêntese vazio pendurado.
   assertEquals(silenceNote("sem uso"), "sem uso");
 });
+
+Deno.test("depois da saudação automática, o contexto manda responder direto", () => {
+  const make = (direcoes: string[]) =>
+    buildRuntimeContext(
+      {
+        organization: { extra: { timezone: "America/Sao_Paulo" } },
+        conversation: { contact_address: "5511999999999", service: "whatsapp" },
+        messages: direcoes.map((direction) => ({ direction })),
+      } as unknown as Parameters<typeof buildRuntimeContext>[0],
+    ) as { greeting_already_sent?: boolean };
+
+  // A boas-vindas entra no histórico como mensagem de saída. Sem este aviso o
+  // modelo cumprimentou de novo em vez de responder o pedido — medido, não
+  // suposto: "queria marcar um corte pra sexta" recebeu "¡Hola! ¿En qué puedo
+  // ayudarte?". - 2026/08/06
+  assertEquals(make(["incoming", "outgoing"]).greeting_already_sent, true);
+
+  // Conversa que ainda não teve resposta nenhuma não recebe o campo: dizer
+  // "já cumprimentou" quando ninguém cumprimentou faria o assistente pular a
+  // saudação que a pessoa espera.
+  assertEquals(make(["incoming"]).greeting_already_sent, undefined);
+  assertEquals(make([]).greeting_already_sent, undefined);
+});

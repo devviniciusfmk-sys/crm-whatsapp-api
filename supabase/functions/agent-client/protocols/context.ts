@@ -194,6 +194,26 @@ export function buildRuntimeContext(context: RequestContext) {
         open_now: isOpenAt(configured, timezone),
       }
       : {}),
+    /**
+     * A saudação automática já saiu; não cumprimente de novo.
+     *
+     * A boas-vindas deixou de encerrar a conversa hoje e passou a entrar no
+     * contexto como mensagem do próprio assistente. A aposta era que ver a
+     * saudação já dada bastasse para ele ir direto ao assunto. Medido: não
+     * bastou. À pergunta "queria marcar um corte pra sexta de manhã" ele
+     * respondeu "¡Hola! ¿En qué puedo ayudarte?" — cumprimentou de novo, e
+     * ainda no idioma da mensagem automática.
+     *
+     * Dito como fato da conversa, e não como regra nas instruções: instrução é
+     * do cliente, que a reescreve e apaga. Isto é uma condição, como
+     * "está aberto agora". - 2026/08/06
+     */
+    ...(context.messages?.some((message) => message.direction === "outgoing")
+      ? {
+        greeting_already_sent: true,
+        answer_the_request_directly: true,
+      }
+      : {}),
     user: {
       name: context.contact?.name,
       phone: context.conversation.contact_address

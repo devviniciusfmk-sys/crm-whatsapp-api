@@ -566,7 +566,24 @@ export class ChatCompletionsHandler
       p_organization_id: organization.id,
     });
 
-    let apiKey = (vaultKey as string | null) || agent.extra.api_key;
+    /**
+     * A chave do cliente, guardada antes das chaves da plataforma entrarem.
+     *
+     * `billable` era calculado depois do `switch`, quando `apiKey` já podia ter
+     * recebido a chave de ambiente — e aí "trouxe chave própria" ficava
+     * verdadeiro para quem não trouxe nada. Medido no primeiro atendimento pelo
+     * crédito da plataforma: a linha saiu com `billable: false`, ou seja, o
+     * cliente consumiu crédito e o extrato registrou como se ele estivesse
+     * pagando o provedor por fora.
+     *
+     * O estrago maior era o silencioso: `check_limit` só roda quando é
+     * cobrável, então o teto de crédito nunca era verificado para quem usa a
+     * chave da plataforma — exatamente quem o teto existe para conter.
+     * - 2026/08/06
+     */
+    const customerKey = (vaultKey as string | null) || agent.extra.api_key;
+
+    let apiKey = customerKey;
 
     switch (baseURL) {
       case "groq":
@@ -621,7 +638,10 @@ export class ChatCompletionsHandler
     // olhando só o campo antigo faria a organização que moveu a chave para o
     // cofre passar a gastar crédito da plataforma com o modelo que ela mesma
     // paga — cobrança dobrada, e silenciosa. - 2026/08/05
-    const billable = !apiKey;
+    //
+    // `customerKey`, e não `apiKey`: a chave da plataforma não torna a chamada
+    // gratuita para quem a usou. Ver o comentário lá em cima. - 2026/08/06
+    const billable = !customerKey;
 
     // Fetch cost pricing before the LLM call
     const { data: costs } = await this.client
@@ -848,7 +868,30 @@ export class ChatCompletionsHandler
     const usages = [...discarded, ...(response.usage ? [response.usage] : [])];
 
     if (usages.length) {
-      const cost = costs
+      /**
+       * O custo que o provedor informa vale mais que o que a tabela estima.
+       *
+       * A OpenRouter devolve `usage.cost` — o que ela de fato cobrou naquela
+       * chamada. E a diferença não é detalhe: medido no primeiro atendimento,
+       * a tabela calculou US$ 0,000122 e a fatura foi US$ 0,00112. **Nove vezes
+       * mais.**
+       *
+       * O motivo é o roteamento: o catálogo anuncia o preço do fornecedor mais
+       * barato do modelo, e `sort: throughput` escolhe o mais rápido, que
+       * cobra outro valor. Nenhuma tabela nossa consegue prever qual fornecedor
+       * vai atender — e errar para baixo significa a plataforma pagando a
+       * diferença de cada conversa, calada.
+       *
+       * A tabela continua valendo para quem não informa custo, e continua
+       * sendo o que decide se o modelo pode rodar no crédito. Ela deixa de ser
+       * a fonte do valor quando existe um número verdadeiro. - 2026/08/06
+       */
+      const reported = usages.reduce(
+        (sum, usage) => sum + Number((usage as { cost?: number }).cost ?? 0),
+        0,
+      );
+
+      const cost = reported > 0 ? reported : costs
         ? usages.reduce(
           (sum, usage) =>
             sum +
