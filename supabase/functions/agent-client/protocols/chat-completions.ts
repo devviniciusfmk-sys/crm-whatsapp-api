@@ -599,6 +599,24 @@ export class ChatCompletionsHandler
     }
     // Note: for Bedrock, the base URL is https://${bedrock-runtime-endpoint}/openai/v1
 
+    /**
+     * OpenRouter deixa de ser "custom" e passa a poder rodar no crédito da
+     * plataforma.
+     *
+     * Ela cai no `default` porque o endereço é uma URL inteira, não um apelido
+     * — e saía dali como `provider: "custom"`, sem chave de ambiente para
+     * recorrer. Consequência: era o único provedor que **exigia** que cada
+     * cliente trouxesse a própria chave, e o preço nunca podia ser encontrado,
+     * porque "custom/openai/gpt-oss-120b" não é linha que alguém cadastre.
+     *
+     * Com nome próprio, a mesma tabela de preços dos outros vale para ela, e a
+     * chave da plataforma atende quem não trouxe a sua. - 2026/08/06
+     */
+    if (String(baseURL).includes("openrouter.ai")) {
+      provider = "openrouter";
+      apiKey ||= Deno.env.get("OPENROUTER_API_KEY");
+    }
+
     // "Trouxe chave própria" agora inclui a chave do cofre. Deixar esta linha
     // olhando só o campo antigo faria a organização que moveu a chave para o
     // cofre passar a gastar crédito da plataforma com o modelo que ela mesma
@@ -731,6 +749,11 @@ export class ChatCompletionsHandler
           temperature: agent.extra.temperature ?? undefined,
           max_completion_tokens: maxTokens,
           ...(providerRouting ? { provider: providerRouting } : {}),
+          // A OpenRouter só devolve `usage` se for pedido. Sem isto a chamada
+          // acontece, o dinheiro sai e nada é gravado no extrato: medido hoje,
+          // a conversa que funcionou não gerou linha nenhuma. Consumo invisível
+          // é o defeito que a tabela de preços existe para acabar.
+          ...(isOpenRouter ? { usage: { include: true } } : {}),
           messages: request.messages,
           // TOOLS
           tools: request.tools.length ? request.tools : undefined,
