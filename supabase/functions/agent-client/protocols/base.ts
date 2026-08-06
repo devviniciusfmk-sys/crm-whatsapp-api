@@ -25,6 +25,40 @@ export type AgentRowWithExtra = Omit<AgentRow, "extra"> & {
  */
 export const CUT_SHORT_TOKEN_FLOOR = 4000;
 
+/**
+ * Os números de uma chamada ao modelo, com os nossos nomes.
+ *
+ * Cada protocolo os recebe com o nome dele — `prompt_tokens` num,
+ * `input_tokens` no outro — e normaliza para cá. Quem lê a nota de silêncio não
+ * deve precisar saber por qual protocolo o agente fala. - 2026/08/06
+ */
+export type CallUsage = {
+  messages: number;
+  tools: number;
+  prompt: number;
+  completion: number;
+  reasoning: number;
+};
+
+/**
+ * A nota de silêncio, com os números junto — a única forma de montar uma.
+ *
+ * O motivo sozinho diz o que aconteceu e não deixa investigar: foi contexto
+ * grande demais? o raciocínio comeu o orçamento? sobrou espaço e mesmo assim
+ * veio vazio? São perguntas diferentes, com consertos diferentes.
+ *
+ * É função, e não um texto montado em cada lugar, porque já aconteceu duas
+ * vezes de uma nota nova nascer cega: a do corte por limite, e a do texto solto
+ * que estava assim desde que os números existem. Enquanto montar a mão for
+ * possível, a próxima também nasce. Aqui, esquecer não é uma opção — só se
+ * chega ao texto passando pelos números. - 2026/08/06
+ */
+export function silenceNote(reason: string, usage?: CallUsage): string {
+  if (!usage) return reason;
+
+  return `${reason} (${usage.messages} mensagens, ${usage.tools} ferramentas, ${usage.prompt} tokens de entrada, ${usage.reasoning} de raciocínio, ${usage.completion} de saída)`;
+}
+
 export interface RequestContext {
   organization: OrganizationRow;
   conversation: ConversationRow;

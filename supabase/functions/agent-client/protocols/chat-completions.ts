@@ -18,10 +18,12 @@ import type {
 } from "../../_shared/supabase.ts";
 import {
   type AgentProtocolHandler,
+  type CallUsage,
   contextHeaders,
   CUT_SHORT_TOKEN_FLOOR,
   type RequestContext,
   type ResponseContext,
+  silenceNote,
 } from "./base.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AgentTool } from "../index.ts";
@@ -110,13 +112,7 @@ export interface ChatCompletionsResponse {
    * responder. Com isso, a próxima ocorrência é um diagnóstico em vez de mais
    * uma rodada de palpite. - 2026/08/05
    */
-  usage?: {
-    messages: number;
-    tools: number;
-    prompt: number;
-    completion: number;
-    reasoning: number;
-  };
+  usage?: CallUsage;
 }
 
 type RespondMessage =
@@ -181,19 +177,6 @@ export function coerceRespondMessages(raw: unknown): RespondMessage[] {
   const single = one(raw);
 
   return single ? [single] : [];
-}
-
-/**
- * Os números da chamada, em uma linha, para o aviso de silêncio.
- *
- * Sem eles a nota diz o que aconteceu e não deixa investigar: foi contexto
- * grande demais? o raciocínio comeu o orçamento? sobrou espaço e mesmo assim
- * veio vazio? São perguntas diferentes, com consertos diferentes. - 2026/08/05
- */
-function describeUsage(usage?: ChatCompletionsResponse["usage"]): string {
-  if (!usage) return "";
-
-  return `(${usage.messages} mensagens, ${usage.tools} ferramentas, ${usage.prompt} tokens de entrada, ${usage.reasoning} de raciocínio, ${usage.completion} de saída)`;
 }
 
 export class ChatCompletionsHandler
@@ -1011,13 +994,14 @@ export class ChatCompletionsHandler
             // Com o argumento cru junto: depois de tolerar todas as formas
             // conhecidas, o que sobrar aqui é forma nova — e adivinhar qual
             // seria começar de novo a investigação que já custou dois dias.
-            silence: `o modelo chamou \`respond\` e não veio texto nenhum ${
-              describeUsage(response.usage)
-            }. O que ele mandou: ${
-              (respondCall.type === "function"
-                ? respondCall.function.arguments
-                : "").slice(0, 400)
-            }`,
+            silence: silenceNote(
+              `o modelo chamou \`respond\` e não veio texto nenhum. O que ele mandou: ${
+                (respondCall.type === "function"
+                  ? respondCall.function.arguments
+                  : "").slice(0, 400)
+              }`,
+              response.usage,
+            ),
           }),
         };
       }
@@ -1146,8 +1130,10 @@ export class ChatCompletionsHandler
             },
           },
         ],
-        silence:
+        silence: silenceNote(
           "o modelo respondeu em texto solto em vez de chamar `respond`; o texto ficou interno para não ir ao cliente",
+          response.usage,
+        ),
       };
     }
 
@@ -1179,17 +1165,19 @@ export class ChatCompletionsHandler
     if (finish_reason === "length") {
       return {
         messages: [],
-        silence:
+        silence: silenceNote(
           "o modelo estourou o limite de tokens de saída antes de escrever a resposta, e a tentativa com teto maior e menos raciocínio também não coube",
+          response.usage,
+        ),
       };
     }
 
     return {
       messages: [],
-      silence:
-        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório ${
-          describeUsage(response.usage)
-        }`,
+      silence: silenceNote(
+        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório`,
+        response.usage,
+      ),
     };
   }
 }

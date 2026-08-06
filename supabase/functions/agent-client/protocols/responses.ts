@@ -9,10 +9,12 @@ import type {
 } from "../../_shared/supabase.ts";
 import {
   type AgentProtocolHandler,
+  type CallUsage,
   contextHeaders,
   CUT_SHORT_TOKEN_FLOOR,
   type RequestContext,
   type ResponseContext,
+  silenceNote,
 } from "./base.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AgentTool } from "../index.ts";
@@ -102,6 +104,13 @@ export interface ResponsesResponseWrapper {
    * chegaria à conversa sem motivo nenhum. - 2026/08/05
    */
   cutShort?: boolean;
+  /**
+   * Os números da chamada, na mesma forma que o `chat_completions` guarda —
+   * nomes nossos, e não os do protocolo, porque a nota que a pessoa lê é a
+   * mesma nos dois. Aqui vêm de `input_tokens`/`output_tokens`, com o
+   * raciocínio no `output_tokens_details`. - 2026/08/06
+   */
+  usage?: CallUsage;
 }
 
 export class ResponsesHandler
@@ -583,6 +592,13 @@ export class ResponsesHandler
       output: response.output,
       cutShort: response.status === "incomplete" &&
         response.incomplete_details?.reason === "max_output_tokens",
+      usage: {
+        messages: request.input.length,
+        tools: request.tools.length,
+        prompt: response.usage?.input_tokens ?? 0,
+        completion: response.usage?.output_tokens ?? 0,
+        reasoning: response.usage?.output_tokens_details?.reasoning_tokens ?? 0,
+      },
     };
   }
 
@@ -776,8 +792,10 @@ export class ResponsesHandler
             },
           },
         ],
-        silence:
+        silence: silenceNote(
           "o modelo respondeu em texto solto em vez de chamar `respond`; o texto ficou interno para não ir ao cliente",
+          response.usage,
+        ),
       };
     }
 
@@ -809,11 +827,23 @@ export class ResponsesHandler
     if (response.cutShort) {
       return {
         messages: [],
-        silence:
+        silence: silenceNote(
           "o modelo estourou o limite de tokens de saída antes de escrever a resposta, e a tentativa com teto maior e menos raciocínio também não coube",
+          response.usage,
+        ),
       };
     }
 
-    return { messages: [] };
+    // O último caminho: nem ferramenta, nem texto, nem corte. Devolvia
+    // `{ messages: [] }` mudo — silêncio sem rastro, que é exatamente o defeito
+    // que o watchdog e a nota foram criados para acabar. O `chat_completions`
+    // sempre teve a sua nota final; aqui faltava. - 2026/08/06
+    return {
+      messages: [],
+      silence: silenceNote(
+        "o modelo terminou sem chamar `respond`, sem texto e sem corte por limite",
+        response.usage,
+      ),
+    };
   }
 }

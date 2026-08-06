@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { coerceRespondMessages } from "./chat-completions.ts";
+import { silenceNote } from "./base.ts";
 import { buildRuntimeContext, isOpenAt } from "./context.ts";
 import type { BusinessHours } from "../../_shared/types/extra_types.ts";
 
@@ -240,4 +241,28 @@ Deno.test("respond: as formas que o modelo manda viram mensagem", () => {
   assertEquals(coerceRespondMessages(undefined), []);
   assertEquals(coerceRespondMessages([{ type: "text", text: "  " }]), []);
   assertEquals(coerceRespondMessages([{ algo: 1 }]), []);
+});
+
+Deno.test("a nota de silêncio carrega os números da chamada", () => {
+  const usage = {
+    messages: 12,
+    tools: 7,
+    prompt: 3410,
+    completion: 64,
+    reasoning: 51,
+  };
+
+  const nota = silenceNote("o modelo estourou o limite", usage);
+
+  // O motivo continua legível na frente, e os cinco números atrás dele: é a
+  // diferença entre "aconteceu" e "aconteceu por isto". Foram três iterações
+  // para chegar aqui — silêncio sem rastro, rastro sem motivo, motivo sem
+  // número — e cada uma custou um contato sem resposta. - 2026/08/06
+  assertEquals(
+    nota,
+    "o modelo estourou o limite (12 mensagens, 7 ferramentas, 3410 tokens de entrada, 51 de raciocínio, 64 de saída)",
+  );
+
+  // Sem números, o motivo sozinho — e nunca um parêntese vazio pendurado.
+  assertEquals(silenceNote("sem uso"), "sem uso");
 });
