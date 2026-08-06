@@ -347,6 +347,21 @@ Deno.serve(async (req) => {
   // Note: The welcome message is affected by allowed contacts. This behavior
   // differs from WhatsApp, which sends the welcome message to all contacts.
 
+  /**
+   * A boas-vindas precede a resposta; não a substitui.
+   *
+   * Aqui havia um `return`: a primeira mensagem de toda conversa recebia o
+   * cumprimento genérico e mais nada. Medido numa conversa de verdade — "oi,
+   * quero marcar um corte quinta de manhã" respondido com "Conte em que podemos
+   * ajudar", e silêncio. Quem escreve uma pergunta concreta e recebe um cartaz
+   * conclui que não tem ninguém do outro lado, e é a primeira impressão de todo
+   * cliente novo.
+   *
+   * A mensagem é gravada com `select` e entra no contexto antes de o assistente
+   * ser chamado. Sem isso ele cumprimentaria de novo, porque não saberia que a
+   * saudação já foi dada — o custo de mandar duas seria trocar um defeito por
+   * outro. - 2026/08/06
+   */
   if (
     org.extra.welcome_message &&
     messages.every((m) => m.direction !== "outgoing")
@@ -368,12 +383,17 @@ Deno.serve(async (req) => {
 
     log.info("Welcome message", (outgoing.content as TextPart).text);
 
-    await client
+    const { data: welcome } = await client
       .from("messages")
       .insert(outgoing)
+      .select()
+      .single()
       .throwOnError();
 
-    return new Response("ok", { headers: corsHeaders });
+    // A linha volta do banco com o `direction` fixado em "outgoing", que o
+    // TypeScript não reconcilia com a união de `MessageRow` — mesma forma,
+    // declarações diferentes.
+    messages.push(welcome as unknown as typeof messages[number]);
   }
 
   // OUT OF HOURS
@@ -413,7 +433,18 @@ Deno.serve(async (req) => {
 
         log.info("Away message", (outgoing.content as TextPart).text);
 
-        await client.from("messages").insert(outgoing).throwOnError();
+        // No contexto também, pelo mesmo motivo da boas-vindas: quando o
+        // assistente segue respondendo — que é a configuração padrão — ele
+        // precisa saber que o aviso de fechado já foi dado, senão repete.
+        // - 2026/08/06
+        const { data: away } = await client
+          .from("messages")
+          .insert(outgoing)
+          .select()
+          .single()
+          .throwOnError();
+
+        messages.push(away as unknown as typeof messages[number]);
 
         // Stamped whether or not the agent goes on to reply, since the point
         // is not to repeat the notice. The `set_extra` trigger merges, so this
