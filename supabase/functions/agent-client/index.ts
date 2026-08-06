@@ -594,6 +594,19 @@ Deno.serve(async (req) => {
   // O último motivo declarado pelo protocolo para não ter havido mensagem.
   let silence: string | undefined;
 
+  /**
+   * Quantas mensagens a última rodada produziu.
+   *
+   * É o que sobra para dizer quando ninguém declarou motivo. Aconteceu de
+   * verdade: a nota chegou à conversa dizendo "não produziu resposta" e mais
+   * nada, três vezes seguidas, e nem o protocolo nem o laço tinham o que
+   * acrescentar — a investigação começou e terminou no escuro.
+   *
+   * Não substitui o motivo de quem sabe; é o piso. Uma nota sem número
+   * nenhum não deve ser possível de escrever. - 2026/08/06
+   */
+  let lastRoundMessages = 0;
+
   // Basic ReAct algorithm: stop if no tool uses are found.
   while (shouldContinue) {
     iteration++;
@@ -1074,9 +1087,22 @@ Deno.serve(async (req) => {
         messages.push(...inserted_messages);
       } catch (storageError) {
         log.error("Failed to store agent response", storageError as Error);
+
+        // Com motivo, e não só no log do servidor: era o único caminho que
+        // emudecia sem deixar rastro na conversa. O assistente tinha o que
+        // dizer e a gravação é que falhou — quem lê a nota precisa saber que o
+        // problema não é a instrução nem o modelo. - 2026/08/06
+        silence = `falha ao gravar a resposta do assistente: ${
+          describeError(storageError)
+        }`;
+
         shouldContinue = false;
       }
     }
+
+    // Quantas mensagens a rodada produziu, para o caso de nenhuma delas ter
+    // sido para o contato e ninguém ter dito por quê.
+    lastRoundMessages = response.messages?.length ?? 0;
   }
 
   // TODO: take care of the typing interval corner cases
@@ -1113,8 +1139,13 @@ Deno.serve(async (req) => {
         kind: "text" as const,
         text: [
           "O assistente não produziu resposta para esta mensagem. Nada foi enviado ao contato.",
-          silence ? `Motivo: ${silence}.` : undefined,
-        ].filter(Boolean).join(" "),
+          // Sempre um motivo. Quando ninguém declarou um, diga ao menos a forma
+          // da última rodada: é a diferença entre uma pista e uma parede.
+          `Motivo: ${
+            silence ??
+              `o laço terminou em ${iteration} rodada(s) e a última produziu ${lastRoundMessages} mensagem(ns), nenhuma para o contato`
+          }.`,
+        ].join(" "),
       },
     });
   }
