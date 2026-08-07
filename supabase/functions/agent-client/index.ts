@@ -76,6 +76,27 @@ const AWAY_MESSAGE_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
 function describeError(error: unknown): string {
   const base = error instanceof Error ? error.message : String(error);
 
+  /**
+   * O erro do PostgREST vem com código, dica e detalhe — e sem eles a mensagem
+   * é uma parede.
+   *
+   * "Cannot coerce the result to a single JSON object" apareceu numa conversa
+   * em 2026/08/07 e não dizia qual consulta, qual tabela, nem se foram zero ou
+   * duas linhas. Passei três hipóteses erradas antes de perceber que estava
+   * adivinhando de novo. O código (PGRST116) e o `details` respondem as três
+   * perguntas de uma vez. - 2026/08/07
+   */
+  const pg = error as { code?: string; details?: string; hint?: string };
+
+  if (pg?.code || pg?.details) {
+    return [
+      base,
+      pg.code ? `[${pg.code}]` : undefined,
+      pg.details,
+      pg.hint,
+    ].filter(Boolean).join(" ").slice(0, 500);
+  }
+
   // O SDK da OpenAI guarda o corpo do provedor em `error.error`.
   const detail = (error as { error?: { metadata?: { raw?: string } } })?.error
     ?.metadata?.raw;

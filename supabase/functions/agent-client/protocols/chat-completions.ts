@@ -712,7 +712,7 @@ export class ChatCompletionsHandler
      * - 2026/08/04
      */
     const isOpenRouter = String(baseURL).includes("openrouter.ai");
-    const providerRouting = isOpenRouter
+    let providerRouting = isOpenRouter
       ? (agent.extra.provider ?? { sort: "throughput" })
       : undefined;
 
@@ -759,6 +759,7 @@ export class ChatCompletionsHandler
      * insistir só queima crédito. - 2026/08/05
      */
     let widened = false;
+    let rerouted = false;
     let sendReasoning = true;
     const discarded: NonNullable<ChatCompletion["usage"]>[] = [];
 
@@ -852,6 +853,41 @@ export class ChatCompletionsHandler
         log.warn(
           `Cut short by the output limit with nothing to send. Retrying with ` +
             `effort "${effort}" and max_completion_tokens ${maxTokens}.`,
+        );
+
+        continue;
+      }
+
+      /**
+       * O provedor falhou no meio, e isso volta num HTTP 200.
+       *
+       * A OpenRouter roteia entre fornecedores; quando o escolhido erra, a
+       * resposta chega com `finish_reason: "error"`, corpo vazio e status 200 —
+       * ou seja, o laço de exceção não vê nada. Medido em 2026/08/07: **uma em
+       * cada três mensagens** morria assim, com contato novo ou antigo, e o
+       * cliente recebia silêncio.
+       *
+       * Uma segunda tentativa, e sem a preferência de roteamento: insistir com
+       * o mesmo critério é pedir para cair no mesmo fornecedor que acabou de
+       * falhar. Uma, e não um laço — se dois fornecedores diferentes erram
+       * seguidos, o problema não é sorte. - 2026/08/07
+       */
+      if (
+        !rerouted &&
+        // O tipo do SDK da OpenAI não conhece "error": é valor que a OpenRouter
+        // acrescenta. O TypeScript recusa a comparação sem isto.
+        (cut?.finish_reason as string) === "error" &&
+        !cut.message?.tool_calls?.length &&
+        !cut.message?.content
+      ) {
+        rerouted = true;
+
+        if (response.usage) discarded.push(response.usage);
+
+        providerRouting = undefined;
+
+        log.warn(
+          'Provider returned finish_reason "error". Retrying without routing preference.',
         );
 
         continue;
