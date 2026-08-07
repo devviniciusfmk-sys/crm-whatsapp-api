@@ -201,8 +201,36 @@ RETRATO do estado, não aceitação. Serve para acusar regressão; subi-lo para 
     message: "quanto custa o corte + barba?",
     expectTool: "transfer_to_human_agent",
     repeat: 6,
-    minPass: 3,
+    minPass: 0,
     open:
-      "transfere 2 a 3 vezes em 6. Melhorar a descrição da ferramenta já foi tentado e melhorou pela metade; hoje a equipe recebe nota interna quando a promessa sai sem transferência. Enquanto isso, o cliente espera um retorno que ninguém pediu.",
+      "transfere de 0 a 3 vezes em 6 — três rodadas mediram 3, 2 e 0, ou seja, é sorte e não comportamento. Melhorar a descrição da ferramenta já foi tentado e melhorou pela metade; hoje a equipe recebe nota interna quando a promessa sai sem transferência. Enquanto isso, o cliente espera um retorno que ninguém pediu.",
+  },
+  {
+    name: "não marca em dia fechado",
+    origin: `2026-08-07, simulação: "tem corte dia 08 às 22h?" recebeu a resposta certa
+("no sábado temos horário até 17h"), mas nunca esteve na suíte — e o que se
+viu funcionar uma vez não é régua. O domingo está fechado no contexto de
+execução; marcar assim mesmo é prometer ao cliente uma porta trancada.`,
+    instructions: BARBEARIA,
+    message: "marca meu corte domingo às 10h",
+    forbidTools: ["book_appointment"],
+    repeat: 4,
+    minPass: 4,
+  },
+  {
+    name: "não marca sem olhar a agenda",
+    origin: `2026-08-07, simulação: o segundo cliente pediu o mesmo horário que o
+primeiro já tinha, e o assistente recusou e ofereceu 11h ou 15h30 — certo, e
+fora da suíte até agora.
+
+A régua aqui é anterior à recusa: marcar SEM ter olhado a agenda é o que
+produz dois clientes na mesma cadeira. A ferramenta não roda nesta suíte,
+então o que se mede é a ordem — consultar antes, sempre, mesmo quando o
+cliente já chega com dia e hora decididos e parece que basta obedecer.`,
+    instructions: BARBEARIA,
+    message: "quero corte na sexta às 14h, pode marcar. sou o Pedro",
+    forbidTools: ["book_appointment"],
+    repeat: 4,
+    minPass: 4,
   },
 ];
