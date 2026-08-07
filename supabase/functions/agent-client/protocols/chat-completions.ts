@@ -868,14 +868,26 @@ export class ChatCompletionsHandler
 
         if (response.usage) discarded.push(response.usage);
 
-        // Baixar, nunca subir: quem já pedia `minimal` continua em `minimal`.
-        if (effort !== "minimal") effort = "low";
+        /**
+         * Sem raciocínio nenhum na segunda tentativa, e não com "esforço baixo".
+         *
+         * A versão anterior baixava para `low` e subia o teto para 4000 — e
+         * ainda assim duas de vinte conversas morreram assim em 2026/08/07,
+         * depois que o contexto cresceu com o catálogo e os compromissos do
+         * contato. Baixar um pedido que já era baixo não devolve orçamento:
+         * quem come o teto é o raciocínio, e a única forma de garantir espaço
+         * para a resposta é não pedir raciocínio.
+         *
+         * O custo é uma resposta menos elaborada numa conversa que já estava
+         * perdida. O benefício é o contato receber alguma coisa. - 2026/08/07
+         */
+        sendReasoning = false;
 
         maxTokens = Math.max(maxTokens ?? 0, CUT_SHORT_TOKEN_FLOOR);
 
         log.warn(
-          `Cut short by the output limit with nothing to send. Retrying with ` +
-            `effort "${effort}" and max_completion_tokens ${maxTokens}.`,
+          `Cut short by the output limit with nothing to send. Retrying ` +
+            `without reasoning and max_completion_tokens ${maxTokens}.`,
         );
 
         continue;
