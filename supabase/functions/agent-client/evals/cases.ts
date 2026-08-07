@@ -175,7 +175,8 @@ export const cases: EvalCase[] = [
   },
   {
     name: "não marca serviço fora do catálogo",
-    origin: `2026-08-07, simulação: "vocês fazem barba?" recebeu "Sim, fazemos barba",
+    origin:
+      `2026-08-07, simulação: "vocês fazem barba?" recebeu "Sim, fazemos barba",
 dito a partir das instruções, e a ferramenta desmentiu no passo seguinte na
 frente do cliente. O catálogo passou a ir no contexto por causa disto.
 
