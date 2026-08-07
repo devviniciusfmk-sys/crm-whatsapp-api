@@ -92,6 +92,19 @@ function describeError(error: unknown): string {
   }
 }
 
+/**
+ * O que conta como "uma pessoa vai te responder".
+ *
+ * Só as formas que prometem AÇÃO DE TERCEIRO: "confirmo com a equipe", "vou
+ * chamar alguém", "já te retorno". Ficam de fora as que o assistente cumpre
+ * sozinho — "já verifico a agenda" é promessa dele, e ele cumpre na mesma
+ * volta. - 2026/08/07
+ */
+export const PROMISE_OF_A_PERSON =
+  // `\S*` e não `\w+` no fim de "responsável": `\w` não casa acento, e foi
+  // exatamente essa palavra que escapou no primeiro teste. - 2026/08/07
+  /(confirm\w+|verific\w+|falar|checar)\s+(isso\s+)?com\s+(a\s+|o\s+|um\s+|uma\s+)?(equipe|time|colega|profissional|respons\S*|gerente|dono)|vou\s+(chamar|passar|encaminhar)|(j[áa]\s+)?te\s+retorno|volto\s+a\s+(falar|te)|assim\s+que\s+(souber|confirmar|a\s+equipe)/i;
+
 const MESSAGES_TIME_LIMIT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MESSAGES_QUANTITY_LIMIT = 50;
 const RESPONSE_DELAY_SECS = 3; // 3 seconds
@@ -562,12 +575,55 @@ Deno.serve(async (req) => {
     agent.extra = {};
   }
 
+  /**
+   * O que este contato já tem marcado.
+   *
+   * Simulado em 2026/08/07: "preciso cancelar meu horário" fez o assistente
+   * pedir o dia e a hora duas vezes, porque `list_appointments` mostra a agenda
+   * da casa por data e não os compromissos de uma pessoa. Quem não lembra a
+   * data não consegue cancelar — e liga, que é justamente o que este sistema
+   * existe para evitar.
+   *
+   * Buscado aqui, e não numa ferramenta nova: é fato do contexto, como o nome
+   * do cliente. Uma ferramenta seria uma ida ao modelo a mais para descobrir
+   * algo que já se sabe. - 2026/08/07
+   */
+  let appointments;
+
+  if (conv.contact_address) {
+    const { data: rows } = await client
+      .from("appointments")
+      .select("title, starts_at, duration_minutes")
+      .eq("organization_id", organization_id)
+      .eq("contact_address", conv.contact_address)
+      .eq("status", "scheduled")
+      .gte("starts_at", new Date().toISOString())
+      .order("starts_at", { ascending: true })
+      .limit(5);
+
+    const timezone = org.extra.timezone || DEFAULT_TIMEZONE;
+
+    appointments = rows?.map((row) => ({
+      title: row.title,
+      // Hora local da casa, como em toda parte: o modelo nunca converte fuso.
+      starts_at: new Date(row.starts_at).toLocaleString("sv-SE", {
+        timeZone: timezone,
+      }).slice(0, 16),
+      weekday: new Date(row.starts_at).toLocaleDateString("en-US", {
+        timeZone: timezone,
+        weekday: "long",
+      }).toLowerCase(),
+      duration_minutes: row.duration_minutes,
+    }));
+  }
+
   const context = {
     organization,
     conversation,
     messages,
     contact,
     agent: agent as AgentRowWithExtra,
+    appointments,
   };
 
   if (agent.extra.tools) {
@@ -637,6 +693,28 @@ Deno.serve(async (req) => {
    * nenhum não deve ser possível de escrever. - 2026/08/06
    */
   let lastRoundMessages = 0;
+
+  /**
+   * A promessa de que uma pessoa vai voltar — e se alguém foi de fato chamado.
+   *
+   * Simulado em 2026/08/07: "quanto custa o corte?" recebeu "o valor eu
+   * confirmo com a equipe e já te retorno", sem nenhuma ferramenta. Ninguém foi
+   * avisado, a conversa não foi marcada, e o cliente ficou esperando um retorno
+   * que não existia. É o mesmo defeito do handoff, agora vestido de preço.
+   *
+   * Melhorar a descrição da ferramenta já foi tentado e melhorou pela metade.
+   * Isto não tenta convencer o modelo: quando a promessa sai sem transferência,
+   * a equipe recebe uma nota. Não conserta a conversa — torna visível a que
+   * precisa de gente, que é a diferença entre um cliente atendido com atraso e
+   * um cliente perdido em silêncio.
+   *
+   * Casar texto é frágil, e o preço do erro é conhecido nos dois sentidos: um
+   * falso positivo é uma nota a mais para quem atende, um falso negativo é o
+   * que já acontece hoje. Nenhum dos dois manda mensagem errada ao cliente.
+   * - 2026/08/07
+   */
+  let handedOff = false;
+  let promised = false;
 
   // Basic ReAct algorithm: stop if no tool uses are found.
   while (shouldContinue) {
@@ -859,6 +937,22 @@ Deno.serve(async (req) => {
           m.content.tool &&
           m.content.tool.provider === "local",
       ) || [];
+
+      if (
+        toolUses.some((m) =>
+          m.direction === "internal" && m.content.type === "text" &&
+          // Nem toda ferramenta tem nome: as do Google entram por tipo.
+          (m.content.tool as { name?: string } | undefined)?.name ===
+            "transfer_to_human_agent"
+        )
+      ) {
+        handedOff = true;
+      }
+
+      promised ||= response.messages.some((m) =>
+        m.direction === "outgoing" && m.content.type === "text" &&
+        PROMISE_OF_A_PERSON.test(m.content.text ?? "")
+      );
 
       for (const row of toolUses) {
         // Only needed to please the TypeScript compiler
@@ -1153,6 +1247,30 @@ Deno.serve(async (req) => {
    * contato não se manda um pedido de desculpas automático — se o assistente
    * não tem o que dizer, quem diz é uma pessoa. - 2026/08/04
    */
+  // Prometeu que uma pessoa volta, e não chamou ninguém. Ver `promised`.
+  if (promised && !handedOff) {
+    log.warn("Agent promised a person without transferring", {
+      conversation_id: conv.id,
+    });
+
+    await client.from("messages").insert({
+      organization_id,
+      conversation_id: conv.id,
+      service: conv.service,
+      organization_address: conv.organization_address,
+      contact_address: conv.contact_address,
+      direction: "internal" as const,
+      agent_id: agent.id,
+      content: {
+        version: "1" as const,
+        type: "text" as const,
+        kind: "text" as const,
+        text:
+          "O assistente disse ao contato que alguém da equipe retorna, mas não transferiu a conversa. Ninguém foi chamado: esta conversa precisa de uma pessoa.",
+      },
+    });
+  }
+
   if (!answeredContact) {
     log.warn("Agent produced no answer for the contact", { reason: silence });
 

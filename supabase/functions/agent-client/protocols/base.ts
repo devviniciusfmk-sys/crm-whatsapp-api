@@ -59,12 +59,27 @@ export function silenceNote(reason: string, usage?: CallUsage): string {
   return `${reason} (${usage.messages} mensagens, ${usage.tools} ferramentas, ${usage.prompt} tokens de entrada, ${usage.reasoning} de raciocínio, ${usage.completion} de saída)`;
 }
 
+/**
+ * O que este contato já tem marcado, buscado antes de montar o pedido.
+ *
+ * Vem de fora porque `buildRuntimeContext` é função pura e vale a pena mantê-la
+ * assim — é a parte do sistema com testes de verdade. A consulta acontece onde
+ * já existe cliente de banco. - 2026/08/07
+ */
+export type UpcomingAppointment = {
+  title: string;
+  starts_at: string;
+  weekday: string;
+  duration_minutes: number | null;
+};
+
 export interface RequestContext {
   organization: OrganizationRow;
   conversation: ConversationRow;
   messages: MessageRow[];
   contact?: ContactRow;
   agent: AgentRowWithExtra;
+  appointments?: UpcomingAppointment[];
 }
 
 export interface ResponseContext {

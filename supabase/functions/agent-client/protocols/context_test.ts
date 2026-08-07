@@ -289,3 +289,60 @@ Deno.test("depois da saudação automática, o contexto manda responder direto",
   assertEquals(make(["incoming"]).greeting_already_sent, undefined);
   assertEquals(make([]).greeting_already_sent, undefined);
 });
+
+Deno.test("o catálogo e os compromissos do contato entram no contexto", () => {
+  const contexto = buildRuntimeContext(
+    {
+      organization: {
+        extra: {
+          timezone: "America/Sao_Paulo",
+          appointments: {
+            services: [
+              { name: "Corte", minutes: 60 },
+              { name: "Coloração", minutes: 180, price: 250 },
+            ],
+          },
+        },
+      },
+      conversation: { contact_address: "5511999999999", service: "whatsapp" },
+      appointments: [
+        {
+          title: "Corte",
+          starts_at: "2026-08-08 15:15",
+          weekday: "saturday",
+          duration_minutes: 60,
+        },
+      ],
+    } as unknown as Parameters<typeof buildRuntimeContext>[0],
+  ) as {
+    services?: Array<{ name: string; price: number | null }>;
+    your_appointments?: Array<{ starts_at: string }>;
+  };
+
+  // Sem o catálogo aqui, "faz barba?" era respondido pelas instruções — e a
+  // ferramenta desmentia no passo seguinte, na frente do cliente. - 2026/08/07
+  assertEquals(contexto.services?.map((s) => s.name), ["Corte", "Coloração"]);
+
+  // Preço nulo é informação, não ausência de informação: é a diferença entre
+  // "custa 250" e "a equipe confirma".
+  assertEquals(contexto.services?.[0].price, null);
+  assertEquals(contexto.services?.[1].price, 250);
+
+  // O horário do próprio cliente, para ele não precisar lembrar a data quando
+  // pede para cancelar.
+  assertEquals(contexto.your_appointments?.[0].starts_at, "2026-08-08 15:15");
+});
+
+Deno.test("sem catálogo e sem compromissos, os campos não aparecem", () => {
+  const contexto = buildRuntimeContext(
+    {
+      organization: { extra: { timezone: "America/Sao_Paulo" } },
+      conversation: { contact_address: "5511999999999", service: "whatsapp" },
+    } as unknown as Parameters<typeof buildRuntimeContext>[0],
+  ) as { services?: unknown; your_appointments?: unknown };
+
+  // Campo vazio ensina o modelo a preencher: catálogo vazio viraria serviço
+  // inventado, e lista de compromissos vazia viraria compromisso inventado.
+  assertEquals(contexto.services, undefined);
+  assertEquals(contexto.your_appointments, undefined);
+});

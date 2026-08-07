@@ -185,6 +185,38 @@ export function buildRuntimeContext(context: RequestContext) {
         })),
       }
       : {}),
+    /**
+     * O catálogo, para ele não inventar serviço.
+     *
+     * Simulado em 2026/08/07: "faz barba?" recebeu "Sim, fazemos barba" — dito
+     * a partir das instruções, que falam de barbearia, e desmentido no passo
+     * seguinte pela própria ferramenta ("Não fazemos barba. Temos Corte,
+     * Escova, Hidratação..."). O cliente viu as duas.
+     *
+     * O catálogo estava só dentro da resposta de `list_appointments`, ou seja,
+     * só depois de o modelo decidir consultar — e para responder "vocês fazem
+     * X?" ele não consulta, porque acha que já sabe. Aqui ele sabe de verdade.
+     *
+     * `price` vai junto, inclusive quando é nulo: preço ausente é a diferença
+     * entre "custa tanto" e "a equipe confirma", e essa distinção não pode
+     * depender de o modelo lembrar. - 2026/08/07
+     */
+    ...(context.organization.extra?.appointments?.services?.length
+      ? {
+        services: context.organization.extra.appointments.services.map((
+          service,
+        ) => ({
+          name: service.name,
+          minutes: service.minutes ?? null,
+          price: service.price ?? null,
+        })),
+      }
+      : {}),
+    // O que ESTE contato já tem marcado. Sem isto ele pede o dia e a hora a
+    // quem ligou justamente porque não lembra.
+    ...(context.appointments?.length
+      ? { your_appointments: context.appointments }
+      : {}),
     ...(configured
       ? {
         business_hours: describeHours(configured),
