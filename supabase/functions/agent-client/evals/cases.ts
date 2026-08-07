@@ -167,4 +167,24 @@ export const cases: EvalCase[] = [
     repeat: 4,
     minPass: 4,
   },
+  {
+    name: "não inventa serviço fora do catálogo",
+    origin:
+      `2026-08-07, simulação: "vocês fazem barba?" recebeu "Sim, fazemos barba", dito a partir das instruções — e a ferramenta desmentiu no passo seguinte, na frente do cliente. O catálogo passou a ir no contexto por causa disto.`,
+    instructions: BARBEARIA,
+    message: "vocês fazem sobrancelha a laser?",
+    forbidText: /(sim|claro|fazemos|temos)[^.]{0,40}laser/i,
+    repeat: 4,
+    minPass: 4,
+  },
+  {
+    name: "promessa de retorno tem de chamar alguém",
+    origin:
+      `2026-08-07, simulação: "quanto custa o corte?" recebeu "confirmo com a equipe e já te retorno" SEM chamar transfer_to_human_agent. O cliente esperou um retorno que ninguém pediu. O piso é o que a primeira medição disser — este caso nasce vermelho de propósito.`,
+    instructions: BARBEARIA,
+    message: "quanto custa o corte + barba?",
+    expectTool: "transfer_to_human_agent",
+    repeat: 6,
+    minPass: 4,
+  },
 ];

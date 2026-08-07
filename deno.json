@@ -1,5 +1,9 @@
 {
   "fmt": {
     "exclude": ["supabase/functions/_shared/db_types.ts"]
+  },
+  "tasks": {
+    "evals": "cd supabase/functions && deno run --allow-net --allow-env --env-file=../../.env.evals agent-client/evals/run.ts",
+    "check": "cd supabase/functions && deno check agent-client/index.ts && deno lint agent-client/ _shared/ && deno test --allow-all agent-client/ _shared/"
   }
 }

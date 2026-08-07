@@ -1,5 +1,8 @@
 import { Toolbox } from "../tools/index.ts";
-import { RESPOND_TOOL } from "../protocols/chat-completions.ts";
+import {
+  coerceRespondMessages,
+  RESPOND_TOOL,
+} from "../protocols/chat-completions.ts";
 import { buildRuntimeContext } from "../protocols/context.ts";
 import { cases, type EvalCase } from "./cases.ts";
 
@@ -36,12 +39,23 @@ import { cases, type EvalCase } from "./cases.ts";
  *
  * ## Como rodar
  *
- *   OPENROUTER_API_KEY=... deno run --allow-net --allow-env \
- *     supabase/functions/agent-client/evals/run.ts
+ *   deno task evals
+ *
+ * A chave vem de `.env.evals` na raiz do repositório — uma linha,
+ * `OPENROUTER_API_KEY=sk-or-...`. O arquivo é ignorado pelo git (`.env*`), e
+ * fica fora do cofre do Supabase de propósito: o cofre não devolve o que
+ * guarda, e uma suíte que só roda no servidor não roda antes de implantar.
  *
  * Variáveis opcionais: `EVAL_MODEL` e `EVAL_PROVIDER` (JSON de roteamento).
  * Sai com código 1 quando algum caso fica abaixo do piso, para poder entrar na
- * integração contínua sem mais nada. - 2026/08/05
+ * integração contínua sem mais nada.
+ *
+ * ## Por que ela precisa virar hábito
+ *
+ * Em 2026/08/07 o assistente passou horas com uma falha em cada três mensagens
+ * — implantada por mim, direto na produção, e encontrada por acidente enquanto
+ * eu testava outra coisa. Um cliente teria encontrado antes. A suíte existia e
+ * não rodava; existir não conta. - 2026/08/05, revisto em 2026/08/07
  */
 
 const KEY = Deno.env.get("OPENROUTER_API_KEY");
@@ -82,6 +96,20 @@ function runtimeBlock(): string {
       organization: {
         extra: {
           timezone: "America/Sao_Paulo",
+          /**
+           * O catálogo entra porque o sistema passou a mandá-lo em 2026/08/07.
+           *
+           * Sem ele a suíte mediria um contexto que não existe mais — e o
+           * defeito que motivou a mudança ("vocês fazem barba?" respondido com
+           * "sim, fazemos") não teria como aparecer aqui.
+           */
+          appointments: {
+            services: [
+              { name: "Corte", minutes: 30 },
+              { name: "Corte + barba", minutes: 60 },
+              { name: "Sobrancelha", minutes: 15 },
+            ],
+          },
           business_hours: [
             null,
             null,
@@ -105,6 +133,8 @@ function runtimeBlock(): string {
 type Outcome = {
   tool: string | null;
   text: string;
+  /** O modelo embrulhou a resposta num arquivo que não é arquivo. */
+  disguised?: boolean;
   error?: string;
 };
 
@@ -163,13 +193,33 @@ async function callOnce(testCase: EvalCase): Promise<Outcome> {
     };
   }
 
-  const text = call.function.name === "respond"
-    ? ((args.messages ?? []) as { text?: string }[])
-      .map((message) => message.text ?? "")
-      .join("\n")
-    : "";
+  /**
+   * O texto pelo mesmo leitor que a produção usa.
+   *
+   * Ler `message.text` cru mediria o esquema, não o atendimento: o modelo manda
+   * a resposta em meia dúzia de formas e o backend tolera todas. Uma delas —
+   * `{type:"file", uri:"text://Oi, tudo bem?"}` — derrubou uma em cada três
+   * conversas em 2026/08/07 até o leitor passar a reconhecê-la.
+   *
+   * `disguised` conta quantas vezes o modelo fez isso. Não reprova o caso: o
+   * cliente recebe a mensagem hoje. Serve para saber se o hábito aumenta —
+   * porque no dia em que aumentar, o leitor é o próximo a quebrar.
+   */
+  const parts = call.function.name === "respond"
+    ? coerceRespondMessages(args.messages)
+    : [];
 
-  return { tool: call.function.name, text };
+  const disguised = call.function.name === "respond" &&
+    ((args.messages ?? []) as { type?: string; uri?: string }[]).some(
+      (message) =>
+        message?.type === "file" && !message.uri?.startsWith("internal://"),
+    );
+
+  const text = parts
+    .map((part) => (part.type === "text" ? part.text : (part.text ?? "")))
+    .join("\n");
+
+  return { tool: call.function.name, text, disguised };
 }
 
 /** Se uma execução satisfaz o caso. */
