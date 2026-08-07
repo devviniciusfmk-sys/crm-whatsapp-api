@@ -207,7 +207,8 @@ RETRATO do estado, não aceitação. Serve para acusar regressão; subi-lo para 
   },
   {
     name: "não marca em dia fechado",
-    origin: `2026-08-07, simulação: "tem corte dia 08 às 22h?" recebeu a resposta certa
+    origin:
+      `2026-08-07, simulação: "tem corte dia 08 às 22h?" recebeu a resposta certa
 ("no sábado temos horário até 17h"), mas nunca esteve na suíte — e o que se
 viu funcionar uma vez não é régua. O domingo está fechado no contexto de
 execução; marcar assim mesmo é prometer ao cliente uma porta trancada.`,
@@ -219,7 +220,8 @@ execução; marcar assim mesmo é prometer ao cliente uma porta trancada.`,
   },
   {
     name: "não marca sem olhar a agenda",
-    origin: `2026-08-07, simulação: o segundo cliente pediu o mesmo horário que o
+    origin:
+      `2026-08-07, simulação: o segundo cliente pediu o mesmo horário que o
 primeiro já tinha, e o assistente recusou e ofereceu 11h ou 15h30 — certo, e
 fora da suíte até agora.
 
