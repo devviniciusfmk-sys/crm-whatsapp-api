@@ -153,13 +153,36 @@ export function coerceRespondMessages(raw: unknown): RespondMessage[] {
 
     const part = item as Record<string, unknown>;
 
+    /**
+     * Arquivo é só o que aponta para o armazenamento.
+     *
+     * O modelo às vezes embrulha a RESPOSTA num arquivo: chegou
+     * `{type:"file", uri:"text://Oi, tudo bem? Como posso ajudar?"}` — o texto
+     * inteiro dentro da URI, com um esquema que não existe. A busca no
+     * armazenamento não achava nada e a resposta morria ali; medido em
+     * 2026/08/07, **uma em cada três conversas**.
+     *
+     * Só `internal://` é arquivo, porque é o único que este sistema serve.
+     * Qualquer outra coisa é tratada como o que de fato é: texto. O que estiver
+     * depois do esquema vira a mensagem, que é exatamente o que o modelo quis
+     * dizer. - 2026/08/07
+     */
     if (part.type === "file" && typeof part.uri === "string") {
-      return {
-        type: "file",
-        uri: part.uri,
-        name: typeof part.name === "string" ? part.name : undefined,
-        text: typeof part.text === "string" ? part.text : undefined,
-      };
+      if (part.uri.startsWith("internal://")) {
+        return {
+          type: "file",
+          uri: part.uri,
+          name: typeof part.name === "string" ? part.name : undefined,
+          text: typeof part.text === "string" ? part.text : undefined,
+        };
+      }
+
+      const disfarçado = [
+        typeof part.text === "string" ? part.text : "",
+        part.uri.replace(/^[a-z]+:\/\//i, ""),
+      ].find((value) => value.trim());
+
+      return disfarçado ? { type: "text", text: disfarçado } : null;
     }
 
     // `text` é o nome do esquema; os outros são os apelidos que o modelo usa.
@@ -1040,7 +1063,68 @@ export class ChatCompletionsHandler
           },
         });
       } else if (msg.type === "file") {
-        const file = await getFileMetadata(this.client, msg.uri);
+        /**
+         * Arquivo inventado custa o arquivo, não a resposta.
+         *
+         * `getFileMetadata` faz `.single()` no armazenamento; URI que não
+         * existe volta PGRST116 com zero linhas e a exceção sobe daqui,
+         * levando junto o texto que já estava pronto nesta mesma lista. Do
+         * lado de fora: o cliente escreve e não recebe nada.
+         *
+         * Medido em 2026/08/07 — uma em cada três conversas morria assim, e o
+         * erro só dizia "Cannot coerce the result to a single JSON object".
+         * Foi preciso carimbar a etapa do laço na nota para chegar até aqui.
+         *
+         * A legenda vira texto: se o modelo escreveu "segue o cardápio" junto
+         * do arquivo, a frase ainda tem valor sem ele. E fica a nota interna,
+         * porque um assistente tentando mandar arquivo que não existe é
+         * configuração errada em algum lugar — provavelmente um link no lugar
+         * de um arquivo. - 2026/08/07
+         */
+        let file;
+
+        try {
+          file = await getFileMetadata(this.client, msg.uri);
+        } catch {
+          log.warn("Respond referenced a file that does not exist", {
+            uri: msg.uri,
+          });
+
+          if (msg.text?.trim()) {
+            outgoing.push({
+              organization_id: conversation.organization_id,
+              service: conversation.service,
+              organization_address: conversation.organization_address,
+              contact_address: conversation.contact_address,
+              direction: "outgoing",
+              agent_id: agent.id,
+              content: {
+                version: "1",
+                type: "text",
+                kind: "text",
+                text: msg.text,
+              },
+            });
+          }
+
+          outgoing.push({
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "internal",
+            agent_id: agent.id,
+            content: {
+              version: "1",
+              type: "text",
+              kind: "text",
+              text:
+                `O assistente tentou enviar um arquivo que não existe (${msg.uri}). A mensagem foi enviada sem ele.`,
+            },
+          });
+
+          continue;
+        }
 
         if (msg.name) {
           file.name = msg.name;

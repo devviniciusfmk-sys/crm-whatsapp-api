@@ -346,3 +346,44 @@ Deno.test("sem catálogo e sem compromissos, os campos não aparecem", () => {
   assertEquals(contexto.services, undefined);
   assertEquals(contexto.your_appointments, undefined);
 });
+
+Deno.test("respond: arquivo que não é arquivo vira texto", () => {
+  // O que chegou de verdade em produção: a resposta inteira embrulhada numa
+  // URI de esquema inventado. A busca no armazenamento não achava nada e a
+  // resposta morria — uma em cada três conversas. - 2026/08/07
+  assertEquals(
+    coerceRespondMessages([{
+      type: "file",
+      uri: "text://Oi, tudo bem? Como posso ajudar?",
+    }]),
+    [{ type: "text", text: "Oi, tudo bem? Como posso ajudar?" }],
+  );
+
+  // Com legenda, a legenda ganha: é o que o modelo escreveu para a pessoa ler.
+  assertEquals(
+    coerceRespondMessages([{
+      type: "file",
+      uri: "https://exemplo.com/cardapio.pdf",
+      text: "Segue o cardápio",
+    }]),
+    [{ type: "text", text: "Segue o cardápio" }],
+  );
+
+  // `internal://` continua sendo arquivo de verdade, que é o único que este
+  // sistema serve.
+  assertEquals(
+    coerceRespondMessages([{ type: "file", uri: "internal://media/x.pdf" }]),
+    [{
+      type: "file",
+      uri: "internal://media/x.pdf",
+      name: undefined,
+      text: undefined,
+    }],
+  );
+
+  // Sem nada legível, silêncio continua sendo silêncio.
+  assertEquals(
+    coerceRespondMessages([{ type: "file", uri: "text://   " }]),
+    [],
+  );
+});

@@ -734,6 +734,7 @@ Deno.serve(async (req) => {
    * que já acontece hoje. Nenhum dos dois manda mensagem errada ao cliente.
    * - 2026/08/07
    */
+  let step = "antes do laço";
   let handedOff = false;
   let promised = false;
 
@@ -935,11 +936,28 @@ Deno.serve(async (req) => {
 
       const handler = ProtocolFactory.getHandler(tools, context, client);
 
+      /**
+       * Em que etapa o laço estava quando quebrou.
+       *
+       * Uma falha em cada seis chega como "Cannot coerce the result to a single
+       * JSON object [PGRST116] 0 linhas" — o detalhe diz o QUE, e continua sem
+       * dizer ONDE. Três hipóteses erradas depois, a lição é a mesma do resto
+       * deste arquivo: instrumentar em vez de adivinhar.
+       *
+       * Três etapas bastam para separar montar o pedido, falar com o modelo e
+       * ler a resposta — e cada uma tem um punhado de consultas, não trinta.
+       * - 2026/08/07
+       */
+      step = "montando o pedido";
       const agentRequest = await handler.prepareRequest();
 
+      step = "chamando o modelo";
       const agentResponse = await handler.sendRequest(agentRequest);
 
+      step = "lendo a resposta";
       response = await handler.processResponse(agentResponse);
+
+      step = "executando ferramentas";
 
       // Guardado para o aviso do fim: quando ninguém responder, o motivo é o
       // da última rodada, que é a que decidiu calar.
@@ -1194,7 +1212,7 @@ Deno.serve(async (req) => {
             version: "1" as const,
             type: "text",
             kind: "text",
-            text: describeError(error),
+            text: describeError(error) + ` (etapa: ${step})`,
           },
         },
       ];
