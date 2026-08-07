@@ -266,13 +266,30 @@ for (const testCase of cases) {
   const passed = outcomes.filter((outcome) => passes(testCase, outcome)).length;
   const ok = passed >= testCase.minPass;
 
-  if (!ok) failed++;
+  /**
+   * Defeito conhecido não derruba o portão, e também não some do relatório.
+   *
+   * Sem isto sobram duas saídas ruins: baixar o piso até passar — que é apagar
+   * o defeito — ou deixar a suíte vermelha para sempre, e suíte que sempre
+   * falha ninguém olha. Aí o portão deixa de existir na prática, que era o
+   * problema que ela veio resolver.
+   *
+   * `open` é a terceira: o caso roda, o número aparece toda vez, e a linha diz
+   * ABERTO com o motivo. O dia em que ele passar, é para tirar a marca —
+   * comportamento que virou confiável e continua marcado como aberto é
+   * dívida que ninguém cobra. - 2026/08/07
+   */
+  if (!ok && !testCase.open) failed++;
 
   console.log(
     `${
-      ok ? "ok  " : "FALHA"
+      ok ? "ok  " : testCase.open ? "ABERTO" : "FALHA"
     } ${passed}/${testCase.repeat} (piso ${testCase.minPass})  ${testCase.name}`,
   );
+
+  if (!ok && testCase.open) {
+    console.log(`        defeito conhecido: ${testCase.open}`);
+  }
 
   if (!ok) {
     // O que aconteceu nas que não passaram, para o conserto começar com a

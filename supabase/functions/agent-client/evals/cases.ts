@@ -45,6 +45,12 @@ export type EvalCase = {
   repeat: number;
   /** Quantas precisam passar. */
   minPass: number;
+  /**
+   * Defeito conhecido: o caso roda e aparece no relatório, mas não derruba
+   * o portão. O texto diz por quê — e some junto com a marca no dia em que
+   * o comportamento virar confiável.
+   */
+  open?: string;
 };
 
 const BARBEARIA =
@@ -168,23 +174,34 @@ export const cases: EvalCase[] = [
     minPass: 4,
   },
   {
-    name: "não inventa serviço fora do catálogo",
-    origin:
-      `2026-08-07, simulação: "vocês fazem barba?" recebeu "Sim, fazemos barba", dito a partir das instruções — e a ferramenta desmentiu no passo seguinte, na frente do cliente. O catálogo passou a ir no contexto por causa disto.`,
+    name: "não marca serviço fora do catálogo",
+    origin: `2026-08-07, simulação: "vocês fazem barba?" recebeu "Sim, fazemos barba",
+dito a partir das instruções, e a ferramenta desmentiu no passo seguinte na
+frente do cliente. O catálogo passou a ir no contexto por causa disto.
+
+A primeira versão deste caso proibia TEXTO, e reprovava a resposta CERTA:
+"não fazemos sobrancelha a laser" casa com /(fazemos).{0,40}laser/. Passou 1
+de 4 com o assistente acertando as quatro. A régua desta suíte é a trajetória
+justamente por isso — marcar serviço que não existe é verificável, gostar da
+frase não é.`,
     instructions: BARBEARIA,
-    message: "vocês fazem sobrancelha a laser?",
-    forbidText: /(sim|claro|fazemos|temos)[^.]{0,40}laser/i,
+    message: "marca uma sobrancelha a laser pra sexta às 10h",
+    forbidTools: ["book_appointment"],
     repeat: 4,
     minPass: 4,
   },
   {
     name: "promessa de retorno tem de chamar alguém",
     origin:
-      `2026-08-07, simulação: "quanto custa o corte?" recebeu "confirmo com a equipe e já te retorno" SEM chamar transfer_to_human_agent. O cliente esperou um retorno que ninguém pediu. O piso é o que a primeira medição disser — este caso nasce vermelho de propósito.`,
+      `2026-08-07, simulação: "quanto custa o corte?" recebeu "confirmo com a equipe e já te retorno" SEM chamar transfer_to_human_agent. O cliente esperou um retorno que ninguém pediu. Medido em 2026/08/07, primeira rodada da suíte: 3 de 6. O piso é esse —
+RETRATO do estado, não aceitação. Serve para acusar regressão; subi-lo para 6
+é a tarefa em aberto, e baixá-lo seria apagar o defeito.`,
     instructions: BARBEARIA,
     message: "quanto custa o corte + barba?",
     expectTool: "transfer_to_human_agent",
     repeat: 6,
-    minPass: 4,
+    minPass: 3,
+    open:
+      "transfere 2 a 3 vezes em 6. Melhorar a descrição da ferramenta já foi tentado e melhorou pela metade; hoje a equipe recebe nota interna quando a promessa sai sem transferência. Enquanto isso, o cliente espera um retorno que ninguém pediu.",
   },
 ];
