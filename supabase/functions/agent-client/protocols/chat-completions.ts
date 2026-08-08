@@ -228,13 +228,48 @@ export function salvageRespondFromText(raw?: string | null): RespondMessage[] {
   if (!raw || !/"messages"\s*:/.test(raw)) return [];
 
   const textos: string[] = [];
-  const padrao = /"(?:content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+
+  // Toda string COMPLETA do texto, com a posição, para depois decidir quais
+  // são mensagem e quais são estrutura.
+  const padrao = /"((?:[^"\\]|\\.)*)"/g;
 
   for (const achado of raw.matchAll(padrao)) {
+    const antes = raw.slice(0, achado.index).trimEnd();
+    const anterior = antes.at(-1);
+    const depois = raw.slice(achado.index + achado[0].length).trimStart();
+
+    // Dois-pontos DEPOIS quer dizer que isto é nome de campo, não conteúdo.
+    // Sem esta linha, o `"content"` de `{"role":"x","content":"Oi"}` entra como
+    // mensagem — a vírgula antes dele passa por elemento de lista — e o cliente
+    // recebe a palavra "content".
+    if (depois.startsWith(":")) continue;
+
+    /**
+     * Duas formas, as duas medidas em produção no mesmo dia:
+     *
+     *   {"messages":[{"role":"assistant","content":"Oi! Qual o seu nome…"}
+     *   {"messages":["Aceitamos cartão sim 😊"]}
+     *
+     * Na primeira a mensagem é valor de `content`; na segunda é elemento solto
+     * da lista. A primeira versão deste resgate só olhava `content` e `text`, e
+     * as duas fugas seguintes vieram na outra forma — resgate nenhum.
+     *
+     * `[` ou `,` antes da aspa quer dizer elemento de lista, que é mensagem.
+     * `:` quer dizer valor de campo, e aí só vale se o campo for `content` ou
+     * `text` — senão "assistant" de `"role":"assistant"` entraria como
+     * mensagem, e o cliente receberia a palavra "assistant".
+     */
+    const ehElementoDeLista = anterior === "[" || anterior === ",";
+    const ehCampoDeTexto = anterior === ":" &&
+      /"(content|text)"\s*:$/.test(antes);
+
+    if (!ehElementoDeLista && !ehCampoDeTexto) continue;
+
     try {
       const texto = JSON.parse(`"${achado[1]}"`) as string;
 
-      if (texto.trim()) textos.push(texto);
+      // Nome de campo dentro da lista ("messages") não é mensagem; frase é.
+      if (texto.trim() && texto.trim().length > 1) textos.push(texto);
     } catch {
       // Escape cortado no meio: descarta esta e segue.
     }

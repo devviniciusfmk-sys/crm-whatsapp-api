@@ -519,3 +519,26 @@ Deno.test("resgata a resposta escrita como texto em vez de ferramenta", () => {
   assertEquals(salvageRespondFromText(""), []);
   assertEquals(salvageRespondFromText(null), []);
 });
+
+Deno.test("resgata as duas formas medidas em produção", () => {
+  // Forma B, medida em 2026/08/08: a mensagem é elemento solto da lista.
+  assertEquals(
+    salvageRespondFromText('{ "messages": [ "Aceitamos cartão sim 😊" ] }'),
+    [{ type: "text", text: "Aceitamos cartão sim 😊" }],
+  );
+
+  assertEquals(
+    salvageRespondFromText(
+      '{ "messages": [ "Não, no salão não oferecemos design de sobrancelha. Temos corte, escova, hidratação, coloração, luzes e manicure." ] }',
+    ).length,
+    1,
+  );
+
+  // E "assistant" de `"role":"assistant"` NÃO pode virar mensagem: seria a
+  // palavra "assistant" chegando ao cliente.
+  const formaA = salvageRespondFromText(
+    '{ "messages": [ { "role": "assistant", "content": "Oi! Tudo bem?" }',
+  );
+
+  assertEquals(formaA, [{ type: "text", text: "Oi! Tudo bem?" }]);
+});
