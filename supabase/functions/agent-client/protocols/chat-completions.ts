@@ -20,7 +20,7 @@ import {
   type AgentProtocolHandler,
   type CallUsage,
   contextHeaders,
-  CUT_SHORT_TOKEN_FLOOR,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   type RequestContext,
   type ResponseContext,
   silenceNote,
@@ -761,8 +761,10 @@ export class ChatCompletionsHandler
      * ignora em quem não raciocina; pelo `reasoning_effort` da OpenAI nos
      * demais. - 2026/08/04
      */
-    let effort = agent.extra.thinking ?? "low";
-    let maxTokens = agent.extra.max_tokens ?? undefined;
+    const effort = agent.extra.thinking ?? "low";
+    // Com teto sempre, e não o padrão do fornecedor: ver
+    // DEFAULT_MAX_OUTPUT_TOKENS. - 2026/08/07
+    const maxTokens = agent.extra.max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
     const thinkingFor = (effort: "minimal" | "low" | "medium" | "high") =>
       isOpenRouter ? { reasoning: { effort } } : { reasoning_effort: effort };
@@ -869,25 +871,23 @@ export class ChatCompletionsHandler
         if (response.usage) discarded.push(response.usage);
 
         /**
-         * Sem raciocínio nenhum na segunda tentativa, e não com "esforço baixo".
+         * Segunda tentativa sem raciocínio, e SEM subir o teto.
          *
-         * A versão anterior baixava para `low` e subia o teto para 4000 — e
-         * ainda assim duas de vinte conversas morreram assim em 2026/08/07,
-         * depois que o contexto cresceu com o catálogo e os compromissos do
-         * contato. Baixar um pedido que já era baixo não devolve orçamento:
-         * quem come o teto é o raciocínio, e a única forma de garantir espaço
-         * para a resposta é não pedir raciocínio.
+         * Subir era o que estava aqui, e era o instinto errado. Os números da
+         * própria nota desmentiram: nas três mortes de 2026/08/07 a entrada
+         * era ~2600 tokens (igual às que deram certo) e o raciocínio 16 —
+         * enquanto a saída era 8192, potência de dois, teto do fornecedor
+         * batido. Não era aperto, era fuga: o modelo gerou até bater na
+         * parede sem produzir texto nem ferramenta.
          *
-         * O custo é uma resposta menos elaborada numa conversa que já estava
-         * perdida. O benefício é o contato receber alguma coisa. - 2026/08/07
+         * Numa fuga, teto maior é só fuga maior — e mais cara. O que ajuda é
+         * tentar de novo sem raciocínio, contra um teto que já é apertado.
+         * - 2026/08/07
          */
         sendReasoning = false;
 
-        maxTokens = Math.max(maxTokens ?? 0, CUT_SHORT_TOKEN_FLOOR);
-
         log.warn(
-          `Cut short by the output limit with nothing to send. Retrying ` +
-            `without reasoning and max_completion_tokens ${maxTokens}.`,
+          "Cut short by the output limit with nothing to send. Retrying without reasoning.",
         );
 
         continue;

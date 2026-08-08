@@ -11,7 +11,7 @@ import {
   type AgentProtocolHandler,
   type CallUsage,
   contextHeaders,
-  CUT_SHORT_TOKEN_FLOOR,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   type RequestContext,
   type ResponseContext,
   silenceNote,
@@ -455,8 +455,8 @@ export class ResponsesHandler
      * Uma segunda tentativa, com o esforço no mínimo e o teto elevado, e só
      * depois o silêncio. - 2026/08/05
      */
-    let effort = agent.extra.thinking ?? "low";
-    let maxTokens = agent.extra.max_tokens ?? undefined;
+    const effort = agent.extra.thinking ?? "low";
+    const maxTokens = agent.extra.max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     let widened = false;
     let sendReasoning = true;
     const discarded: NonNullable<ResponsesResponse["usage"]>[] = [];
@@ -532,14 +532,13 @@ export class ResponsesHandler
 
         if (response.usage) discarded.push(response.usage);
 
-        // Baixar, nunca subir: quem já pedia `minimal` continua em `minimal`.
-        if (effort !== "minimal") effort = "low";
-
-        maxTokens = Math.max(maxTokens ?? 0, CUT_SHORT_TOKEN_FLOOR);
+        // Sem raciocínio e sem subir o teto, pelo mesmo motivo medido no
+        // chat_completions: o corte era fuga, não aperto, e teto maior numa
+        // fuga é só fuga maior. - 2026/08/07
+        sendReasoning = false;
 
         log.warn(
-          `Cut short by the output limit with nothing to send. Retrying with ` +
-            `effort "${effort}" and max_output_tokens ${maxTokens}.`,
+          "Cut short by the output limit with nothing to send. Retrying without reasoning.",
         );
 
         continue;

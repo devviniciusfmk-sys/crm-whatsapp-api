@@ -13,17 +13,29 @@ export type AgentRowWithExtra = Omit<AgentRow, "extra"> & {
 };
 
 /**
- * Teto de saída da segunda tentativa, quando a primeira foi cortada no meio.
+ * Teto de saída, quando o agente não define um.
  *
- * Não é medida de tamanho de resposta: as nossas cabem em muito menos. É espaço
- * para o raciocínio caber junto com a chamada de `respond`, que é o que faltou
- * quando o corte aconteceu. Generoso de propósito — o custo de sobrar é alguns
- * tokens não usados, o custo de faltar é o contato sem resposta.
+ * Sem isto o pedido ia sem `max_completion_tokens` e valia o padrão do
+ * fornecedor — que na OpenRouter é 8192. Medido em 2026/08/07, três conversas
+ * mortas pelo mesmo jeito:
  *
- * Aqui, e não em cada protocolo, porque os dois falham do mesmo jeito e não faz
- * sentido um ceder antes do outro. - 2026/08/05
+ *   deram certo    entrada ~2500 · raciocínio 11-50 · saída 40-94
+ *   cortaram       entrada ~2600 · raciocínio 16    · saída 8192
+ *
+ * A entrada é a mesma e o raciocínio é minúsculo nos dois: não era contexto
+ * grande nem raciocínio comendo o orçamento, que foram as duas hipóteses que
+ * eu persegui. Oito mil e cento e noventa e dois é potência de dois — é teto
+ * batido. O modelo entrou em fuga e gerou até bater na parede, sem produzir
+ * texto nem chamada de ferramenta.
+ *
+ * Duas mil é vinte vezes a maior resposta observada e quatro vezes mais barato
+ * que deixar a fuga correr até o fim: US$ 0,0003 em vez de US$ 0,0014, e a
+ * segunda tentativa chega quatro vezes mais rápido ao contato.
+ *
+ * Subir este número por causa de um corte é o instinto errado, e foi o meu:
+ * numa fuga, teto maior é só fuga maior. - 2026/08/07
  */
-export const CUT_SHORT_TOKEN_FLOOR = 4000;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 2000;
 
 /**
  * Os números de uma chamada ao modelo, com os nossos nomes.
