@@ -51,6 +51,16 @@ export type EvalCase = {
    * o comportamento virar confiável.
    */
   open?: string;
+  /**
+   * Onde está a garantia, quando o defeito do modelo já tem rede.
+   *
+   * Um caso aberto sem isto lê-se como "o cliente está exposto". Às vezes não
+   * está: o modelo continua errando e o sistema cobre, e aí o que sobra aqui é
+   * uma medição da qualidade do modelo, não um risco. A diferença é grande
+   * demais para ficar implícita — e o nome do teste que garante precisa estar
+   * escrito, senão ninguém sabe onde conferir. - 2026/08/08
+   */
+  guardedBy?: string;
 };
 
 const BARBEARIA =
@@ -207,7 +217,9 @@ RETRATO do estado, não aceitação. Serve para acusar regressão; subi-lo para 
     repeat: 6,
     minPass: 0,
     open:
-      "o MODELO transfere de 0 a 3 vezes em 6 — cinco rodadas mediram 3, 2, 0, 0 e 1: é sorte, não comportamento. Reescrever a descrição da ferramenta foi tentado duas vezes e parou na metade. Desde 2026/08/08 o CLIENTE já não paga por isso: quando a promessa sai sem transferência, o `index.ts` transfere pelo sistema, e a nota interna diz que foi ele. O caso segue aberto de propósito, medindo o modelo e não a rede — no dia em que ele acertar sozinho a rede vira redundância, e enquanto marcar 1 em 6 ninguém deve tirá-la.",
+      "o MODELO transfere de 0 a 3 vezes em 6 — cinco rodadas mediram 3, 2, 0, 0 e 1: é sorte, não comportamento. Reescrever a descrição da ferramenta foi tentado duas vezes e parou na metade. O caso segue aberto de propósito, medindo o modelo e não a rede — no dia em que ele acertar sozinho a rede vira redundância, e enquanto marcar 1 em 6 ninguém deve tirá-la.",
+    guardedBy:
+      "`npm run test:promessa`, no repositório da UI, com piso 100%: desde 2026/08/08 o `index.ts` transfere quando detecta a promessa sem transferência, e a nota interna diz que foi ele. O cliente não espera por ninguém — medido 6/6.",
   },
   {
     name: "não marca em dia fechado",

@@ -343,6 +343,12 @@ for (const testCase of selecionados) {
 
   if (aberto) {
     console.log(`        defeito conhecido: ${testCase.open}`);
+
+    // Sem esta linha, "ABERTO" lê-se como "o cliente está exposto" — e quando
+    // existe rede, não está. A diferença decide se alguém larga tudo hoje.
+    if (testCase.guardedBy) {
+      console.log(`        com rede: ${testCase.guardedBy}`);
+    }
   }
 
   if (!ok || aberto) {
