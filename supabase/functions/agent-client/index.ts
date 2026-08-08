@@ -1372,6 +1372,43 @@ Deno.serve(async (req) => {
   if (!answeredContact) {
     log.warn("Agent produced no answer for the contact", { reason: silence });
 
+    /**
+     * Ficar sem resposta é ficar esperando uma pessoa — então chama uma.
+     *
+     * A nota interna sozinha não bastava: ela mora dentro da conversa, e quem
+     * atende só a lê se já tiver aberto justamente aquela. Na lista, a conversa
+     * emudecida ficava igual a todas as outras — sem tarja, sem cronômetro,
+     * fora do filtro de quem espera. O aviso existia e não chamava ninguém, que
+     * é a mesma falha da promessa sem transferência, no outro caminho.
+     *
+     * Medido em 2026/08/08: 1 cliente em 30 cai aqui. Sem isto, esse cliente
+     * manda mensagem, não recebe nada, e ninguém é avisado a tempo.
+     *
+     * Ao contato não se manda pedido de desculpas automático — se o assistente
+     * não tem o que dizer, quem diz é uma pessoa. O que muda é que agora essa
+     * pessoa fica sabendo. - 2026/08/08
+     */
+    let chamouAlguem = false;
+
+    try {
+      await transferToHumanAgentImplementation(
+        {
+          reason:
+            "O assistente não conseguiu responder a esta mensagem e o sistema chamou uma pessoa. O contato está sem resposta.",
+        },
+        undefined,
+        { conversation: conv, agent },
+        client,
+      );
+
+      chamouAlguem = true;
+    } catch (error) {
+      log.error("System handoff after a silence failed", {
+        conversation_id: conv.id,
+        error: describeError(error),
+      });
+    }
+
     await client.from("messages").insert({
       organization_id,
       conversation_id: conv.id,
@@ -1386,6 +1423,9 @@ Deno.serve(async (req) => {
         kind: "text" as const,
         text: [
           "O assistente não produziu resposta para esta mensagem. Nada foi enviado ao contato.",
+          chamouAlguem
+            ? "O sistema transferiu a conversa: ela está esperando uma pessoa."
+            : "A transferência automática também falhou — ninguém foi chamado.",
           // Sempre um motivo. Quando ninguém declarou um, diga ao menos a forma
           // da última rodada: é a diferença entre uma pista e uma parede.
           `Motivo: ${
