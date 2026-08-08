@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolDefinition } from "./base.ts";
-import type { RequestContext } from "../protocols/base.ts";
 
 /**
  * Hands the conversation to a person.
@@ -41,10 +40,25 @@ const TransferToHumanAgentOutputSchema = z.object({
 /** Mirrors `PAUSED_CONV_WINDOW` in `../index.ts`. */
 const PAUSED_CONV_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
 
+/**
+ * Pede só o que a transferência lê, e não o `RequestContext` inteiro.
+ *
+ * O `index.ts` também transfere — quando o assistente promete que alguém
+ * retorna e não chama ninguém — e ali não existe um `RequestContext` montado.
+ * Exigir um obrigaria a inventar `organization` e `messages` só para satisfazer
+ * o tipo, ou a mentir com um `as unknown as`. Os dois escondem o dia em que
+ * esta função passar a ler um campo novo. Assim ela declara o que precisa, e
+ * `RequestContext` continua servindo por conter isso. - 2026/08/08
+ */
+type HandoffContext = {
+  conversation: { id: string };
+  agent: { id: string };
+};
+
 export async function transferToHumanAgentImplementation(
   input: z.infer<typeof TransferToHumanAgentInputSchema>,
   _config: void,
-  context: RequestContext,
+  context: HandoffContext,
   supabaseClient: SupabaseClient,
 ): Promise<z.infer<typeof TransferToHumanAgentOutputSchema>> {
   const at = new Date().toISOString();

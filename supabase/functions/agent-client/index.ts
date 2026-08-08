@@ -19,6 +19,7 @@ import { ProtocolFactory } from "./protocols/index.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "./protocols/context.ts";
 import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
+import { transferToHumanAgentImplementation } from "./tools/handoff.ts";
 import { z } from "zod";
 import Ajv2020 from "ajv";
 import type { AgentRowWithExtra, ResponseContext } from "./protocols/base.ts";
@@ -124,7 +125,21 @@ function describeError(error: unknown): string {
 export const PROMISE_OF_A_PERSON =
   // `\S*` e não `\w+` no fim de "responsável": `\w` não casa acento, e foi
   // exatamente essa palavra que escapou no primeiro teste. - 2026/08/07
-  /(confirm\w+|verific\w+|falar|checar)\s+(isso\s+)?com\s+(a\s+|o\s+|um\s+|uma\s+)?(equipe|time|colega|profissional|respons\S*|gerente|dono)|vou\s+(chamar|passar|encaminhar)|(j[áa]\s+)?te\s+retorno|volto\s+a\s+(falar|te)|assim\s+que\s+(souber|confirmar|a\s+equipe)/i;
+  // "estou transferindo" entrou em 2026/08/08: numa sondagem o modelo escreveu
+  // "Um momento, estou transferindo sua solicitação para um colega" e o detector
+  // não viu promessa nenhuma. Naquela vez ele tinha mesmo chamado a ferramenta,
+  // então ninguém ficou esperando — mas a frase mais direta que existe para
+  // dizer "vem alguém" passava batida, e no dia em que viesse sem a chamada o
+  // aviso não sairia.
+  // `(\s+\S+){0,3}` entre o verbo e o "com", e `já retorno` sem o "te", vieram
+  // da mesma medição: "Confirmando o valor com a equipe, já retorno pra você."
+  // A versão anterior exigia o verbo colado no "com" e o "te" antes de
+  // "retorno", e essa frase — promessa das mais claras — passava pelas duas
+  // peneiras. Era 1 conversa perdida em 6.
+  //
+  // O limite de 3 palavras é o que separa "confirmo O VALOR com a equipe" de
+  // uma frase que só por acaso tem as duas palavras longe uma da outra.
+  /(confirm\w+|verific\w+|falar|checar)(\s+\S+){0,3}\s+com\s+(a\s+|o\s+|um\s+|uma\s+)?(equipe|time|colega|profissional|respons\S*|gerente|dono)|vou\s+(chamar|passar|encaminhar|transferir)|(estou|vou)\s+transferindo|transferindo\s+(voc[êe]|sua|seu|isso|a\s+conversa)|(j[áa]|te)\s+retorno|volto\s+a\s+(falar|te)|assim\s+que\s+(souber|confirmar|a\s+equipe)/i;
 
 const MESSAGES_TIME_LIMIT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MESSAGES_QUANTITY_LIMIT = 50;
@@ -1286,11 +1301,54 @@ Deno.serve(async (req) => {
    * contato não se manda um pedido de desculpas automático — se o assistente
    * não tem o que dizer, quem diz é uma pessoa. - 2026/08/04
    */
-  // Prometeu que uma pessoa volta, e não chamou ninguém. Ver `promised`.
+  /**
+   * Prometeu que uma pessoa volta, e não chamou ninguém — então o sistema chama.
+   *
+   * Medido em 2026/08/08, seis tentativas com a instrução dizendo literalmente
+   * "confirma com a equipe e passa a conversa": o modelo escreveu a promessa
+   * seis vezes e transferiu uma. Ele obedece a primeira metade da frase e larga
+   * a segunda. A descrição da ferramenta já diz em maiúsculas que dizer não
+   * chama ninguém, e já foi reescrita duas vezes por causa disto; a segunda
+   * reescrita levou de 1/3 para metade e parou aí. Continuar polindo texto é
+   * apostar de novo no mesmo cavalo.
+   *
+   * Então a promessa passa a ser verdade por construção: quem disse que alguém
+   * retorna, transferiu. A nota interna continua, e agora conta o que o sistema
+   * fez — quem cuida do assistente precisa saber que ele ainda erra isso, senão
+   * o conserto esconde o defeito.
+   *
+   * O risco é o inverso: uma frase que o `PROMISE_OF_A_PERSON` reconheça sem ser
+   * promessa transfere sem precisar. Custa uma conversa pausada que alguém
+   * despausa, visível na lista com a tarja de espera. O erro de hoje custa um
+   * cliente esperando para sempre por alguém que nunca foi avisado. - 2026/08/08
+   */
   if (promised && !handedOff) {
     log.warn("Agent promised a person without transferring", {
       conversation_id: conv.id,
     });
+
+    let transferida = false;
+
+    try {
+      await transferToHumanAgentImplementation(
+        {
+          reason:
+            "O assistente disse ao contato que alguém da equipe retorna. A transferência foi feita pelo sistema, porque ele não a chamou.",
+        },
+        undefined,
+        { conversation: conv, agent },
+        client,
+      );
+
+      transferida = true;
+    } catch (error) {
+      // Falhar aqui não pode derrubar a resposta que já foi ao contato: a nota
+      // abaixo passa a ser o único aviso, e é ela que a equipe lê.
+      log.error("System handoff after a promise failed", {
+        conversation_id: conv.id,
+        error: describeError(error),
+      });
+    }
 
     await client.from("messages").insert({
       organization_id,
@@ -1304,8 +1362,9 @@ Deno.serve(async (req) => {
         version: "1" as const,
         type: "text" as const,
         kind: "text" as const,
-        text:
-          "O assistente disse ao contato que alguém da equipe retorna, mas não transferiu a conversa. Ninguém foi chamado: esta conversa precisa de uma pessoa.",
+        text: transferida
+          ? "O assistente disse ao contato que alguém da equipe retorna e não transferiu a conversa. O sistema transferiu por ele: esta conversa está esperando uma pessoa."
+          : "O assistente disse ao contato que alguém da equipe retorna, mas não transferiu a conversa, e a transferência automática também falhou. Ninguém foi chamado: esta conversa precisa de uma pessoa.",
       },
     });
   }

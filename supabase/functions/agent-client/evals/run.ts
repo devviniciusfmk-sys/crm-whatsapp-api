@@ -132,6 +132,16 @@ function runtimeBlock(): string {
 
 type Outcome = {
   tool: string | null;
+  /**
+   * TODAS as ferramentas da resposta, não só a primeira.
+   *
+   * O modelo pode responder ao cliente e transferir na mesma volta, e é isso
+   * que se quer de quem promete retorno. Lendo `tool_calls[0]` o caso
+   * "promessa de retorno" reprovava a resposta certa sempre que `respond`
+   * viesse antes de `transfer_to_human_agent` — mediria a ordem, não o
+   * atendimento. - 2026/08/08
+   */
+  tools: string[];
   text: string;
   /** O modelo embrulhou a resposta num arquivo que não é arquivo. */
   disguised?: boolean;
@@ -167,13 +177,22 @@ async function callOnce(testCase: EvalCase): Promise<Outcome> {
 
   const body = await response.json();
 
-  if (body.error) return { tool: null, text: "", error: body.error.message };
+  if (body.error) {
+    return { tool: null, tools: [], text: "", error: body.error.message };
+  }
 
-  const call = body.choices?.[0]?.message?.tool_calls?.[0];
+  const calls = (body.choices?.[0]?.message?.tool_calls ?? []) as {
+    function: { name: string; arguments: string };
+  }[];
+  const nomes = calls.map((c) => c.function.name);
+
+  // O texto para o cliente sai de `respond`, esteja ela em que posição estiver.
+  const call = calls.find((c) => c.function.name === "respond") ?? calls[0];
 
   if (!call) {
     return {
       tool: null,
+      tools: [],
       text: "",
       error: `sem ferramenta (finish_reason ${
         body.choices?.[0]?.finish_reason
@@ -188,6 +207,7 @@ async function callOnce(testCase: EvalCase): Promise<Outcome> {
   } catch {
     return {
       tool: call.function.name,
+      tools: nomes,
       text: "",
       error: "argumentos ilegíveis",
     };
@@ -219,16 +239,22 @@ async function callOnce(testCase: EvalCase): Promise<Outcome> {
     .map((part) => (part.type === "text" ? part.text : (part.text ?? "")))
     .join("\n");
 
-  return { tool: call.function.name, text, disguised };
+  return { tool: call.function.name, tools: nomes, text, disguised };
 }
 
 /** Se uma execução satisfaz o caso. */
 function passes(testCase: EvalCase, outcome: Outcome): boolean {
   if (outcome.error) return false;
 
-  if (testCase.expectTool && outcome.tool !== testCase.expectTool) return false;
+  if (testCase.expectTool && !outcome.tools.includes(testCase.expectTool)) {
+    return false;
+  }
 
-  if (testCase.forbidTools?.includes(outcome.tool ?? "")) return false;
+  if (
+    outcome.tools.some((nome) => testCase.forbidTools?.includes(nome))
+  ) {
+    return false;
+  }
 
   if (testCase.expectAnswer && !outcome.text.trim()) return false;
 
@@ -246,9 +272,26 @@ function passes(testCase: EvalCase, outcome: Outcome): boolean {
 
 let failed = 0;
 
-console.log(`modelo ${MODEL} · provedor ${PROVIDER}\n`);
+/**
+ * `EVAL_ONLY=promessa` roda só os casos cujo nome contém isso.
+ *
+ * Consertar um caso é rodá-lo dez vezes seguidas; sem filtro, cada tentativa
+ * arrasta os treze e a rodada inteira custa minutos por medição.
+ */
+const SOMENTE = Deno.env.get("EVAL_ONLY");
+const selecionados = SOMENTE
+  ? cases.filter((c) => c.name.includes(SOMENTE))
+  : cases;
 
-for (const testCase of cases) {
+console.log(
+  `modelo ${MODEL} · provedor ${PROVIDER}${
+    SOMENTE
+      ? ` · só "${SOMENTE}" (${selecionados.length} de ${cases.length})`
+      : ""
+  }\n`,
+);
+
+for (const testCase of selecionados) {
   const outcomes: Outcome[] = [];
 
   for (let attempt = 0; attempt < testCase.repeat; attempt++) {
@@ -257,6 +300,7 @@ for (const testCase of cases) {
     } catch (error) {
       outcomes.push({
         tool: null,
+        tools: [],
         text: "",
         error: String(error).slice(0, 60),
       });
@@ -281,22 +325,32 @@ for (const testCase of cases) {
    */
   if (!ok && !testCase.open) failed++;
 
+  /**
+   * Caso aberto é ABERTO mesmo quando passa do piso.
+   *
+   * O piso de um defeito conhecido costuma ser 0 ou o retrato do estado — e aí
+   * `passed >= minPass` é verdadeiro, a linha sai "ok", verde, e o defeito
+   * desaparece do relatório que existe para mostrá-lo. Aconteceu em 2026/08/08:
+   * "promessa de retorno" imprimiu `ok 1/6` e foi lido como aprovado.
+   */
+  const aberto = Boolean(testCase.open);
+
   console.log(
     `${
-      ok ? "ok  " : testCase.open ? "ABERTO" : "FALHA"
+      aberto ? "ABERTO" : ok ? "ok  " : "FALHA"
     } ${passed}/${testCase.repeat} (piso ${testCase.minPass})  ${testCase.name}`,
   );
 
-  if (!ok && testCase.open) {
+  if (aberto) {
     console.log(`        defeito conhecido: ${testCase.open}`);
   }
 
-  if (!ok) {
+  if (!ok || aberto) {
     // O que aconteceu nas que não passaram, para o conserto começar com a
     // evidência em vez de uma segunda rodada de medição.
     for (const outcome of outcomes.filter((o) => !passes(testCase, o))) {
       console.log(
-        `        → ${outcome.error ?? `chamou ${outcome.tool}`}: ${
+        `        → ${outcome.error ?? `chamou ${outcome.tools.join(" + ")}`}: ${
           outcome.text.replace(/\n/g, " ").slice(0, 80)
         }`,
       );
