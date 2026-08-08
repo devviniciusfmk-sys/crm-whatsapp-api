@@ -316,7 +316,37 @@ export function buildRuntimeContext(context: RequestContext) {
         greeting_already_sent: true,
         answer_the_request_directly: true,
       }
-      : {}),
+      : {
+        /**
+         * Primeira palavra da conversa com a casa fechada: diga que está.
+         *
+         * Até hoje quem avisava era um cartaz automático mandado antes do
+         * assistente. O cartaz saiu — mandava três mensagens para um "oi" e
+         * prometia uma espera que a resposta seguinte desmentia. Sem ele,
+         * `open_now: false` sozinho não garante o aviso: medido em 2026/08/08,
+         * ao "Oi" de um sábado às 20h38 o assistente respondeu "Oi, tudo bem?
+         * Como posso ajudar você hoje" e não disse que estava fechado.
+         *
+         * Só na primeira: repetir o horário a cada mensagem é o cartaz de
+         * volta, em outra forma. - 2026/08/08
+         */
+        ...(configured && !isOpenAt(configured, timezone)
+          ? {
+            /**
+             * Frase, e não `true`.
+             *
+             * A primeira versão deste campo era um booleano
+             * (`say_we_are_closed_and_when_we_open: true`) e o modelo o
+             * ignorou: medido em 2026/08/08, ao "Oi" de um sábado às 20h44 ele
+             * respondeu "Oi! Como posso ajudar?" com o campo presente no
+             * contexto. `open_now: false` e a lista de dias já estavam ali
+             * também — faltava dizer o que fazer com eles.
+             */
+            what_to_say_in_this_reply:
+              "The business is closed right now. Say so in this reply and say when it opens next (see next_open_days) — in the customer's language, in the same message, without sending a separate one. Then carry on helping: you can still take a booking for a day it is open.",
+          }
+          : {}),
+      }),
     user: {
       name: context.contact?.name,
       phone: context.conversation.contact_address

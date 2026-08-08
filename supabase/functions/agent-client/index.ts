@@ -392,6 +392,48 @@ Deno.serve(async (req) => {
 
   log.info("Contact request", messages.at(-1)?.content);
 
+  /**
+   * Se o assistente vai falar, ele fala sozinho.
+   *
+   * Medido na primeira conversa de WhatsApp de verdade, 2026/08/08 às 20:38.
+   * O cliente escreveu "Oi" e recebeu três mensagens em doze segundos:
+   *
+   *   Olá! Conte pra gente como podemos ajudar que já respondemos.
+   *   Agora estamos fechados. Deixe sua mensagem que respondemos assim que abrirmos.
+   *   Oi, tudo bem? Como posso ajudar você hoje.
+   *
+   * A primeira e a terceira dizem a mesma coisa. A segunda promete uma espera
+   * que a terceira desmente dois segundos depois. Para quem recebe, três
+   * mensagens automáticas seguidas para um "oi" é a assinatura de robô — e a
+   * do meio ainda mente.
+   *
+   * Os dois cartazes existem para quando NÃO há quem responda: sem assistente,
+   * ou com ele pausado fora de hora, dizer "recebemos, já respondemos" é a
+   * coisa certa. Com ele ativo, viram ruído.
+   *
+   * Fechado, o assistente não fica sem o que dizer: ele já recebe `open_now` e
+   * os próximos dias abertos no contexto, e responder "a gente abre terça às
+   * 9h, quer que eu já deixe marcado?" atende melhor que um cartaz pedindo
+   * para esperar. - 2026/08/08
+   */
+  const fechadoAgora = org.extra.business_hours?.length
+    ? !isOpenAt(
+      org.extra.business_hours,
+      org.extra.timezone || DEFAULT_TIMEZONE,
+    )
+    : false;
+
+  // Subiu de onde estava (logo antes da escolha do agente) porque a decisão
+  // sobre os cartazes depende dela. A verificação de "não há nenhum" continua
+  // lá embaixo, junto das outras que interrompem a resposta.
+  const aiAgents = agents.filter((agent) => agent.ai) as AgentRowWithExtra[];
+
+  const assistenteVaiResponder =
+    aiAgents.some((a) =>
+      conv.service === "local" || a.extra?.mode !== "inactive"
+    ) &&
+    !(fechadoAgora && org.extra.pause_agent_when_closed);
+
   // WELCOME MESSAGE
   // Note: The welcome message is affected by allowed contacts. This behavior
   // differs from WhatsApp, which sends the welcome message to all contacts.
@@ -413,6 +455,7 @@ Deno.serve(async (req) => {
    */
   if (
     org.extra.welcome_message &&
+    !assistenteVaiResponder &&
     messages.every((m) => m.direction !== "outgoing")
   ) {
     const outgoing: MessageInsert = {
@@ -464,7 +507,7 @@ Deno.serve(async (req) => {
       const sentRecently = conv.extra.away_sent &&
         +new Date(conv.extra.away_sent) > +new Date() - AWAY_MESSAGE_WINDOW;
 
-      if (org.extra.away_message && !sentRecently) {
+      if (org.extra.away_message && !sentRecently && !assistenteVaiResponder) {
         const outgoing: MessageInsert = {
           organization_id: conv.organization_id,
           conversation_id: conv.id,
@@ -514,10 +557,6 @@ Deno.serve(async (req) => {
   }
 
   // CHECK IF THERE ARE AI AGENTS
-
-  const aiAgents = agents.filter(
-    (agent) => agent.ai,
-  ) as AgentRowWithExtra[];
 
   if (!aiAgents.length) {
     log.info(
