@@ -202,6 +202,47 @@ export function coerceRespondMessages(raw: unknown): RespondMessage[] {
   return single ? [single] : [];
 }
 
+/**
+ * A resposta que veio escrita como texto no lugar da chamada de ferramenta.
+ *
+ * O modelo às vezes redige a chamada inteira em prosa JSON e manda no
+ * `content`, sem chamar ferramenta nenhuma — e como ninguém fecha a chave, ele
+ * segue gerando até bater no teto. Do lado de fora vira silêncio: a resposta
+ * estava pronta e foi jogada fora.
+ *
+ * Medido em 2026/08/08, com o pedaço truncado gravado na nota:
+ *
+ *   { "type": "respond", "messages": [ { "role": "assistant",
+ *     "content": "Oi! Qual o seu nome, por favor? A coloração é a partir de
+ *     R$220. Em qual dia e horário você gostaria?" }
+ *
+ * Isso é uma resposta boa. Era o quarto conserto tentado para a mesma fuga, e
+ * os três anteriores — teto maior, esforço menor, sem raciocínio — mexiam no
+ * orçamento, quando o problema nunca foi orçamento: era forma.
+ *
+ * Só extrai string COMPLETA (com aspas de fechamento), porque o truncamento
+ * corta no meio: mandar meia frase ao cliente seria pior que não mandar.
+ * `JSON.parse` não serve — o que chega está cortado por definição. - 2026/08/08
+ */
+export function salvageRespondFromText(raw?: string | null): RespondMessage[] {
+  if (!raw || !/"messages"\s*:/.test(raw)) return [];
+
+  const textos: string[] = [];
+  const padrao = /"(?:content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+
+  for (const achado of raw.matchAll(padrao)) {
+    try {
+      const texto = JSON.parse(`"${achado[1]}"`) as string;
+
+      if (texto.trim()) textos.push(texto);
+    } catch {
+      // Escape cortado no meio: descarta esta e segue.
+    }
+  }
+
+  return textos.map((text) => ({ type: "text" as const, text }));
+}
+
 export class ChatCompletionsHandler
   implements
     AgentProtocolHandler<ChatCompletionsRequest, ChatCompletionsResponse> {
@@ -1390,6 +1431,57 @@ export class ChatCompletionsHandler
      * conversa. - 2026/08/08
      */
     if (finish_reason === "length") {
+      /**
+       * Antes de desistir, tenta salvar a resposta de dentro do texto.
+       *
+       * Ver `salvageRespondFromText`: o que trunca é quase sempre a chamada de
+       * ferramenta redigida como prosa JSON, com a resposta pronta lá dentro.
+       * Jogar isso fora é escolher o silêncio tendo o texto na mão.
+       *
+       * A nota interna fica de qualquer jeito, porque o modelo errou a forma e
+       * quem cuida do assistente precisa saber que isso acontece — mas o
+       * cliente recebe. - 2026/08/08
+       */
+      const salvo = salvageRespondFromText(message.content);
+
+      if (salvo.length) {
+        const messages = salvo.map((parte) => ({
+          organization_id: conversation.organization_id,
+          service: conversation.service,
+          organization_address: conversation.organization_address,
+          contact_address: conversation.contact_address,
+          direction: "outgoing" as const,
+          agent_id: agent.id,
+          content: {
+            version: "1" as const,
+            type: "text" as const,
+            kind: "text" as const,
+            text: parte.type === "text" ? parte.text : (parte.text ?? ""),
+          },
+        }));
+
+        return {
+          messages: [
+            ...messages,
+            {
+              organization_id: conversation.organization_id,
+              service: conversation.service,
+              organization_address: conversation.organization_address,
+              contact_address: conversation.contact_address,
+              direction: "internal" as const,
+              agent_id: agent.id,
+              content: {
+                version: "1" as const,
+                type: "text" as const,
+                kind: "text" as const,
+                text:
+                  `O modelo escreveu a chamada de \`respond\` como texto e estourou o limite. A resposta foi recuperada de dentro do texto e enviada: ${salvo.length} mensagem(ns).`,
+              },
+            },
+          ],
+        };
+      }
+
       const chamadas = message.tool_calls ?? [];
 
       const forma = chamadas.length

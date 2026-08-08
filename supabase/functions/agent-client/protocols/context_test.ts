@@ -1,5 +1,8 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { coerceRespondMessages } from "./chat-completions.ts";
+import {
+  coerceRespondMessages,
+  salvageRespondFromText,
+} from "./chat-completions.ts";
 import { silenceNote } from "./base.ts";
 import { buildRuntimeContext, isOpenAt } from "./context.ts";
 import type { BusinessHours } from "../../_shared/types/extra_types.ts";
@@ -478,4 +481,41 @@ Deno.test("amanhã vem pronto: data, nome do dia e se abre", () => {
   // E "abre" tem de concordar com a semana configurada.
   const fechados = ["sunday", "monday"];
   assertEquals(amanha.open, !fechados.includes(amanha.weekday.toLowerCase()));
+});
+
+Deno.test("resgata a resposta escrita como texto em vez de ferramenta", () => {
+  // O pedaço real gravado em 2026/08/08, truncado onde o teto bateu.
+  const truncado =
+    '{ "type": "respond", "messages": [ { "role": "assistant", "content": "Oi! Qual o seu nome, por favor? A coloração é a partir de R$220. Em qual dia e horário você gostaria?" }';
+
+  assertEquals(
+    salvageRespondFromText(truncado),
+    [{
+      type: "text",
+      text:
+        "Oi! Qual o seu nome, por favor? A coloração é a partir de R$220. Em qual dia e horário você gostaria?",
+    }],
+  );
+
+  // Duas mensagens, as duas completas.
+  assertEquals(
+    salvageRespondFromText(
+      '{"messages":[{"text":"Bom dia!"},{"text":"Como posso ajudar?"}',
+    ).map((m) => m.type === "text" ? m.text : ""),
+    ["Bom dia!", "Como posso ajudar?"],
+  );
+
+  // A última string está cortada no meio: entra só a completa. Mandar meia
+  // frase ao cliente seria pior que não mandar.
+  assertEquals(
+    salvageRespondFromText(
+      '{"messages":[{"text":"Oi!"},{"text":"Temos horário na ter',
+    ),
+    [{ type: "text", text: "Oi!" }],
+  );
+
+  // Texto que não é chamada de ferramenta nenhuma não vira mensagem.
+  assertEquals(salvageRespondFromText("Bom dia, tudo bem?"), []);
+  assertEquals(salvageRespondFromText(""), []);
+  assertEquals(salvageRespondFromText(null), []);
 });
