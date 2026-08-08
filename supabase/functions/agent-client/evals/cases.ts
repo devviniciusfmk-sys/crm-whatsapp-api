@@ -102,9 +102,11 @@ export const cases: EvalCase[] = [
     name: "consulta a agenda antes de oferecer horário",
     origin: `regra do prompt de agendamento desde 2026-08-04.
 
-A mensagem dizia "quinta de manhã" e o caso passou a reprovar numa sexta: o dia já tinha passado, e o assistente perguntou se era para a semana seguinte em vez de consultar — que é o comportamento certo. Teste que depende do dia da semana falha por calendário, não por defeito. "Amanhã" existe sempre. - 2026/08/07`,
+A mensagem dizia "quinta de manhã" e o caso passou a reprovar numa sexta: o dia já tinha passado, e o assistente perguntou se era para a semana seguinte em vez de consultar — que é o comportamento certo. Teste que depende do dia da semana falha por calendário, não por defeito. "Amanhã" existe sempre — e mordeu de novo no dia seguinte: caiu num domingo, a casa fecha, e a resposta certa passou a ser dizer isso SEM consultar a agenda. O caso reprovou 2 de 4 com o assistente acertando as quatro.
+
+Agora é "na próxima terça": a semana da suíte abre de terça a sábado, então terça existe sempre e está sempre aberta. Data em teste tem de ser escolhida contra a configuração do teste, não contra o calendário de quem roda. - 2026/08/08`,
     instructions: BARBEARIA,
-    message: "tem horário pra cortar o cabelo amanhã de manhã?",
+    message: "tem horário pra cortar o cabelo na próxima terça de manhã?",
     expectTool: "list_appointments",
     forbidTools: ["book_appointment"],
     repeat: 4,
