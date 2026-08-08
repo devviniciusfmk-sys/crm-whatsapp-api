@@ -26,6 +26,25 @@ const TransferToHumanAgentInputSchema = z.object({
   reason: z.string().describe(
     "Why this conversation needs a person, addressed to the colleague who will pick it up — not to the customer. State what was asked and what you could not resolve. WRITE IT IN THE LANGUAGE OF THE CONVERSATION, never in English unless the conversation is in English: it is read by the business's own staff, in the chat list, not by a developer.",
   ),
+  /**
+   * Conjunto fechado, e escolhido pelo modelo em vez de adivinhado do texto.
+   *
+   * A tela precisa distinguir uma reclamação de uma dúvida qualquer: quem volta
+   * do almoço com oito conversas esperando não pode ter de ler as oito para
+   * achar "cortaram minha orelha, tô no pronto socorro". Ler a categoria do
+   * `reason` por palavra-chave seria a terceira expressão regular do dia a
+   * decidir algo importante — duas já falharam hoje por uma vírgula e por uma
+   * palavra no meio. O modelo já decidiu transferir; dizer de que tipo é sai de
+   * graça e não depende de casar texto. - 2026/08/08
+   */
+  // A primeira redação desta descrição mandou "cortaram minha orelha, tô no
+  // pronto socorro" para `cannot_resolve`: o modelo leu "não consigo resolver
+  // isso" e escolheu literalmente, e o caso mais grave do dia saiu com a cor
+  // calma. A ordem da pergunta é o conserto — decidir PRIMEIRO se algo deu
+  // errado com a pessoa, e só depois pensar em quem resolve. - 2026/08/08
+  kind: z.enum(["complaint", "wants_person", "cannot_resolve"]).describe(
+    "What kind of handoff this is. Ask the questions IN THIS ORDER and stop at the first yes. (1) Did something go wrong FOR THIS PERSON — a bad result, an injury or any physical harm, a charge they dispute, a service that failed, or are they simply upset or in distress? Then it is 'complaint', no matter how urgent or how far outside your reach it is. An emergency IS a complaint: 'I cannot resolve this' describes you, not what happened to them. (2) Did they just ask to speak to a human, with nothing having gone wrong? Then 'wants_person'. (3) Otherwise 'cannot_resolve' — and ONLY this: a question you lack the information to answer, or a decision that is not yours to make, with a customer who is not upset and to whom nothing bad happened. Staff see complaints marked in red and pick them up first; when hesitating, choose 'complaint', because a missed one costs far more than an extra one.",
+  ),
 });
 
 const TransferToHumanAgentOutputSchema = z.object({
@@ -74,6 +93,9 @@ export async function transferToHumanAgentImplementation(
         handoff: {
           at,
           reason: input.reason,
+          // O `index.ts` também transfere, sem passar por aqui, e naqueles dois
+          // casos não há cliente reclamando — é o assistente que falhou.
+          kind: input.kind ?? "cannot_resolve",
           agent_id: context.agent.id,
         },
       },

@@ -1334,6 +1334,8 @@ Deno.serve(async (req) => {
         {
           reason:
             "O assistente disse ao contato que alguém da equipe retorna. A transferência foi feita pelo sistema, porque ele não a chamou.",
+          // Não é reclamação: quem falhou foi o assistente, não a empresa.
+          kind: "cannot_resolve" as const,
         },
         undefined,
         { conversation: conv, agent },
@@ -1395,6 +1397,7 @@ Deno.serve(async (req) => {
         {
           reason:
             "O assistente não conseguiu responder a esta mensagem e o sistema chamou uma pessoa. O contato está sem resposta.",
+          kind: "cannot_resolve" as const,
         },
         undefined,
         { conversation: conv, agent },

@@ -177,6 +177,15 @@ export type ConversationExtra = {
   handoff?: {
     at: string;
     reason: string;
+    /**
+     * De que tipo é o pedido, escolhido pelo modelo ao transferir.
+     *
+     * Opcional porque conversas transferidas antes de 2026/08/08 não têm o
+     * campo, e porque as duas transferências que o `index.ts` faz sozinho —
+     * promessa sem chamada e silêncio — não passam pelo modelo. Quem lê trata
+     * a ausência como `cannot_resolve`.
+     */
+    kind?: "complaint" | "wants_person" | "cannot_resolve";
     agent_id: string;
   };
   /**
