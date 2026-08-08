@@ -94,6 +94,56 @@ async function postSubscribeToWebhooks(
   return (await response.json()).success;
 }
 
+/**
+ * O PIN de verificação em duas etapas do número, um por número.
+ *
+ * Era `123456` fixo, igual para todos os clientes — e num repositório público,
+ * o que quer dizer que o PIN de qualquer número que passasse por aqui estava
+ * escrito na internet. É ele que impede que o número seja registrado em outro
+ * lugar; previsível, não impede nada.
+ *
+ * Derivado em vez de sorteado e guardado: registrar de novo o mesmo número
+ * precisa do mesmo PIN, e derivar dá isso sem uma linha nova no cofre e sem
+ * migração. O preço é que trocar `WHATSAPP_PIN_SECRET` troca o PIN de todos os
+ * números já conectados — então ele se troca junto com um replano de
+ * registro, nunca por manutenção de rotina.
+ *
+ * Sem o segredo, para: voltar ao `123456` seria desfazer o conserto no único
+ * momento em que ele importa. - 2026/08/08
+ */
+async function pinDoNumero(phone_number_id: string): Promise<string> {
+  const segredo = Deno.env.get("WHATSAPP_PIN_SECRET");
+
+  if (!segredo) {
+    throw new HTTPException(500, {
+      message:
+        "WHATSAPP_PIN_SECRET não está configurado. Ele gera o PIN de duas etapas de cada número; sem ele o registro usaria um PIN previsível.",
+    });
+  }
+
+  const chave = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(segredo),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+
+  const assinatura = new Uint8Array(
+    await crypto.subtle.sign(
+      "HMAC",
+      chave,
+      new TextEncoder().encode(phone_number_id),
+    ),
+  );
+
+  const numero =
+    (((assinatura[0] << 24) | (assinatura[1] << 16) | (assinatura[2] << 8) |
+      assinatura[3]) >>> 0) % 1_000_000;
+
+  return String(numero).padStart(6, "0");
+}
+
 // Step 3
 async function postRegisterPhoneNumber(
   business_access_token: string,
@@ -289,11 +339,10 @@ export async function performEmbeddedSignup(
     log.info("Coexistence flow: Skipping step 3", ctx);
   } else {
     log.info("Step 3: Register the customer's phone number", ctx);
-    const pin = "123456";
     await postRegisterPhoneNumber(
       business_access_token,
       payload.phone_number_id,
-      pin,
+      await pinDoNumero(payload.phone_number_id),
     );
   }
 
