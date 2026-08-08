@@ -65,6 +65,49 @@ function wallClock(date: Date, timeZone: string) {
 }
 
 /**
+ * Os próximos dias em que a casa abre — data, nome do dia e horário.
+ *
+ * Calculado aqui e entregue pronto, em vez de deixar o modelo derivar a partir
+ * da semana e do dia de hoje. Ver o comentário no ponto de uso: derivar deu
+ * "quarta (10/08)" para uma segunda-feira fechada. Quatro dias bastam para
+ * cobrir a resposta "quando vocês abrem" sem inchar o contexto. - 2026/08/08
+ */
+/** Amanhã: data, nome do dia e se a casa abre. Ver o ponto de uso. */
+function tomorrowIn(hours: BusinessHours, timeZone: string) {
+  const quando = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  quando.setUTCHours(12, 0, 0, 0);
+
+  const { weekday, date, dayIndex } = wallClock(quando, timeZone);
+  const faixa = hours[dayIndex];
+
+  return {
+    date,
+    weekday,
+    open: !!faixa,
+    ...(faixa ? { opens_at: faixa.from, closes_at: faixa.to } : {}),
+  };
+}
+
+function nextOpenDays(hours: BusinessHours, timeZone: string) {
+  const dias = [];
+
+  for (let adiante = 1; adiante <= 14 && dias.length < 4; adiante++) {
+    // Meio-dia, e não meia-noite: a virada de fuso na madrugada trocaria o dia.
+    const quando = new Date(Date.now() + adiante * 24 * 60 * 60 * 1000);
+    quando.setUTCHours(12, 0, 0, 0);
+
+    const { weekday, date, dayIndex } = wallClock(quando, timeZone);
+    const faixa = hours[dayIndex];
+
+    if (!faixa) continue;
+
+    dias.push({ date, weekday, opens_at: faixa.from, closes_at: faixa.to });
+  }
+
+  return dias;
+}
+
+/**
  * Whether the business is open at `date`.
  *
  * Computed here rather than left to the model. Comparing "17:45" against a
@@ -224,6 +267,34 @@ export function buildRuntimeContext(context: RequestContext) {
         // should say — whether to promise someone will look now, or to say
         // it will be tomorrow.
         open_now: isOpenAt(configured, timezone),
+        /**
+         * Os próximos dias em que a casa abre, com data e nome do dia.
+         *
+         * Ele já tinha a semana e o dia de hoje, e precisava derivar o resto —
+         * que é conta de calendário, não conversa. Medido em 2026/08/08: à
+         * pergunta de um domingo, a assistente respondeu "podemos marcar para
+         * quarta (10/08)". 10/08 é segunda, e segunda a casa fecha. Ela errou o
+         * nome do dia e ofereceu um dia fechado, que é a promessa que o cliente
+         * descobre na porta.
+         *
+         * A assistente do salão, com a mesma informação e o mesmo modelo,
+         * acertou. Ou seja: dá para acertar deduzindo, e às vezes se erra —
+         * então o que estava faltando não era instrução, era o fato pronto.
+         * - 2026/08/08
+         */
+        next_open_days: nextOpenDays(configured, timezone),
+        /**
+         * Amanhã, dito com todas as letras.
+         *
+         * Com `next_open_days` no contexto, duas de seis respostas passaram a
+         * errar QUE DIA é amanhã — "amanhã é terça" e "amanhã é segunda" num
+         * sábado. A lista começa no próximo dia aberto, e o modelo lia o
+         * primeiro item como se fosse amanhã.
+         *
+         * A palavra "amanhã" é a mais usada por quem marca horário, e era a
+         * única data que continuava sendo conta. Agora não é. - 2026/08/08
+         */
+        tomorrow: tomorrowIn(configured, timezone),
       }
       : {}),
     /**

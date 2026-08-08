@@ -987,9 +987,29 @@ export class ChatCompletionsHandler
           provider,
           model,
           billable,
-          metadata: discarded.length
-            ? { ...response.usage, discarded_attempts: discarded }
-            : response.usage,
+          /**
+           * Quem de fato atendeu a chamada, junto do consumo.
+           *
+           * A OpenRouter roteia entre fornecedores e diz no corpo qual deles
+           * respondeu — e a gente jogava fora. Sem esse campo não dá para
+           * perguntar a coisa mais óbvia sobre a fuga que mata 7% dos
+           * atendimentos: ela se concentra num fornecedor?
+           *
+           * A suspeita tem base: a suíte de avaliação fixa `order` em Cerebras
+           * e Together e nunca teve uma fuga em mais de cinquenta chamadas; a
+           * produção usa `sort: throughput`, que pega o mais rápido do momento,
+           * qualquer um. Mesmo modelo, mesmo prompt, comportamentos diferentes.
+           *
+           * Uma consulta ao extrato passa a responder isso. Antes de gravar,
+           * era palpite — e palpite sobre esta fuga eu já dei dois, os dois
+           * errados. - 2026/08/08
+           */
+          metadata: {
+            ...response.usage,
+            served_by:
+              (response as unknown as { provider?: string }).provider ?? null,
+            ...(discarded.length ? { discarded_attempts: discarded } : {}),
+          },
         })
         .throwOnError();
     }
@@ -1356,15 +1376,40 @@ export class ChatCompletionsHandler
       };
     }
 
-    // Cortado pelo limite, e a segunda tentativa com teto maior também não
-    // coube. Dizer isso, e não "terminou sem texto": quem lê a nota precisa
-    // saber que o caminho é o `max_tokens` do agente, não o texto das
-    // instruções. - 2026/08/05
+    /**
+     * Cortado pelo limite, e a segunda tentativa também não coube.
+     *
+     * A nota leva o pedaço truncado junto. Sem ele, três consertos foram
+     * tentados às cegas — teto maior, esforço menor, nenhum raciocínio — e a
+     * fuga voltou depois dos três. O que ninguém sabia é o que o modelo estava
+     * gerando durante os dois mil tokens: se é chamada de ferramenta em laço,
+     * se é texto repetido, ou se não vem nada.
+     *
+     * `respond` truncado aparece aqui como uma chamada com argumento cortado.
+     * Duzentos caracteres bastam para ver o padrão de repetição sem encher a
+     * conversa. - 2026/08/08
+     */
     if (finish_reason === "length") {
+      const chamadas = message.tool_calls ?? [];
+
+      const forma = chamadas.length
+        ? `${chamadas.length} chamada(s) truncada(s): ${
+          chamadas.map((chamada) =>
+            chamada.type === "function"
+              ? `${chamada.function.name}(${
+                (chamada.function.arguments ?? "").slice(0, 200)
+              }`
+              : chamada.type
+          ).join(" | ")
+        }`
+        : message.content
+        ? `texto truncado: ${message.content.slice(0, 200)}`
+        : "sem chamada de ferramenta e sem texto: o modelo gastou o teto e não entregou nada";
+
       return {
         messages: [],
         silence: silenceNote(
-          "o modelo estourou o limite de tokens de saída antes de escrever a resposta, e a tentativa com teto maior e menos raciocínio também não coube",
+          `o modelo estourou o limite de tokens de saída antes de escrever a resposta, e a segunda tentativa também não coube — ${forma}`,
           response.usage,
         ),
       };

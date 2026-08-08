@@ -387,3 +387,95 @@ Deno.test("respond: arquivo que não é arquivo vira texto", () => {
     [],
   );
 });
+
+Deno.test("os próximos dias abertos vêm prontos, e nenhum é dia fechado", () => {
+  const contexto = buildRuntimeContext(
+    {
+      organization: {
+        extra: {
+          timezone: "America/Sao_Paulo",
+          // Terça a sábado: domingo e segunda fechados, como as duas casas.
+          business_hours: [
+            null,
+            null,
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "17:00" },
+          ],
+        },
+      },
+      conversation: { contact_address: "5511999999999", service: "whatsapp" },
+    } as unknown as Parameters<typeof buildRuntimeContext>[0],
+  ) as {
+    next_open_days?: Array<{ date: string; weekday: string; opens_at: string }>;
+  };
+
+  const dias = contexto.next_open_days ?? [];
+
+  assertEquals(dias.length, 4);
+
+  // Nenhum domingo e nenhuma segunda: era exatamente o erro medido — oferecer
+  // "quarta (10/08)" para uma segunda-feira fechada. - 2026/08/08
+  assertEquals(
+    dias.some((d) => ["sunday", "monday"].includes(d.weekday.toLowerCase())),
+    false,
+  );
+
+  // E o nome do dia tem de bater com a data, que é a conta que o modelo errou.
+  for (const dia of dias) {
+    const real = new Date(`${dia.date}T12:00:00Z`).toLocaleDateString("en-US", {
+      timeZone: "America/Sao_Paulo",
+      weekday: "long",
+    });
+
+    assertEquals(dia.weekday.toLowerCase(), real.toLowerCase());
+  }
+});
+
+Deno.test("amanhã vem pronto: data, nome do dia e se abre", () => {
+  const contexto = buildRuntimeContext(
+    {
+      organization: {
+        extra: {
+          timezone: "America/Sao_Paulo",
+          business_hours: [
+            null,
+            null,
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "19:00" },
+            { from: "09:00", to: "17:00" },
+          ],
+        },
+      },
+      conversation: { contact_address: "5511999999999", service: "whatsapp" },
+    } as unknown as Parameters<typeof buildRuntimeContext>[0],
+  ) as { tomorrow?: { date: string; weekday: string; open: boolean } };
+
+  const amanha = contexto.tomorrow!;
+
+  // A data é mesmo a de amanhã no fuso da casa, e o nome do dia bate com ela:
+  // era exatamente essa conta que produzia "amanhã é terça" num sábado.
+  // - 2026/08/08
+  const esperado = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  assertEquals(
+    amanha.date,
+    esperado.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }),
+  );
+
+  assertEquals(
+    amanha.weekday.toLowerCase(),
+    new Date(`${amanha.date}T12:00:00Z`).toLocaleDateString("en-US", {
+      timeZone: "America/Sao_Paulo",
+      weekday: "long",
+    }).toLowerCase(),
+  );
+
+  // E "abre" tem de concordar com a semana configurada.
+  const fechados = ["sunday", "monday"];
+  assertEquals(amanha.open, !fechados.includes(amanha.weekday.toLowerCase()));
+});
