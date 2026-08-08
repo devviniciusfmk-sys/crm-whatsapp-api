@@ -1,4 +1,8 @@
 {
+  "tasks": {
+    "check": "deno check agent-client/index.ts && deno test --allow-all agent-client/",
+    "evals": "deno run --allow-all --env-file=../../.env.evals agent-client/evals/run.ts"
+  },
   "fmt": {
     "lineWidth": 80,
     "indentWidth": 2,

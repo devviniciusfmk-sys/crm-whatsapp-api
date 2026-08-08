@@ -9,10 +9,11 @@
     "jsr:@std/encoding@1.0.10": "1.0.10",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@supabase/functions-js@*": "2.108.1",
-    "npm:@google/genai@*": "1.39.0_@modelcontextprotocol+sdk@1.25.3__zod@4.3.6__ajv@8.18.0__express@5.2.1_zod@4.3.6",
-    "npm:@modelcontextprotocol/sdk@*": "1.27.1_zod@4.3.6_hono@4.12.11_ajv@8.18.0_express@5.2.1",
-    "npm:@modelcontextprotocol/sdk@1.25.3": "1.25.3_zod@4.3.6_ajv@8.18.0_express@5.2.1",
-    "npm:@types/node@*": "24.2.0",
+    "npm:@google/genai@*": "1.39.0_@modelcontextprotocol+sdk@1.30.0__zod@4.3.6_zod@4.3.6",
+    "npm:@hono/mcp@*": "0.3.1_@modelcontextprotocol+sdk@1.30.0__zod@4.3.6_hono@4.13.0_hono-rate-limiter@0.5.3__hono@4.13.0_zod@4.3.6",
+    "npm:@modelcontextprotocol/sdk@*": "1.30.0_zod@4.3.6",
+    "npm:@modelcontextprotocol/sdk@1.25.3": "1.25.3_zod@4.3.6_hono@4.13.0",
+    "npm:@types/node@*": "18.19.130",
     "npm:dayjs@^1.11.10": "1.11.12",
     "npm:mathjs@^11.10.0": "11.12.0",
     "npm:mysql2@^3.14.3": "3.16.2",
@@ -63,19 +64,29 @@
     "@babel/runtime@7.28.6": {
       "integrity": "sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA=="
     },
-    "@google/genai@1.39.0_@modelcontextprotocol+sdk@1.25.3__zod@4.3.6__ajv@8.18.0__express@5.2.1_zod@4.3.6": {
+    "@google/genai@1.39.0_@modelcontextprotocol+sdk@1.30.0__zod@4.3.6_zod@4.3.6": {
       "integrity": "sha512-Vz7AQsOdBeiIcxmXIQNy/hzDvyAOE1lSpWA10itUQza7h3aQFF6QSGaQ7o1GYsjMD3XslK4Ee/Ol0eLhRXb7gA==",
       "dependencies": [
-        "@modelcontextprotocol/sdk@1.25.3_zod@4.3.6_ajv@8.18.0_express@5.2.1",
+        "@modelcontextprotocol/sdk@1.30.0_zod@4.3.6",
         "google-auth-library",
         "protobufjs",
         "ws"
       ],
       "optionalPeers": [
-        "@modelcontextprotocol/sdk@1.25.3_zod@4.3.6_ajv@8.18.0_express@5.2.1"
+        "@modelcontextprotocol/sdk@1.30.0_zod@4.3.6"
       ]
     },
-    "@hono/node-server@1.19.9_hono@4.12.11": {
+    "@hono/mcp@0.3.1_@modelcontextprotocol+sdk@1.30.0__zod@4.3.6_hono@4.13.0_hono-rate-limiter@0.5.3__hono@4.13.0_zod@4.3.6": {
+      "integrity": "sha512-EB2rTyyl27qT8KtvEysgfcLK2jhp4KBb5+XyJ5/bcKNA64usp6qyuUWja9X4QB8Rx9U/yhZHGpfI96Xa/jem4Q==",
+      "dependencies": [
+        "@modelcontextprotocol/sdk@1.30.0_zod@4.3.6",
+        "hono",
+        "hono-rate-limiter",
+        "pkce-challenge",
+        "zod"
+      ]
+    },
+    "@hono/node-server@1.19.9_hono@4.13.0": {
       "integrity": "sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw==",
       "dependencies": [
         "hono"
@@ -92,7 +103,7 @@
         "wrap-ansi-cjs@npm:wrap-ansi@7.0.0"
       ]
     },
-    "@modelcontextprotocol/sdk@1.25.3_zod@4.3.6_ajv@8.18.0_express@5.2.1": {
+    "@modelcontextprotocol/sdk@1.25.3_zod@4.3.6_hono@4.13.0": {
       "integrity": "sha512-vsAMBMERybvYgKbg/l4L1rhS7VXV1c0CtyJg72vwxONVX0l4ZfKVAnZEWTQixJGTzKnELjQ59e4NbdFDALRiAQ==",
       "dependencies": [
         "@hono/node-server",
@@ -113,8 +124,8 @@
         "zod-to-json-schema"
       ]
     },
-    "@modelcontextprotocol/sdk@1.27.1_zod@4.3.6_hono@4.12.11_ajv@8.18.0_express@5.2.1": {
-      "integrity": "sha512-sr6GbP+4edBwFndLbM60gf07z0FQ79gaExpnsjMGePXqFcSSb7t6iscpjk9DhFhwd+mTEQrzNafGP8/iGGFYaA==",
+    "@modelcontextprotocol/sdk@1.30.0_zod@4.3.6": {
+      "integrity": "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
       "dependencies": [
         "@hono/node-server",
         "ajv",
@@ -175,20 +186,14 @@
     "@types/node-fetch@2.6.13": {
       "integrity": "sha512-QGpRVpzSaUs30JBSGPjOg4Uveu384erbHBoT1zeONvyCfwQxIkUshLAOqN/k9EjGviPRmWTTe6aH2qySWKTVSw==",
       "dependencies": [
-        "@types/node@24.2.0",
+        "@types/node",
         "form-data"
       ]
     },
     "@types/node@18.19.130": {
       "integrity": "sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==",
       "dependencies": [
-        "undici-types@5.26.5"
-      ]
-    },
-    "@types/node@24.2.0": {
-      "integrity": "sha512-3xyG3pMCq3oYCNg7/ZP+E1ooTaGB4cG8JWRsqqOYQdbWNY4zbaV0Ennrd7stjiJEFZCaybcIgpTjJWHRfBSIDw==",
-      "dependencies": [
-        "undici-types@7.10.0"
+        "undici-types"
       ]
     },
     "abort-controller@3.0.0": {
@@ -614,6 +619,7 @@
         "package-json-from-dist",
         "path-scurry"
       ],
+      "deprecated": true,
       "bin": true
     },
     "google-auth-library@10.5.0": {
@@ -656,8 +662,14 @@
         "function-bind"
       ]
     },
-    "hono@4.12.11": {
-      "integrity": "sha512-r4xbIa3mGGGoH9nN4A14DOg2wx7y2oQyJEb5O57C/xzETG/qx4c7CVDQ5WMeKHZ7ORk2W0hZ/sQKXTav3cmYBA=="
+    "hono-rate-limiter@0.5.3_hono@4.13.0": {
+      "integrity": "sha512-M0DxbVMpPELEzLi0AJg1XyBHLGJXz7GySjsPoK+gc5YeeBsdGDGe+2RvVuCAv8ydINiwlbxqYMNxUEyYfRji/A==",
+      "dependencies": [
+        "hono"
+      ]
+    },
+    "hono@4.13.0": {
+      "integrity": "sha512-jhunvfHWxd7J5EFfSgH4xsYJzSe/lfqbUCxiyyeaQasUsXeEHXtzVid+7EOGByc5JnFa23SSFL3Y2RV/z1T+eQ=="
     },
     "http-errors@2.0.1": {
       "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
@@ -876,7 +888,7 @@
     "openai@4.104.0_zod@4.3.6": {
       "integrity": "sha512-p99EFNsA/yX6UhVO93f5kJsDRLAg+CTA2RBqdHK4RtK8u5IJw32Hyb2dTGKbnnFmnuoBv5r7Z2CURI9sGZpSuA==",
       "dependencies": [
-        "@types/node@18.19.130",
+        "@types/node",
         "@types/node-fetch",
         "abort-controller",
         "agentkeepalive",
@@ -938,7 +950,7 @@
         "@protobufjs/path",
         "@protobufjs/pool",
         "@protobufjs/utf8",
-        "@types/node@18.19.130",
+        "@types/node",
         "long"
       ],
       "scripts": true
@@ -1132,9 +1144,6 @@
     },
     "undici-types@5.26.5": {
       "integrity": "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="
-    },
-    "undici-types@7.10.0": {
-      "integrity": "sha512-t5Fy/nfn+14LuOc2KNYg75vZqClpAiqscVvMygNnlsHBFpSXdJaYtXMcdNLpl/Qvc3P2cB3s6lOV51nqsFq4ag=="
     },
     "unpipe@1.0.0": {
       "integrity": "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ=="

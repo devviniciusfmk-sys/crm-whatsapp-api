@@ -11,15 +11,21 @@ import {
 } from "../../_shared/media.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 // Import map is bad at resolving entry points, so we need to use the full path.
-import { Client } from "npm:@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "npm:@modelcontextprotocol/sdk/client/streamableHttp.js";
+//
+// A versão é obrigatória. Sem ela o cliente flutua para a última publicada
+// enquanto o servidor (`mcp/index.ts`) segue preso em 1.25.3: o mesmo SDK
+// entrava duas vezes na mesma implantação, e um `deno check` que passou de
+// manhã falhou de tarde com o código intacto, porque a 1.30.0 saiu no meio.
+// Subir de versão aqui é subir nos dois lugares, junto. - 2026/08/08
+import { Client } from "npm:@modelcontextprotocol/sdk@1.25.3/client/index.js";
+import { StreamableHTTPClientTransport } from "npm:@modelcontextprotocol/sdk@1.25.3/client/streamableHttp.js";
 import type {
   CallToolRequest,
   CallToolResult,
   ContentBlock,
   ListToolsResult,
   Tool,
-} from "npm:@modelcontextprotocol/sdk/types.js";
+} from "npm:@modelcontextprotocol/sdk@1.25.3/types.js";
 import type { Json } from "../../_shared/db_types.ts";
 import { contextHeaders, type RequestContext } from "../protocols/base.ts";
 
