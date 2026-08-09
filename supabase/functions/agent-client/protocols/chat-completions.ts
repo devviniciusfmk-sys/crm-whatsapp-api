@@ -1080,6 +1080,50 @@ export class ChatCompletionsHandler
         continue;
       }
 
+      /**
+       * Responder em texto solto é falha de FORMATO — e formato se tenta de novo.
+       *
+       * `tool_choice` é obrigatório e mesmo assim alguns provedores devolvem
+       * texto puro. Pior: com o gpt-oss, o que vem é o canal de raciocínio —
+       * medido em 2026/08/09, "analysisThe user complains that a haircut from
+       * yesterday was crooked...". O sistema acerta em não mandar isso ao
+       * cliente, e o cliente fica sem nada.
+       *
+       * Trocar de fornecedor custa frações de centavo e resolve o caso comum,
+       * que é o provedor que anuncia suporte a `tool_choice` e não cumpre — o
+       * mesmo motivo pelo qual o roteamento deixou de pedir "o mais rápido".
+       * Usa o mesmo contador, então o total de tentativas não cresce.
+       */
+      if (
+        reroutes < 2 &&
+        cut?.finish_reason === "stop" &&
+        !cut.message?.tool_calls?.length &&
+        !!cut.message?.content
+      ) {
+        reroutes++;
+
+        if (response.usage) discarded.push(response.usage);
+
+        const quemFalhou = (response as { provider?: string }).provider;
+
+        if (quemFalhou) fornecedoresQueFalharam.push(quemFalhou);
+
+        providerRouting = {
+          ...ROTEAMENTO_PADRAO,
+          ...(fornecedoresQueFalharam.length
+            ? { ignore: [...fornecedoresQueFalharam] }
+            : {}),
+        };
+
+        log.warn(
+          `Model answered in plain text instead of calling a tool${
+            quemFalhou ? ` (${quemFalhou})` : ""
+          }. Retry ${reroutes} of 2.`,
+        );
+
+        continue;
+      }
+
       if (
         reroutes < 2 &&
         // O tipo do SDK da OpenAI não conhece "error": é valor que a OpenRouter
