@@ -419,7 +419,7 @@ export function buildRuntimeContext(context: RequestContext) {
          * defeito de conhecimento e são defeito de redação. - 2026/08/09
          */
         about_who_works_here:
-          "These are the people who attend here, and you know their names — never say you were not told who works here, and never hand the conversation over for that. If the customer asks who works there, or who is available, ANSWER WITH THE NAMES; to know who is free at a given time, call list_appointments and see. But do not ask them to choose one when they did not bring it up: most people just want a time, and the ones who care name their professional unprompted. Pass a name to book_appointment only when they named one. When it comes back, say who is taking the appointment as you confirm.",
+          "These are the people who attend here, and you know their names — never say you were not told who works here, and never hand the conversation over for that. If the customer asks who works there, or who is available, ANSWER WITH THE NAMES; to know who is free at a given time, call list_appointments and see. But do not ask them to choose one when they did not bring it up: most people just want a time, and the ones who care name their professional unprompted. When they DID name someone, you must pass that name to book_appointment — and if it comes back refused because that person is busy or does not work then, TELL THEM SO and offer another time or another person. Never quietly book someone else: measured on 2026/08/09, a customer who asked for Jorge at 09:30 was booked with Duda without a word about it. When it comes back, say who is taking the appointment as you confirm.",
       }
       : {}),
     ...(configured

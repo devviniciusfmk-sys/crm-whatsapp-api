@@ -359,7 +359,14 @@ const ListOutputSchema = z.object({
   ).describe(
     "What this business offers, how long each takes and what it costs. WHEN THIS LIST IS NOT EMPTY, `book_appointment` accepts only these names: offer them by name, pass the name you agreed on, and never invent a duration or a price.",
   ),
-  who_works_here: z.array(z.string()).optional().describe(
+  who_works_here: z.array(
+    z.object({
+      name: z.string(),
+      days: z.record(z.string(), z.string()).nullable().describe(
+        "Their own weekly hours, when they differ from the shop's. Null means they follow the shop. NEVER offer this person a time outside these days and hours — booking will refuse it and the customer will have been promised something twice.",
+      ),
+    }),
+  ).optional().describe(
     "The people who attend here. Absent in a one-person business, and then say nothing about who attends.",
   ),
   about_availability: z.string().optional(),
@@ -479,7 +486,12 @@ async function listImplementation(
     ...header,
     ...(equipe.length
       ? {
-        who_works_here: equipe.map((pessoa) => pessoa.name),
+        who_works_here: equipe.map((pessoa) => ({
+          name: pessoa.name,
+          // Só de quem tem horário próprio. Repetir a semana da loja em cada
+          // nome encheria o contexto com a mesma informação quatro vezes.
+          days: semanaDe(pessoa),
+        })),
         // "diga quem PODE" em vez de "não diga quem não pode": a primeira
         // redação proibia contar quem está ocupado e mesmo assim saiu
         // "Jorge está ocupado às 9h, mas Marcos, Rafa e Duda têm
@@ -642,8 +654,68 @@ async function scheduleReminder(
 export type Professional = {
   id: string;
   name: string;
-  extra?: { services?: string[] } | null;
+  extra?: {
+    services?: string[];
+    /** O horário dele. Ausente é "o mesmo da loja". */
+    business_hours?: BusinessHours;
+  } | null;
 };
+
+/**
+ * Se esta pessoa trabalha nesta hora.
+ *
+ * Sem horário próprio, vale o da loja — que é o caso da maioria, e obrigar a
+ * repetir a semana em cada cadastro faria ninguém cadastrar.
+ *
+ * Com horário próprio, vale a INTERSEÇÃO: quem entra às 13h não atende às 10h
+ * mesmo com a loja aberta, e ninguém atende domingo se a loja fecha domingo.
+ * Deixar o profissional estender o horário da casa criaria o atendimento que
+ * acontece com a porta trancada. - 2026/08/09
+ */
+/** Domingo primeiro, como o resto do sistema guarda a semana. */
+const DIAS_DA_SEMANA = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+/** A semana desta pessoa, ou `null` quando ela segue a da loja. */
+function semanaDe(profissional: Professional): Record<string, string> | null {
+  const proprio = profissional.extra?.business_hours;
+
+  if (!proprio?.some((dia) => !!dia)) return null;
+
+  const semana: Record<string, string> = {};
+
+  proprio.forEach((faixa, indice) => {
+    semana[DIAS_DA_SEMANA[indice]] = faixa
+      ? `${faixa.from}-${faixa.to}`
+      : "closed";
+  });
+
+  return semana;
+}
+
+function trabalhaEm(
+  profissional: Professional,
+  horarioDaLoja: BusinessHours | undefined,
+  timeZone: string,
+  startsAt: Date,
+  minutes: number,
+): boolean {
+  const proprio = profissional.extra?.business_hours;
+
+  if (!proprio?.some((dia) => !!dia)) return true;
+
+  if (!fitsOpeningHours(proprio, timeZone, startsAt, minutes)) return false;
+
+  return !horarioDaLoja ||
+    fitsOpeningHours(horarioDaLoja, timeZone, startsAt, minutes);
+}
 
 /** Quem está cadastrado e ativo. Lista vazia é negócio de uma pessoa só. */
 export async function activeProfessionals(
@@ -863,23 +935,47 @@ async function bookImplementation(
   if (equipe.length) {
     const pedido = input.professional?.trim().toLowerCase();
 
-    const candidatos = equipe
-      .filter((pessoa) =>
-        !pedido || pessoa.name.trim().toLowerCase().includes(pedido)
-      )
-      .filter((pessoa) => atende(pessoa, input.service));
+    const pedidos = equipe.filter((pessoa) =>
+      !pedido || pessoa.name.trim().toLowerCase().includes(pedido)
+    );
 
-    if (pedido && !candidatos.length) {
+    const fazem = pedidos.filter((pessoa) => atende(pessoa, input.service));
+
+    const candidatos = fazem.filter((pessoa) =>
+      trabalhaEm(pessoa, hours ?? undefined, timeZone, startsAt, minutes)
+    );
+
+    if (pedido && !pedidos.length) {
       return refuse(
-        `Nobody called "${input.professional}" takes that service here. Who works here: ${
+        `Nobody called "${input.professional}" works here. Who does: ${
           equipe.map((pessoa) => pessoa.name).join(", ")
         }.`,
       );
     }
 
-    if (!candidatos.length) {
+    if (pedido && !fazem.length) {
+      return refuse(
+        `${input.professional} does not take "${input.service}" here.`,
+      );
+    }
+
+    // Recusa por HORÁRIO da pessoa, e não por agenda cheia: o cliente precisa
+    // saber que é o dia dela, senão insiste no mesmo pedido meia hora depois.
+    if (pedido && !candidatos.length) {
+      return refuse(
+        `${input.professional} does not work at that time. Offer another time, or another person.`,
+      );
+    }
+
+    if (!fazem.length) {
       return refuse(
         `Nobody here takes "${input.service}". Ask the customer to pick another service.`,
+      );
+    }
+
+    if (!candidatos.length) {
+      return refuse(
+        `Nobody who takes that service works at that time. Offer another time.`,
       );
     }
 
