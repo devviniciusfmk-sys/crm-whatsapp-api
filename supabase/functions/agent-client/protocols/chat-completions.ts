@@ -36,6 +36,17 @@ import { inspect } from "node:util";
 const MULTI_MESSAGE_RESPONSE = true;
 const RESPOND_FUNCTION_NAME = "respond";
 
+/**
+ * O modelo que entra quando três fornecedores do principal falham seguidos.
+ *
+ * Escolhido por três coisas, nessa ordem: chama ferramenta direito, TEM PREÇO
+ * na tabela `billing.costs` — modelo sem preço vira consumo invisível na conta
+ * da organização, e isso já aconteceu aqui — e é barato. É o mesmo desenho do
+ * principal um degrau abaixo, o que importa porque o que se troca é a casa que
+ * serve, não a família. - 2026/08/09
+ */
+const MODELO_RESERVA = "openai/gpt-oss-20b";
+
 export const RESPOND_TOOL: ChatCompletionTool = {
   type: "function",
   function: {
@@ -100,6 +111,8 @@ export interface ChatCompletionsResponse {
   message: ChatCompletionMessage;
   /** Quantas vezes se trocou de fornecedor até chegar nesta resposta. */
   reroutes?: number;
+  /** O modelo reserva entrou, porque três fornecedores do principal falharam. */
+  fellBack?: boolean;
   /**
    * O tamanho da chamada, para o aviso de silêncio poder dizer os números.
    *
@@ -903,6 +916,8 @@ export class ChatCompletionsHandler
      * "isto aqui está quebrado". - 2026/08/08
      */
     let reroutes = 0;
+    /** O reserva entra uma vez só. Ver o ponto de uso. */
+    let fallbackUsado = false;
     let sendReasoning = true;
     const discarded: NonNullable<ChatCompletion["usage"]>[] = [];
 
@@ -1025,6 +1040,46 @@ export class ChatCompletionsHandler
        * falhar. Uma, e não um laço — se dois fornecedores diferentes erram
        * seguidos, o problema não é sorte. - 2026/08/07
        */
+      /**
+       * Esgotados os fornecedores, troca de MODELO.
+       *
+       * As três tentativas anteriores mudam quem serve o mesmo modelo. Quando
+       * as três morrem em `finish_reason: "error"`, insistir nele é insistir no
+       * que não está funcionando — e o cliente fica sem resposta. Medido em
+       * 2026/08/09, ao longo do dia: 1 cliente em 30 acabava assim, com uma
+       * pessoa chamada e nenhuma resposta.
+       *
+       * O reserva é escolhido por três coisas, nessa ordem: chama ferramenta
+       * direito, tem preço na tabela (senão o consumo vira invisível na conta
+       * da organização) e é barato. `gpt-oss-20b` é o mesmo desenho do
+       * principal, um degrau abaixo — o que muda é a casa que serve, e é isso
+       * que se quer numa falha do outro.
+       *
+       * Uma vez, e não um laço: se o reserva também falha, o problema não é o
+       * modelo. - 2026/08/09
+       */
+      if (
+        !fallbackUsado &&
+        reroutes >= 2 &&
+        (cut?.finish_reason as string) === "error" &&
+        !cut.message?.tool_calls?.length &&
+        isOpenRouter &&
+        model !== MODELO_RESERVA
+      ) {
+        fallbackUsado = true;
+
+        if (response.usage) discarded.push(response.usage);
+
+        model = MODELO_RESERVA;
+        providerRouting = ROTEAMENTO_PADRAO;
+
+        log.warn(
+          `Three providers failed. Falling back to ${MODELO_RESERVA}.`,
+        );
+
+        continue;
+      }
+
       if (
         reroutes < 2 &&
         // O tipo do SDK da OpenAI não conhece "error": é valor que a OpenRouter
@@ -1178,6 +1233,7 @@ export class ChatCompletionsHandler
       finish_reason: choice.finish_reason,
       message: choice.message,
       reroutes,
+      fellBack: fallbackUsado,
       usage: {
         messages: request.messages.length,
         tools: request.tools.length,
@@ -1198,12 +1254,43 @@ export class ChatCompletionsHandler
       return [];
     }
 
-    const args = JSON.parse(respondCall.function.arguments) as {
+    /**
+     * JSON quebrado não pode matar o turno.
+     *
+     * Este `JSON.parse` não tinha guarda: um provedor que devolvesse argumentos
+     * corrompidos derrubava a rodada inteira, e o cliente ficava sem resposta.
+     * Medido em 2026/08/09, forçando o Nebius: "Expected ',' or '}' after
+     * property value in JSON at position 110" — e nenhuma palavra ao contato.
+     * O comentário do roteamento de provedor já dizia que esse fornecedor
+     * devolve lixo em duas de oito chamadas; faltava o código sobreviver a
+     * isso.
+     *
+     * O resgate é o mesmo do corte por limite: a mensagem costuma estar
+     * inteira dentro do texto quebrado, e mandá-la é melhor que o silêncio.
+     * Falhando o resgate, sobra lista vazia — que o chamador transforma em
+     * aviso de silêncio com o argumento cru dentro, para a próxima vez ter
+     * evidência em vez de suposição. - 2026/08/09
+     */
+    let args: {
       messages: Array<
         | { type: "text"; text: string }
         | { type: "file"; uri: string; name?: string; text?: string }
       >;
     };
+
+    try {
+      args = JSON.parse(respondCall.function.arguments) as typeof args;
+    } catch (error) {
+      const salvo = salvageRespondFromText(respondCall.function.arguments);
+
+      log.warn(
+        `respond arguments are not valid JSON (${
+          String(error).slice(0, 80)
+        }). Salvaged ${salvo.length} message(s).`,
+      );
+
+      args = { messages: salvo };
+    }
 
     // Aceita as formas que o modelo insiste em usar, além da que o esquema pede.
     args.messages = coerceRespondMessages(
@@ -1617,9 +1704,10 @@ export class ChatCompletionsHandler
           // Sem este número não dá para separar "o provedor está instável hoje"
           // de "isto aqui está quebrado", e foi exatamente essa dúvida que me
           // travou na primeira falha real. - 2026/08/08
-          response.reroutes
+          (response.reroutes
             ? `, depois de ${response.reroutes} troca(s) de fornecedor`
-            : ""
+            : "") +
+          (response.fellBack ? " e do modelo reserva" : "")
         }`,
         response.usage,
       ),
