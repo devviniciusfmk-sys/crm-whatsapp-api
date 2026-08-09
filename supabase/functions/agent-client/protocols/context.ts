@@ -234,8 +234,26 @@ function channelOf(service: string) {
        * e contou ao cliente que "10:40 já está reservado", que é a agenda da
        * casa e não é assunto dele. - 2026/08/09
        */
+      /**
+       * O que denuncia a máquina, medido em doze conversas em português de
+       * cliente de verdade — com abreviação, gíria e erro de digitação:
+       *
+       *   "Boa tarde!" à uma da manhã, três vezes. A hora está em `now`, e ele
+       *     cumprimentava pelo hábito em vez de olhar.
+       *   "Abrimos amanhã (segunda) às 09:00? Na verdade, segunda está
+       *     fechado. Nosso próximo dia é terça" — pensou em voz alta e se
+       *     corrigiu na frente do cliente.
+       *   "terça-feira (2026-08-11)" — data em formato de banco.
+       *   "meu cabelo ta horrivel socorro kkkk" respondido com "Oi! Como posso
+       *     ajudar você hoje?" — a frase de central de atendimento, e sem uma
+       *     palavra sobre o que a pessoa disse.
+       *
+       * Nenhum desses é erro de informação: os fatos estavam certos. É o jeito
+       * de dizer, e é o que faz o cliente perceber que está falando com um
+       * robô. - 2026/08/09
+       */
       style:
-        "Write like a person typing on a phone: short, direct, at most one emoji and usually none, and never restate what the customer just said before answering it. When you offer a choice of times, offer AT MOST THREE — a receptionist suggests a couple of options, they do not read out the day's whole timetable. Any list of more than two options — times, services, prices — goes one per short line instead of inside a sentence. A line break is not markdown and reads well here; what does not is a paragraph enumerating every free gap, or bullet characters like - * •. NEVER tell the customer which slots are already taken, who booked them, or where the gaps are: they asked what is free, and the rest is the business's private schedule.",
+        "Write like a person typing on a phone: short, direct, at most one emoji and usually none, and never restate what the customer just said before answering it. Greet by the clock in `now` — 'bom dia' before noon, 'boa tarde' until about 18h, 'boa noite' after — or just say 'Oi' or 'Olá', which fit any hour; greeting someone with 'boa tarde' at one in the morning is the fastest way to sound like a machine. Write dates the way a Brazilian says them: 'terça (11/08)', never '2026-08-11'. Never think out loud, never correct yourself mid-message, never write 'na verdade' about something you just said — decide first, then write one clean message. When the customer is stressed, joking or venting, answer the person before answering the request: 'kkkk' and 'socorro' are talking to you too. When you offer a choice of times, offer AT MOST THREE — a receptionist suggests a couple of options, they do not read out the day's whole timetable. Any list of more than two options — times, services, prices — goes one per short line instead of inside a sentence. A line break is not markdown and reads well here; what does not is a paragraph enumerating every free gap, or bullet characters like - * •. NEVER tell the customer which slots are already taken, who booked them, or where the gaps are: they asked what is free, and the rest is the business's private schedule.",
     },
   };
 }
@@ -390,8 +408,20 @@ export function buildRuntimeContext(context: RequestContext) {
              * contexto. `open_now: false` e a lista de dias já estavam ali
              * também — faltava dizer o que fazer com eles.
              */
+            /**
+             * Responda primeiro, avise depois.
+             *
+             * A primeira redação mandava dizer que está fechado, e o aviso
+             * passou a ABRIR todas as respostas — inclusive a de quem só
+             * perguntou o preço. Doze conversas medidas, doze começando pela
+             * mesma frase: sozinha, a repetição já soa a máquina.
+             *
+             * Quem escreve às onze da noite quer saber o preço do corte, não
+             * que a loja está fechada; as duas coisas cabem, na ordem que uma
+             * pessoa usaria. - 2026/08/09
+             */
             what_to_say_in_this_reply:
-              "The business is closed right now. Say so in this reply and say when it opens next (see next_open_days) — in the customer's language, in the same message, without sending a separate one. Then carry on helping: you can still take a booking for a day it is open.",
+              "The business is closed right now. Answer what the customer asked FIRST, then fold in — in the same message, in their language — that you are closed and when you open next. Do not open the message with it: someone asking the price of a haircut at midnight wants the price, and hearing 'we are closed' before the answer reads like a recording. You can still take a booking for a day it is open. THE ONLY DAYS YOU MAY NAME AS OPEN ARE THE ONES IN `next_open_days`: never say 'we open tomorrow' unless `tomorrow.open` is true — measured on 2026/08/09, a reply said 'we open tomorrow (Monday) at 09:00' on a Sunday night when Monday is closed, which sends someone to a locked door.",
           }
           : {}),
       }),
