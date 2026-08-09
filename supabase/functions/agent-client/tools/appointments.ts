@@ -499,7 +499,7 @@ async function listImplementation(
         // disponível responde a mesma pergunta sem abrir a agenda de
         // ninguém.
         about_availability:
-          "Each person has their own calendar: a time is free while ANYONE is free then, and `taken` says who each booking belongs to. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is. When nobody is free at that hour, say the hour is taken and offer another, without going through who has what.",
+          "Each person has their own calendar: a time is free while ANYONE is free then, and `taken` says who each booking belongs to. NEVER call an hour full because you see a booking in it — one booking means one person is busy and the others are not. Measured on 2026/08/09: three customers asked for 10:00 in a four-chair shop and two were told 'that hour is taken', with two barbers idle. When the customer names a time, CALL book_appointment and let it decide: it checks every calendar and refuses only when nobody at all is free. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
       }
       : {}),
     days,
@@ -1160,12 +1160,18 @@ const RescheduleInputSchema = z.object({
     "The appointment's current start, as 'YYYY-MM-DD HH:MM' in the business's own timezone.",
   ),
   to: z.string().describe(
-    "The new start, same format. The appointment keeps its title and duration.",
+    "The new start, same format. The appointment keeps its title and duration. To change only who attends, send the same time here.",
+  ),
+  professional: z.string().optional().describe(
+    "Who should take it from now on, by name — use this when the customer asks to switch person ('prefiro com o Marcos'). Leave it out to keep whoever has it.",
   ),
 });
 
 const RescheduleOutputSchema = z.object({
   rescheduled: z.boolean(),
+  professional: z.string().nullable().describe(
+    "Who has it now. Say this name when you confirm the change.",
+  ),
   starts_at: z.string().nullable(),
   weekday: z.string().nullable().describe(
     "Which day of the week the new time falls on. Use THIS when confirming.",
@@ -1185,6 +1191,7 @@ async function rescheduleImplementation(
 
   const refuse = (reason: string) => ({
     rescheduled: false,
+    professional: null,
     starts_at: null,
     weekday: null,
     refused: `${reason} (today is ${today})`,
@@ -1205,7 +1212,7 @@ async function rescheduleImplementation(
   // estrago que cancelar o dela.
   const { data: mine } = await supabaseClient
     .from("appointments")
-    .select("id, duration_minutes")
+    .select("id, duration_minutes, professional_id, title")
     .eq("organization_id", context.organization.id)
     .eq("contact_address", context.conversation.contact_address ?? "")
     .eq("starts_at", from.toISOString())
@@ -1234,13 +1241,72 @@ async function rescheduleImplementation(
     );
   }
 
-  const conflict = await findConflict(
+  /**
+   * Remarcar também é trocar de pessoa.
+   *
+   * Sem isto, "prefiro com o Marcos" só tinha um caminho: cancelar e marcar de
+   * novo. Entre uma coisa e outra o horário fica livre para qualquer outro
+   * cliente — e o compromisso perde o histórico, virando outro. Trocar aqui
+   * mantém a linha e a hora.
+   *
+   * Continua valendo tudo o que vale ao marcar: a pessoa tem de fazer aquele
+   * serviço, trabalhar naquela hora, e estar livre. - 2026/08/09
+   */
+  const equipe = await activeProfessionals(
     supabaseClient,
     context.organization.id,
-    to,
-    minutes,
-    config,
   );
+
+  let novoDono: Professional | null = null;
+
+  if (input.professional && equipe.length) {
+    const pedido = input.professional.trim().toLowerCase();
+
+    novoDono = equipe.find((pessoa) =>
+      pessoa.name.trim().toLowerCase().includes(pedido)
+    ) ?? null;
+
+    if (!novoDono) {
+      return refuse(
+        `Nobody called "${input.professional}" works here. Who does: ${
+          equipe.map((pessoa) => pessoa.name).join(", ")
+        }.`,
+      );
+    }
+
+    if (
+      !trabalhaEm(novoDono, hours ?? undefined, timeZone, to, minutes)
+    ) {
+      return refuse(
+        `${novoDono.name} does not work at that time. Offer another time, or another person.`,
+      );
+    }
+  }
+
+  /**
+   * O conflito é da pessoa que vai FICAR com o compromisso.
+   *
+   * Trocando de dono, o horário livre é o dele — não o de quem tinha antes. E
+   * o próprio compromisso continua não contando contra si mesmo, senão
+   * trocar de barbeiro mantendo a hora se recusaria sozinho.
+   */
+  const donoFinal = novoDono?.id ??
+    (appointment.professional_id as string | null);
+
+  const marcados = equipe.length
+    ? (await agendaOcupada(supabaseClient, context.organization.id, to, minutes))
+      .filter((m) => m.professional_id === donoFinal)
+    : null;
+
+  const conflict = marcados
+    ? findOverlap(marcados, to, minutes, config)
+    : await findConflict(
+      supabaseClient,
+      context.organization.id,
+      to,
+      minutes,
+      config,
+    );
 
   // O próprio compromisso não conta como conflito consigo mesmo.
   if (conflict && conflict.getTime() !== from.getTime()) {
@@ -1253,11 +1319,18 @@ async function rescheduleImplementation(
 
   await supabaseClient
     .from("appointments")
-    .update({ starts_at: to.toISOString() })
+    .update({
+      starts_at: to.toISOString(),
+      ...(novoDono ? { professional_id: novoDono.id } : {}),
+    })
     .eq("id", appointment.id as string);
 
   return {
     rescheduled: true,
+    professional: novoDono?.name ??
+      equipe.find((pessoa) =>
+        pessoa.id === (appointment.professional_id as string | null)
+      )?.name ?? null,
     starts_at: utcToLocal(to, timeZone),
     weekday: weekdayOf(to, timeZone),
     refused: null,
@@ -1272,7 +1345,7 @@ export const RescheduleAppointmentTool: ToolDefinition<
   type: "function",
   name: "reschedule_appointment",
   description:
-    "Move an existing appointment of the person you are talking to, to a new day or time. USE THIS instead of booking again when the customer changes their mind about a time they already have — booking again leaves them with two appointments. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
+    "Move an existing appointment of the person you are talking to, to a new day or time, or to a different colleague. USE THIS instead of booking again when the customer changes their mind about a time or a person they already have — booking again leaves them with two appointments, and cancelling first frees the slot for somebody else while you type. To switch only who attends, send the same time and the new name. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(RescheduleInputSchema),
   outputSchema: z.toJSONSchema(RescheduleOutputSchema),
   implementation: rescheduleImplementation,
