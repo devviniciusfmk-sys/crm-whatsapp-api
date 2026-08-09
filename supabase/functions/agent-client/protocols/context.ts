@@ -214,8 +214,28 @@ function channelOf(service: string) {
       name: "WhatsApp",
       formatting:
         "*bold* with ONE asterisk, _italic_, ~strikethrough~, ```code```. Markdown does NOT render here: never write **double asterisks**, # headings, | tables |, or [links](url) — they reach the customer as literal characters.",
+      /**
+       * "Ofereça as opções dentro de uma frase" produziu exatamente isto,
+       * medido no WhatsApp de verdade em 2026/08/09:
+       *
+       *   "Na terça temos livre a partir das 09:00 até 09:45, depois das 09:45
+       *    até 10:10 há intervalo, então 10:40 já está reservado, depois de
+       *    10:55 até 11:00, então 11:15 até 12:00, 12:15 até 13:00, 13:15 até
+       *    14:00, 14:15 até 15:00, 15:15 até 17:00, e 17:15 até 19:00. Qual
+       *    desses horários funciona para você?"
+       *
+       * A regra existia contra o markdown, que o WhatsApp não desenha. Mas
+       * proibir lista não era proibir markdown — era proibir estrutura, e sem
+       * estrutura a agenda do dia inteiro virou um parágrafo que ninguém lê.
+       * Quebra de linha não é markdown e sai perfeita no WhatsApp.
+       *
+       * Os outros dois erros da mesma mensagem são piores que a forma: ela
+       * ofereceu NOVE horários, quando qualquer atendente oferece dois ou três;
+       * e contou ao cliente que "10:40 já está reservado", que é a agenda da
+       * casa e não é assunto dele. - 2026/08/09
+       */
       style:
-        "Write like a person typing on a phone: short, direct, no bullet lists, at most one emoji and usually none. Offer options inside a sentence instead of as a list. Do not restate what the customer just said before answering it.",
+        "Write like a person typing on a phone: short, direct, at most one emoji and usually none, and never restate what the customer just said before answering it. When you offer a choice of times, offer AT MOST THREE — a receptionist suggests a couple of options, they do not read out the day's whole timetable. Any list of more than two options — times, services, prices — goes one per short line instead of inside a sentence. A line break is not markdown and reads well here; what does not is a paragraph enumerating every free gap, or bullet characters like - * •. NEVER tell the customer which slots are already taken, who booked them, or where the gaps are: they asked what is free, and the rest is the business's private schedule.",
     },
   };
 }

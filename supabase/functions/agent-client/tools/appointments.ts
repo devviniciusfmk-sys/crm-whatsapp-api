@@ -456,8 +456,12 @@ export const ListAppointmentsTool: ToolDefinition<
   provider: "local",
   type: "function",
   name: "list_appointments",
+  // "for your eyes only" entrou em 2026/08/09: o modelo repassou a agenda ao
+  // cliente — "10:40 já está reservado" — ao oferecer horários. `taken` é a
+  // agenda da casa, com nome de quem marcou; serve para NÃO oferecer aquela
+  // hora, e nunca para contar o que tem nela.
   description:
-    "See what is already booked, and when the business opens. Call this BEFORE offering times, so you never offer a taken slot or a closed day. Pass `until` to cover a range in ONE call whenever the customer asks about more than one day — asking day by day is slow and the customer waits. It returns every booking of the business, not only this customer's.",
+    "See what is already booked, and when the business opens. Call this BEFORE offering times, so you never offer a taken slot or a closed day. Pass `until` to cover a range in ONE call whenever the customer asks about more than one day — asking day by day is slow and the customer waits. It returns every booking of the business, not only this customer's. WHAT IT RETURNS IS FOR YOUR EYES ONLY: `taken` is the business's private schedule and carries other customers' bookings. Use it to pick free times to offer — never repeat it, never say which hours are taken or busy, never mention the gaps between bookings. The customer hears only the times they can have.",
   inputSchema: z.toJSONSchema(ListInputSchema),
   outputSchema: z.toJSONSchema(ListOutputSchema),
   implementation: listImplementation,
