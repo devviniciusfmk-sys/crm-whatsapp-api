@@ -725,6 +725,26 @@ Deno.serve(async (req) => {
     }));
   }
 
+  /**
+   * Quem atende nesta loja.
+   *
+   * Vai no contexto, e não numa ferramenta, pela mesma razão dos compromissos
+   * do contato: o assistente precisa saber que existe equipe ANTES de escrever
+   * a primeira frase. Sem isso, o cliente que pede "com o Jorge" recebe uma
+   * pergunta de volta sobre quem é Jorge — e a loja de uma pessoa, que não tem
+   * ninguém cadastrado, não recebe campo nenhum e segue como antes.
+   *
+   * Só o nome. Serviço por pessoa é o que a ferramenta usa para decidir, e
+   * repetir isso aqui daria ao modelo mais uma coisa para contradizer.
+   * - 2026/08/09
+   */
+  const { data: equipe } = await client
+    .from("professionals")
+    .select("name")
+    .eq("organization_id", organization_id)
+    .eq("active", true)
+    .order("created_at");
+
   const context = {
     organization,
     conversation,
@@ -732,6 +752,7 @@ Deno.serve(async (req) => {
     contact,
     agent: agent as AgentRowWithExtra,
     appointments,
+    professionals: equipe?.map((pessoa) => pessoa.name as string),
   };
 
   if (agent.extra.tools) {

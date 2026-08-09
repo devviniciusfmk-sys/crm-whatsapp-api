@@ -92,6 +92,8 @@ export interface RequestContext {
   contact?: ContactRow;
   agent: AgentRowWithExtra;
   appointments?: UpcomingAppointment[];
+  /** Nomes de quem atende, quando a loja tem mais de uma cadeira. */
+  professionals?: string[];
 }
 
 export interface ResponseContext {

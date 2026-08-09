@@ -675,6 +675,7 @@ export type Database = {
           organization_address: string
           organization_id: string
           price: number | null
+          professional_id: string | null
           service: Database["public"]["Enums"]["service"]
           starts_at: string
           status: Database["public"]["Enums"]["appointment_status"]
@@ -694,6 +695,7 @@ export type Database = {
           organization_address: string
           organization_id: string
           price?: number | null
+          professional_id?: string | null
           service: Database["public"]["Enums"]["service"]
           starts_at: string
           status?: Database["public"]["Enums"]["appointment_status"]
@@ -713,6 +715,7 @@ export type Database = {
           organization_address?: string
           organization_id?: string
           price?: number | null
+          professional_id?: string | null
           service?: Database["public"]["Enums"]["service"]
           starts_at?: string
           status?: Database["public"]["Enums"]["appointment_status"]
@@ -732,6 +735,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professionals"
             referencedColumns: ["id"]
           },
         ]
@@ -1215,6 +1225,44 @@ export type Database = {
           },
         ]
       }
+      professionals: {
+        Row: {
+          active: boolean
+          created_at: string
+          extra: Json
+          id: string
+          name: string
+          organization_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          extra?: Json
+          id?: string
+          name: string
+          organization_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          extra?: Json
+          id?: string
+          name?: string
+          organization_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "professionals_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quick_replies: {
         Row: {
           content: string
@@ -1357,6 +1405,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      contacts_needing_memory: {
+        Args: { p_limit?: number }
+        Returns: {
+          contact_id: string
+          conversation_id: string
+          messages_since: number
+          organization_id: string
+        }[]
+      }
       count_audience: {
         Args: {
           p_audience: Json
@@ -1386,13 +1443,22 @@ export type Database = {
         Args: { p_address: string; p_organization_id: string }
         Returns: undefined
       }
+      escalate_stale_handoffs: { Args: never; Returns: number }
       get_authorized_orgs: {
         Args: { role?: Database["public"]["Enums"]["role"] }
         Returns: string[]
       }
+      get_model_api_key: {
+        Args: { p_organization_id: string }
+        Returns: string
+      }
       get_whatsapp_access_token: {
         Args: { p_address: string; p_organization_id: string }
         Returns: string
+      }
+      has_model_api_key: {
+        Args: { p_organization_id: string }
+        Returns: boolean
       }
       hash_api_key: { Args: { p_key: string }; Returns: string }
       init_data: {
@@ -1426,6 +1492,10 @@ export type Database = {
         Args: { object: Json; path: string[]; target: Json }
         Returns: Json
       }
+      model_key_secret_name: {
+        Args: { p_organization_id: string }
+        Returns: string
+      }
       org_update_by_admin_rules: {
         Args: { p_id: string; p_name: string }
         Returns: boolean
@@ -1454,6 +1524,10 @@ export type Database = {
       }
       set_message_hidden: {
         Args: { p_hidden?: boolean; p_message_id: string }
+        Returns: undefined
+      }
+      set_model_api_key: {
+        Args: { p_key: string; p_organization_id: string }
         Returns: undefined
       }
       set_whatsapp_access_token: {

@@ -386,6 +386,25 @@ export function buildRuntimeContext(context: RequestContext) {
      * uma nova. - 2026/08/09
      */
     ...describeBusiness(context.organization.extra),
+    /**
+     * Quem atende, quando há mais de um.
+     *
+     * Ausente numa loja de uma pessoa, de propósito: um campo dizendo "a
+     * equipe é você" convidaria o assistente a falar de profissional numa
+     * conversa onde isso não existe.
+     *
+     * A instrução junto é curta e diz o que ele NÃO deve fazer, que é o erro
+     * provável: perguntar "com quem você quer?" a alguém que só quer um
+     * horário. Numa barbearia, quem tem preferência diz o nome sozinho.
+     * - 2026/08/09
+     */
+    ...(context.professionals?.length
+      ? {
+        who_works_here: context.professionals,
+        about_who_works_here:
+          "Do not ask the customer to choose one — most people just want a time, and the ones who care name their professional without being asked. Pass a name to book_appointment only when they brought it up. When it comes back, say who is taking the appointment as you confirm.",
+      }
+      : {}),
     ...(configured
       ? {
         business_hours: describeHours(configured),

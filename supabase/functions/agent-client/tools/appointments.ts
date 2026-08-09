@@ -487,10 +487,16 @@ const BookInputSchema = z.object({
   notes: z.string().optional().describe(
     "Anything the staff should know before the customer arrives. Optional.",
   ),
+  professional: z.string().optional().describe(
+    "Who should take it, by name, ONLY when the customer asked for someone in particular ('com o Jorge'). Leave it out otherwise and the business picks whoever is free — never ask the customer to choose a person they did not bring up.",
+  ),
 });
 
 const BookOutputSchema = z.object({
   booked: z.boolean(),
+  professional: z.string().nullable().describe(
+    "Who is taking it. Say this name when confirming — a customer told 'booked for Tuesday 10:00' in a four-chair shop still does not know who will attend them. Null when the business has nobody registered, and then say nothing about who.",
+  ),
   starts_at: z.string().nullable().describe("Local time actually recorded."),
   weekday: z.string().nullable().describe(
     "Which day of the week that is. Use THIS when confirming to the customer — do not work it out yourself.",
@@ -588,13 +594,62 @@ async function scheduleReminder(
  * A conta em si é do `findOverlap`, que não toca no banco e por isso pode ser
  * testado. Aqui fica só a janela de busca. - 2026/08/02
  */
-async function findConflict(
+export type Professional = {
+  id: string;
+  name: string;
+  extra?: { services?: string[] } | null;
+};
+
+/** Quem está cadastrado e ativo. Lista vazia é negócio de uma pessoa só. */
+export async function activeProfessionals(
+  supabaseClient: SupabaseClient,
+  organizationId: string,
+): Promise<Professional[]> {
+  const { data } = await supabaseClient
+    .from("professionals")
+    .select("id, name, extra")
+    .eq("organization_id", organizationId)
+    .eq("active", true)
+    .order("created_at");
+
+  return (data ?? []) as Professional[];
+}
+
+/**
+ * Se esta pessoa faz este serviço.
+ *
+ * Lista vazia é "faz tudo", e não "não faz nada" — é o caso da maioria, e
+ * obrigar a marcar oito serviços para cadastrar o primeiro barbeiro faria
+ * ninguém cadastrar nenhum.
+ */
+function atende(profissional: Professional, servico?: string | null): boolean {
+  const lista = profissional.extra?.services ?? [];
+
+  if (!lista.length || !servico) return true;
+
+  return lista.some((nome) =>
+    nome.trim().toLowerCase() === servico.trim().toLowerCase()
+  );
+}
+
+/**
+ * Quem está ocupado naquele horário — por pessoa, não pela loja.
+ *
+ * Até 2026/08/09 esta busca olhava só `organization_id`, e a consequência era
+ * grande: numa barbearia de quatro cadeiras, o primeiro cliente marcava às 10h
+ * e os outros três eram RECUSADOS — "esse horário já tem atendimento" — com
+ * três barbeiros parados. Três quartos da capacidade perdidos, e a recusa
+ * parecendo correta de fora.
+ *
+ * Sem ninguém cadastrado, o comportamento é o de antes: a loja é uma agenda só.
+ * É o caso do salão de uma pessoa, que não tem por que cadastrar a si mesma.
+ */
+async function agendaOcupada(
   supabaseClient: SupabaseClient,
   organizationId: string,
   startsAt: Date,
   minutes: number,
-  config: AppointmentsConfig,
-): Promise<Date | null> {
+) {
   const endsAt = new Date(startsAt.getTime() + minutes * 60 * 1000);
 
   // Uma janela generosa em volta, para não trazer o dia inteiro nem perder um
@@ -604,18 +659,87 @@ async function findConflict(
 
   const { data } = await supabaseClient
     .from("appointments")
-    .select("starts_at, duration_minutes")
+    .select("starts_at, duration_minutes, professional_id")
     .eq("organization_id", organizationId)
     .eq("status", "scheduled")
     .gte("starts_at", from.toISOString())
     .lte("starts_at", to.toISOString());
 
-  return findOverlap(
-    (data ?? []) as { starts_at: string; duration_minutes: number | null }[],
+  return (data ?? []) as {
+    starts_at: string;
+    duration_minutes: number | null;
+    professional_id: string | null;
+  }[];
+}
+
+async function findConflict(
+  supabaseClient: SupabaseClient,
+  organizationId: string,
+  startsAt: Date,
+  minutes: number,
+  config: AppointmentsConfig,
+): Promise<Date | null> {
+  const marcados = await agendaOcupada(
+    supabaseClient,
+    organizationId,
     startsAt,
     minutes,
-    config,
   );
+
+  return findOverlap(marcados, startsAt, minutes, config);
+}
+
+/**
+ * Quem pode pegar este horário, entre os cadastrados.
+ *
+ * Devolve a pessoa escolhida, ou `null` quando ninguém está livre. Escolhe
+ * quem tem MENOS compromissos naquele dia: sem isso a fila inteira cai no
+ * primeiro da lista, e o quarto barbeiro passa o dia olhando o primeiro
+ * trabalhar.
+ */
+async function escolherProfissional(
+  supabaseClient: SupabaseClient,
+  organizationId: string,
+  startsAt: Date,
+  minutes: number,
+  config: AppointmentsConfig,
+  candidatos: Professional[],
+): Promise<{ escolhido: Professional | null; conflito: Date | null }> {
+  const marcados = await agendaOcupada(
+    supabaseClient,
+    organizationId,
+    startsAt,
+    minutes,
+  );
+
+  const doDia = (id: string) =>
+    marcados.filter((m) =>
+      m.professional_id === id &&
+      m.starts_at.slice(0, 10) === startsAt.toISOString().slice(0, 10)
+    ).length;
+
+  let primeiroConflito: Date | null = null;
+
+  const livres = candidatos.filter((pessoa) => {
+    const conflito = findOverlap(
+      marcados.filter((m) => m.professional_id === pessoa.id),
+      startsAt,
+      minutes,
+      config,
+    );
+
+    if (conflito && !primeiroConflito) primeiroConflito = conflito;
+
+    return !conflito;
+  });
+
+  if (!livres.length) return { escolhido: null, conflito: primeiroConflito };
+
+  const escolhido = livres
+    .slice()
+    .sort((a, b) => doDia(a.id) - doDia(b.id))[0];
+
+  return { escolhido, conflito: null };
 }
 
 async function bookImplementation(
@@ -635,6 +759,7 @@ async function bookImplementation(
 
   const refuse = (reason: string) => ({
     booked: false,
+    professional: null,
     starts_at: null,
     weekday: null,
     reminder_at: null,
@@ -677,20 +802,78 @@ async function bookImplementation(
     return refuse("This conversation has no phone number to book for.");
   }
 
-  const conflict = await findConflict(
+  /**
+   * Com gente cadastrada, o horário é de uma pessoa; sem, é da loja.
+   *
+   * O caminho de baixo é o de antes, palavra por palavra, e vale para o negócio
+   * de uma pessoa só — que não tem por que cadastrar a si mesma.
+   */
+  const equipe = await activeProfessionals(
     supabaseClient,
     context.organization.id,
-    startsAt,
-    minutes,
-    config,
   );
 
-  if (conflict) {
-    return refuse(
-      `That time overlaps an appointment already booked at ${
-        utcToLocal(conflict, timeZone).slice(11)
-      }. Offer another time.`,
+  let profissional: Professional | null = null;
+
+  if (equipe.length) {
+    const pedido = input.professional?.trim().toLowerCase();
+
+    const candidatos = equipe
+      .filter((pessoa) =>
+        !pedido || pessoa.name.trim().toLowerCase().includes(pedido)
+      )
+      .filter((pessoa) => atende(pessoa, input.service));
+
+    if (pedido && !candidatos.length) {
+      return refuse(
+        `Nobody called "${input.professional}" takes that service here. Who works here: ${
+          equipe.map((pessoa) => pessoa.name).join(", ")
+        }.`,
+      );
+    }
+
+    if (!candidatos.length) {
+      return refuse(
+        `Nobody here takes "${input.service}". Ask the customer to pick another service.`,
+      );
+    }
+
+    const { escolhido, conflito } = await escolherProfissional(
+      supabaseClient,
+      context.organization.id,
+      startsAt,
+      minutes,
+      config,
+      candidatos,
     );
+
+    if (!escolhido) {
+      return refuse(
+        `Everyone who takes that service is busy then${
+          conflito
+            ? ` — the clash starts at ${utcToLocal(conflito, timeZone).slice(11)}`
+            : ""
+        }. Offer another time.`,
+      );
+    }
+
+    profissional = escolhido;
+  } else {
+    const conflict = await findConflict(
+      supabaseClient,
+      context.organization.id,
+      startsAt,
+      minutes,
+      config,
+    );
+
+    if (conflict) {
+      return refuse(
+        `That time overlaps an appointment already booked at ${
+          utcToLocal(conflict, timeZone).slice(11)
+        }. Offer another time.`,
+      );
+    }
   }
 
   const { data, error } = await supabaseClient
@@ -710,6 +893,7 @@ async function bookImplementation(
       duration_minutes: minutes,
       price: priceFor(input, config),
       notes: input.notes ?? null,
+      professional_id: profissional?.id ?? null,
     })
     .select()
     .single();
@@ -727,6 +911,7 @@ async function bookImplementation(
 
   return {
     booked: true,
+    professional: profissional?.name ?? null,
     starts_at: utcToLocal(startsAt, timeZone),
     weekday: weekdayOf(startsAt, timeZone),
     reminder_at: reminderAt ? utcToLocal(reminderAt, timeZone) : null,
