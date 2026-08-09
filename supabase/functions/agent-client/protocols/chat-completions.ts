@@ -1058,11 +1058,29 @@ export class ChatCompletionsHandler
        * Uma vez, e não um laço: se o reserva também falha, o problema não é o
        * modelo. - 2026/08/09
        */
+      /**
+       * A fuga também chama o reserva.
+       *
+       * Duas fugas medidas em 2026/08/09, com o teto já apertado e a segunda
+       * tentativa sem raciocínio já gasta, trouxeram isto dentro:
+       *
+       *   "We should not send any further messages."
+       *   "(no further output)"
+       *
+       * Não é resposta cortada — não há o que resgatar. É o modelo decidindo
+       * calar e repetindo o pensamento, em inglês, até bater no teto. Insistir
+       * com ele é insistir com quem já decidiu não responder; outro modelo não
+       * carrega essa decisão.
+       */
+      const fugaSemNada = cut?.finish_reason === "length" && widened &&
+        !cut.message?.tool_calls?.length &&
+        !salvageRespondFromText(cut.message?.content).length;
+
       if (
         !fallbackUsado &&
-        reroutes >= 2 &&
-        (cut?.finish_reason as string) === "error" &&
-        !cut.message?.tool_calls?.length &&
+        (fugaSemNada || (reroutes >= 2 &&
+          (cut?.finish_reason as string) === "error")) &&
+        !cut?.message?.tool_calls?.length &&
         isOpenRouter &&
         model !== MODELO_RESERVA
       ) {
