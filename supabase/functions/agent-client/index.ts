@@ -434,6 +434,34 @@ Deno.serve(async (req) => {
     ) &&
     !(fechadoAgora && org.extra.pause_agent_when_closed);
 
+  /**
+   * De quem são os cartazes automáticos — e por que isso não é detalhe.
+   *
+   * `pause_conversation_on_human_message` pausa a conversa por 12 horas quando
+   * sai uma mensagem sem `agent_id`, porque é assim que chega o eco do que um
+   * humano digitou no aplicativo do WhatsApp Business. A regra é boa: se
+   * alguém digitou, o assistente cala a boca.
+   *
+   * Os cartazes iam sem `agent_id`, e ficavam indistinguíveis de um humano
+   * digitando. Medido em 2026/08/08 na primeira conversa real: o aviso de
+   * fechado saiu às 20:38:15 e a conversa foi pausada no mesmo instante. As
+   * três mensagens seguintes do cliente — 20:54, 22:11, 22:11 — chegaram ao
+   * banco e não tiveram resposta nenhuma. Do lado de fora, o número
+   * simplesmente morreu.
+   *
+   * Nenhum teste podia pegar isto: o gatilho não dispara em `service = local`
+   * (linha explícita na definição dele), e é em `local` que rodam as quatro
+   * suítes. O primeiro WhatsApp de verdade foi o primeiro lugar onde deu para
+   * ver.
+   *
+   * Com o dono certo, o cartaz é do assistente e não pausa nada. - 2026/08/08
+   */
+  const donoDoCartaz = aiAgents.find((a) =>
+    a.id === conv.extra?.default_agent_id
+  ) ??
+    aiAgents.find((a) => a.extra?.mode !== "inactive") ??
+    aiAgents.at(0);
+
   // WELCOME MESSAGE
   // Note: The welcome message is affected by allowed contacts. This behavior
   // differs from WhatsApp, which sends the welcome message to all contacts.
@@ -465,6 +493,8 @@ Deno.serve(async (req) => {
       organization_address: conv.organization_address,
       contact_address: conv.contact_address,
       direction: "outgoing",
+      // Ver `donoDoCartaz`: sem isto o gatilho pausa a conversa por 12 horas.
+      agent_id: donoDoCartaz?.id ?? null,
       content: {
         version: "1",
         type: "text",
@@ -515,6 +545,9 @@ Deno.serve(async (req) => {
           organization_address: conv.organization_address,
           contact_address: conv.contact_address,
           direction: "outgoing",
+          // Ver `donoDoCartaz`: sem isto o gatilho pausa a conversa por 12
+          // horas — e foi exatamente este cartaz que calou o número real.
+          agent_id: donoDoCartaz?.id ?? null,
           content: {
             version: "1",
             type: "text",

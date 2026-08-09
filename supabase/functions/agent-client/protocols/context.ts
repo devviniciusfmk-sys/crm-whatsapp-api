@@ -73,9 +73,33 @@ function wallClock(date: Date, timeZone: string) {
  * cobrir a resposta "quando vocês abrem" sem inchar o contexto. - 2026/08/08
  */
 /** Amanhã: data, nome do dia e se a casa abre. Ver o ponto de uso. */
+/**
+ * O dia seguinte conta-se a partir de HOJE NA CASA, não do instante em UTC.
+ *
+ * Somar 24 horas a `Date.now()` e depois ancorar ao meio-dia parecia resolver a
+ * virada de fuso, e resolve só metade dela: das 21h à meia-noite em Brasília, a
+ * data em UTC já virou, e a soma cai dois dias adiante do amanhã de quem está
+ * na loja. Medido em 2026/08/08 às 23h24 — um sábado — quando a conta devolveu
+ * segunda-feira 10/08 para "amanhã", que era domingo 09/08.
+ *
+ * O próprio teste da suíte virou vermelho sozinho ao passar das 21h, sem
+ * ninguém tocar no arquivo: é uma janela de três horas por dia em que o
+ * assistente erra a data, e as três horas da noite são justamente quando o
+ * cliente escreve para marcar o dia seguinte.
+ *
+ * Agora a data local vem primeiro e o dia é somado no calendário, não no
+ * relógio. - 2026/08/08
+ */
+function diaSeguinteA(data: string) {
+  const quando = new Date(`${data}T12:00:00Z`);
+
+  quando.setUTCDate(quando.getUTCDate() + 1);
+
+  return quando;
+}
+
 function tomorrowIn(hours: BusinessHours, timeZone: string) {
-  const quando = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  quando.setUTCHours(12, 0, 0, 0);
+  const quando = diaSeguinteA(wallClock(new Date(), timeZone).date);
 
   const { weekday, date, dayIndex } = wallClock(quando, timeZone);
   const faixa = hours[dayIndex];
@@ -91,10 +115,14 @@ function tomorrowIn(hours: BusinessHours, timeZone: string) {
 function nextOpenDays(hours: BusinessHours, timeZone: string) {
   const dias = [];
 
+  // Mesma armadilha de `tomorrowIn`, e o mesmo conserto: a contagem parte do
+  // dia de hoje NA CASA. Somando a `Date.now()`, a lista inteira andava um dia
+  // depois das 21h — inclusive o primeiro item, que é o que o modelo lê como
+  // "o próximo dia que abre".
+  let quando = new Date(`${wallClock(new Date(), timeZone).date}T12:00:00Z`);
+
   for (let adiante = 1; adiante <= 14 && dias.length < 4; adiante++) {
-    // Meio-dia, e não meia-noite: a virada de fuso na madrugada trocaria o dia.
-    const quando = new Date(Date.now() + adiante * 24 * 60 * 60 * 1000);
-    quando.setUTCHours(12, 0, 0, 0);
+    quando = diaSeguinteA(wallClock(quando, timeZone).date);
 
     const { weekday, date, dayIndex } = wallClock(quando, timeZone);
     const faixa = hours[dayIndex];

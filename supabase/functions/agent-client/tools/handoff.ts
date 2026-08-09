@@ -125,8 +125,18 @@ export const TransferToHumanAgentTool: ToolDefinition<
   // A descrição dizia o que a ferramenta faz e quando usá-la, mas não dizia que
   // *dizer* não faz nada. Para o modelo, escrever a frase e executar a ação
   // pareciam a mesma coisa. - 2026/08/04
+  // "NEVER call this for something you can answer" entrou em 2026/08/08, da
+  // primeira conversa de WhatsApp de verdade. O cliente perguntou "na segunda
+  // não tem?", a assistente transferiu — motivo registrado: "preciso que um
+  // atendente explique a indisponibilidade" — e em seguida explicou ela mesma,
+  // corretamente. Transferir pausa a conversa: a pergunta seguinte do cliente,
+  // vinte segundos depois, caiu no vazio.
+  //
+  // A descrição dizia quando usar e terminava com "prefira transferir a
+  // adivinhar". Faltava dizer que horário, catálogo e preço não são adivinhação
+  // — são o que ela tem na mão.
   description:
-    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, a payment that already happened, or an explicit request to speak to a person. CALLING THIS TOOL IS THE ONLY THING THAT ACTUALLY SUMMONS ANYONE — writing 'I will call someone' or 'I have called the team' in a message summons nobody, and leaves the customer waiting for a person who was never told. If you tell the customer that a colleague will take over, you MUST call this tool in the same turn. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. ALWAYS WRITE TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING — this instruction being in English says nothing about the language of your reply. Prefer transferring over guessing: an invented answer costs more than a wait.",
+    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, a payment that already happened, or an explicit request to speak to a person. NEVER call this for something you can already answer from what you were given — opening hours, closed days, the service catalogue, prices, or what the calendar shows. Explaining that the shop is closed on a day, or that a service is not offered, is your job, not a colleague's: answer it and keep going. Calling this tool PAUSES the conversation, so everything the customer writes next goes unanswered until a person shows up — transferring what you could have answered leaves them waiting for nothing. CALLING THIS TOOL IS THE ONLY THING THAT ACTUALLY SUMMONS ANYONE — writing 'I will call someone' or 'I have called the team' in a message summons nobody, and leaves the customer waiting for a person who was never told. If you tell the customer that a colleague will take over, you MUST call this tool in the same turn. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. ALWAYS WRITE TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING — this instruction being in English says nothing about the language of your reply. Prefer transferring over guessing: an invented answer costs more than a wait.",
   inputSchema: z.toJSONSchema(TransferToHumanAgentInputSchema),
   outputSchema: z.toJSONSchema(TransferToHumanAgentOutputSchema),
   implementation: transferToHumanAgentImplementation,

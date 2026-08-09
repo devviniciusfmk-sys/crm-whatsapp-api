@@ -98,6 +98,8 @@ export interface ChatCompletionsRequest {
 export interface ChatCompletionsResponse {
   finish_reason: ChatCompletion["choices"][number]["finish_reason"];
   message: ChatCompletionMessage;
+  /** Quantas vezes se trocou de fornecedor até chegar nesta resposta. */
+  reroutes?: number;
   /**
    * O tamanho da chamada, para o aviso de silêncio poder dizer os números.
    *
@@ -811,9 +813,35 @@ export class ChatCompletionsHandler
      * - 2026/08/04
      */
     const isOpenRouter = String(baseURL).includes("openrouter.ai");
-    let providerRouting = isOpenRouter
-      ? (agent.extra.provider ?? { sort: "throughput" })
+
+    /**
+     * O padrão passa a ser a ordem que a suíte de avaliação usa há dias.
+     *
+     * Era `sort: "throughput"` — "pede o mais rápido, que empurra para o lado
+     * bom da tabela sem casar o produto com um fornecedor". A ideia é boa e o
+     * resultado não: em 2026/08/08 à noite, 20 de 30 clientes ficaram sem
+     * resposta com `finish_reason: "error"` em três tentativas seguidas,
+     * enquanto a suíte de avaliação — que fixa Cerebras e Together — respondia
+     * 6 de 6 no mesmo minuto, com as mesmas ferramentas e a mesma chave de
+     * modelo. O ledger mostrou quem a produção estava pegando: CoreWeave e
+     * Novita, fornecedores que nunca passaram por teste nenhum aqui.
+     *
+     * "O mais rápido" é uma aposta refeita a cada chamada, e a cada fornecedor
+     * novo que entra na tabela. `order` não fecha a porta: a OpenRouter tenta
+     * os listados primeiro e continua caindo para os outros se eles falharem —
+     * o que se ganha é começar por quem já se sabe que funciona.
+     *
+     * `agent.extra.provider` continua mandando mais, para quem quiser escolher.
+     * - 2026/08/08
+     */
+    const ROTEAMENTO_PADRAO = { order: ["Cerebras", "Together"] };
+
+    let providerRouting: Record<string, unknown> | undefined = isOpenRouter
+      ? (agent.extra.provider ?? ROTEAMENTO_PADRAO)
       : undefined;
+
+    // Quem falhou nesta rodada, para a retentativa não cair no mesmo buraco.
+    const fornecedoresQueFalharam: string[] = [];
 
     /**
      * Quanto o modelo pode pensar antes de responder.
@@ -860,7 +888,21 @@ export class ChatCompletionsHandler
      * insistir só queima crédito. - 2026/08/05
      */
     let widened = false;
-    let rerouted = false;
+    /**
+     * Quantas vezes já se trocou de fornecedor nesta rodada.
+     *
+     * Era um booleano: uma tentativa e pronto, sob o argumento de que dois
+     * fornecedores errando seguidos não é azar, é problema. O argumento vale
+     * para DIAGNOSTICAR e não para ATENDER — medido em 2026/08/08 no primeiro
+     * WhatsApp de verdade, "Está aberto" morreu num `finish_reason: "error"` e
+     * o cliente ficou sem resposta enquanto o dono olhava o celular.
+     *
+     * Três tentativas custam frações de centavo; uma pergunta sem resposta
+     * custa o cliente. E o número entra na nota de silêncio, porque saber
+     * quantas vezes se tentou é a diferença entre "o provedor está instável" e
+     * "isto aqui está quebrado". - 2026/08/08
+     */
+    let reroutes = 0;
     let sendReasoning = true;
     const discarded: NonNullable<ChatCompletion["usage"]>[] = [];
 
@@ -984,21 +1026,46 @@ export class ChatCompletionsHandler
        * seguidos, o problema não é sorte. - 2026/08/07
        */
       if (
-        !rerouted &&
+        reroutes < 2 &&
         // O tipo do SDK da OpenAI não conhece "error": é valor que a OpenRouter
         // acrescenta. O TypeScript recusa a comparação sem isto.
         (cut?.finish_reason as string) === "error" &&
-        !cut.message?.tool_calls?.length &&
-        !cut.message?.content
+        !cut.message?.tool_calls?.length
       ) {
-        rerouted = true;
+        reroutes++;
 
         if (response.usage) discarded.push(response.usage);
 
-        providerRouting = undefined;
+        /**
+         * A retentativa foge de quem acabou de falhar.
+         *
+         * Antes ela limpava o roteamento e mandava de novo — ou seja, jogava o
+         * mesmo dado. Se o fornecedor mais rápido é justamente o que está
+         * quebrado, ele continua sendo o mais rápido na tentativa seguinte, e
+         * as três tentativas morrem no mesmo lugar. Foi o que as notas de
+         * 2026/08/08 mostraram: "depois de 2 trocas de fornecedor" e nenhuma
+         * resposta.
+         *
+         * A resposta da OpenRouter diz quem atendeu; `ignore` tira essa porta
+         * da mesa antes de tentar de novo.
+         */
+        const quemFalhou = (response as { provider?: string }).provider;
+
+        if (quemFalhou) fornecedoresQueFalharam.push(quemFalhou);
+
+        providerRouting = {
+          ...ROTEAMENTO_PADRAO,
+          ...(fornecedoresQueFalharam.length
+            ? { ignore: [...fornecedoresQueFalharam] }
+            : {}),
+        };
 
         log.warn(
-          'Provider returned finish_reason "error". Retrying without routing preference.',
+          `Provider returned finish_reason "error"${
+            quemFalhou ? ` (${quemFalhou})` : ""
+          }. Retry ${reroutes} of 2, ignoring ${
+            fornecedoresQueFalharam.join(", ") || "nobody"
+          }.`,
         );
 
         continue;
@@ -1110,6 +1177,7 @@ export class ChatCompletionsHandler
     return {
       finish_reason: choice.finish_reason,
       message: choice.message,
+      reroutes,
       usage: {
         messages: request.messages.length,
         tools: request.tools.length,
@@ -1545,7 +1613,14 @@ export class ChatCompletionsHandler
     return {
       messages: [],
       silence: silenceNote(
-        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório`,
+        `o modelo terminou com finish_reason "${finish_reason}" e sem texto, mesmo com tool_choice obrigatório${
+          // Sem este número não dá para separar "o provedor está instável hoje"
+          // de "isto aqui está quebrado", e foi exatamente essa dúvida que me
+          // travou na primeira falha real. - 2026/08/08
+          response.reroutes
+            ? `, depois de ${response.reroutes} troca(s) de fornecedor`
+            : ""
+        }`,
         response.usage,
       ),
     };
