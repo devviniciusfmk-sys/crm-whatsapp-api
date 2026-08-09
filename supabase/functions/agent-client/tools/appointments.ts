@@ -332,6 +332,9 @@ const DaySchema = z.object({
       starts_at: z.string().describe("Local time, HH:MM."),
       duration_minutes: z.number().nullable(),
       title: z.string(),
+      professional: z.string().nullable().describe(
+        "Whose booking it is, when the business has people registered. A time is only busy for THAT person — the others are free.",
+      ),
     }),
   ).describe(
     "Slots already booked that day, for every customer. Offer times that do not collide with these.",
@@ -356,6 +359,10 @@ const ListOutputSchema = z.object({
   ).describe(
     "What this business offers, how long each takes and what it costs. WHEN THIS LIST IS NOT EMPTY, `book_appointment` accepts only these names: offer them by name, pass the name you agreed on, and never invent a duration or a price.",
   ),
+  who_works_here: z.array(z.string()).optional().describe(
+    "The people who attend here. Absent in a one-person business, and then say nothing about who attends.",
+  ),
+  about_availability: z.string().optional(),
   days: z.array(DaySchema),
 });
 
@@ -406,12 +413,32 @@ async function listImplementation(
   // Uma consulta ao banco para o intervalo inteiro, repartida em memória.
   const { data } = await supabaseClient
     .from("appointments")
-    .select("starts_at, duration_minutes, title")
+    .select("starts_at, duration_minutes, title, professional_id")
     .eq("organization_id", context.organization.id)
     .eq("status", "scheduled")
     .gte("starts_at", from.toISOString())
     .lt("starts_at", to.toISOString())
     .order("starts_at", { ascending: true });
+
+  /**
+   * Quem atende, e de quem é cada compromisso.
+   *
+   * Sem isto o modelo não tem como responder "quem tá livre terça?" — e foi o
+   * que aconteceu no WhatsApp de verdade em 2026/08/09: perguntado quem estava
+   * disponível, ele devolveu HORÁRIOS, porque horário era tudo o que esta
+   * ferramenta lhe dava. O nome dos quatro estava no contexto e não bastava: a
+   * pergunta é sobre o cruzamento dos dois, e o cruzamento mora aqui.
+   *
+   * Vale a mesma regra do resto do retorno: é para os olhos dele. Dizer ao
+   * cliente que "o Jorge está com a agenda cheia" é contar a agenda da casa.
+   * - 2026/08/09
+   */
+  const equipe = await activeProfessionals(
+    supabaseClient,
+    context.organization.id,
+  );
+
+  const nomeDoProfissional = new Map(equipe.map((p) => [p.id, p.name]));
 
   const days = [];
 
@@ -442,11 +469,29 @@ async function listImplementation(
             .slice(11),
           duration_minutes: (row.duration_minutes as number | null) ?? null,
           title: row.title as string,
+          professional:
+            nomeDoProfissional.get(row.professional_id as string) ?? null,
         })),
     });
   }
 
-  return { ...header, days };
+  return {
+    ...header,
+    ...(equipe.length
+      ? {
+        who_works_here: equipe.map((pessoa) => pessoa.name),
+        // "diga quem PODE" em vez de "não diga quem não pode": a primeira
+        // redação proibia contar quem está ocupado e mesmo assim saiu
+        // "Jorge está ocupado às 9h, mas Marcos, Rafa e Duda têm
+        // disponibilidade" — medido em 2026/08/09. Nomear só o lado
+        // disponível responde a mesma pergunta sem abrir a agenda de
+        // ninguém.
+        about_availability:
+          "Each person has their own calendar: a time is free while ANYONE is free then, and `taken` says who each booking belongs to. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is. When nobody is free at that hour, say the hour is taken and offer another, without going through who has what.",
+      }
+      : {}),
+    days,
+  };
 }
 
 export const ListAppointmentsTool: ToolDefinition<

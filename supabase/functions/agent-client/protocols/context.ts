@@ -401,8 +401,25 @@ export function buildRuntimeContext(context: RequestContext) {
     ...(context.professionals?.length
       ? {
         who_works_here: context.professionals,
+        /**
+         * Diz o que FAZER, e não só o que não fazer.
+         *
+         * A primeira redação era toda proibição — "não pergunte com quem", "só
+         * passe o nome se o cliente trouxer" — e o modelo leu como "não fale de
+         * profissional". Medido no WhatsApp de verdade em 2026/08/09, com a
+         * lista dos quatro nomes presente no contexto:
+         *
+         *   "o jorge não teria outro?"     → "Qual profissional você gostaria?"
+         *   "quem tá disponível?"          → transferiu, com o motivo
+         *      "informação não fornecida" — tendo os nomes na mão
+         *   "quem tá disponível pra terça?" → respondeu com HORÁRIOS
+         *
+         * Instrução que só proíbe deixa o caso de uso sem saída: perguntado
+         * diretamente, ele desconversa ou desiste. As duas coisas parecem
+         * defeito de conhecimento e são defeito de redação. - 2026/08/09
+         */
         about_who_works_here:
-          "Do not ask the customer to choose one — most people just want a time, and the ones who care name their professional without being asked. Pass a name to book_appointment only when they brought it up. When it comes back, say who is taking the appointment as you confirm.",
+          "These are the people who attend here, and you know their names — never say you were not told who works here, and never hand the conversation over for that. If the customer asks who works there, or who is available, ANSWER WITH THE NAMES; to know who is free at a given time, call list_appointments and see. But do not ask them to choose one when they did not bring it up: most people just want a time, and the ones who care name their professional unprompted. Pass a name to book_appointment only when they named one. When it comes back, say who is taking the appointment as you confirm.",
       }
       : {}),
     ...(configured
