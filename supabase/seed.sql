@@ -18,17 +18,37 @@ select vault.create_secret(
 -- BILLING SEED DATA (must be before org inserts for initialize_subscription trigger)
 -- ============================================================================
 
+-- O catálogo de cobrança tem dois donos, e por isso todo insert daqui em
+-- diante é idempotente.
+--
+-- Ele nasceu aqui, no seed, que só roda em máquina de desenvolvimento. Em
+-- 2026/08/06 descobriu-se que a PRODUÇÃO estava sem ele: nada podia usar
+-- crédito da plataforma porque o catálogo não existia lá. A correção foi uma
+-- migração — que é o que alcança produção — e o seed continuou inserindo o
+-- mesmo por cima.
+--
+-- Resultado: `supabase db reset` aplicava todas as migrações e morria aqui,
+-- com "duplicate key value violates unique constraint products_pkey". A única
+-- verificação de esquema que o projeto documenta, quebrada, e ninguém viu
+-- porque ninguém a rodava.
+--
+-- `on conflict do nothing` em vez de apagar o bloco: a migração é a dona do
+-- catálogo, e isto continua servindo para quem levanta um banco do zero. Os
+-- dois convivem sem brigar. - 2026/08/09
+
 -- Products
 insert into billing.products (id, name, unit, kind) values
   ('messages',      'Messages',      'count', 'counter'),
   ('conversations', 'Conversations', 'count', 'counter'),
   ('storage',       'Storage',       'gb',    'gauge'),
-  ('ai_credits',    'AI Credits',    'usd',   'balance');
+  ('ai_credits',    'AI Credits',    'usd',   'balance')
+on conflict (id) do nothing;
 
 -- Tiers (levels of trust: 0 = free, 1 = starter, ...)
 insert into billing.tiers (id, name, level) values
   ('free',    'Free',    0),
-  ('starter', 'Starter', 1);
+  ('starter', 'Starter', 1)
+on conflict (id) do nothing;
 
 -- Tier limits (no rows = no limits)
 -- cap: ceiling for counter/gauge, floor for balance
@@ -40,12 +60,14 @@ insert into billing.tiers_products (tier_id, product_id, interval, cap) values
 
   ('starter', 'messages',   'month',    100000),
   ('starter', 'storage',    'lifetime', 100),
-  ('starter', 'ai_credits', 'lifetime', 0);
+  ('starter', 'ai_credits', 'lifetime', 0)
+on conflict do nothing;
 
 -- Plans (min_tier: minimum tier level required)
 insert into billing.plans (id, min_tier, price, billing_cycle, is_default) values
   ('free',    0, 0, null,    true),
-  ('starter', 1, 5, 'month', false);
+  ('starter', 1, 5, 'month', false)
+on conflict (id) do nothing;
 
 -- Plan product allowances and overage pricing
 -- no rows for conversations (metered only, no limits or charges)
@@ -56,7 +78,8 @@ insert into billing.plans_products (plan_id, product_id, interval, included, uni
 
   ('starter', 'messages',   'month',    25000, 0.001),
   ('starter', 'storage',    'lifetime', 25,    0.025),
-  ('starter', 'ai_credits', 'lifetime', 1,     null);
+  ('starter', 'ai_credits', 'lifetime', 1,     null)
+on conflict do nothing;
 
 -- Costs (provider-specific pricing structures)
 -- Google: https://ai.google.dev/gemini-api/docs/pricing
@@ -75,7 +98,8 @@ insert into billing.costs (provider, product, quantity, unit, pricing) values
   ('openai',    'gpt-5-mini',           1000000, 'tokens',   '{"input": 0.25, "output": 2.00, "cache_read": 0.03}'),
   ('whatsapp',  'marketing/ar',          1, 'templates',       '{"price": 0.0618}'),
   ('whatsapp',  'utility/ar',            1, 'templates',       '{"price": 0.026}'),
-  ('whatsapp',  'authentication/ar',     1, 'templates',       '{"price": 0.026}');
+  ('whatsapp',  'authentication/ar',     1, 'templates',       '{"price": 0.026}')
+on conflict do nothing;
 
 -- ============================================================================
 -- SEED DATA - Minecraft Creature-Themed Organizations & Users
