@@ -1,4 +1,7 @@
-import type { BusinessHours } from "../../_shared/types/extra_types.ts";
+import type {
+  BusinessHours,
+  OrganizationExtra,
+} from "../../_shared/types/extra_types.ts";
 import type { RequestContext } from "./base.ts";
 
 /**
@@ -96,6 +99,53 @@ function diaSeguinteA(data: string) {
   quando.setUTCDate(quando.getUTCDate() + 1);
 
   return quando;
+}
+
+/**
+ * O que a casa disse sobre si, no formato que o modelo lê melhor.
+ *
+ * Endereço vira uma linha só, como uma pessoa escreveria — "Rua das Flores,
+ * 123, fundos, Centro, São Paulo - SP" — em vez de sete campos que ele teria
+ * de remontar na hora de responder "vocês ficam onde?".
+ *
+ * As comodidades vêm em duas listas separadas, `we_have` e `we_do_not_have`, e
+ * o que não estiver em nenhuma das duas não aparece: ausência é "ninguém
+ * disse", e sobre isso ele chama uma pessoa em vez de chutar. Um único mapa
+ * com valores "yes"/"no" convidaria a ler por cima e afirmar o contrário.
+ * - 2026/08/09
+ */
+function describeBusiness(extra: OrganizationExtra | null | undefined) {
+  const endereco = extra?.business_address;
+
+  const linha = [
+    [endereco?.street, endereco?.number].filter(Boolean).join(", "),
+    endereco?.reference,
+    endereco?.district,
+    [endereco?.city, endereco?.state].filter(Boolean).join(" - "),
+    endereco?.cep,
+  ].filter((parte) => parte && String(parte).trim()).join(", ");
+
+  const comodidades = Object.entries(extra?.amenities ?? {});
+
+  const temos = comodidades.filter(([, v]) => v === "yes").map(([k]) => k);
+  const naoTemos = comodidades.filter(([, v]) => v === "no").map(([k]) => k);
+
+  return {
+    ...(linha ? { address: linha } : {}),
+    ...(temos.length || naoTemos.length
+      ? {
+        amenities: {
+          ...(temos.length ? { we_have: temos } : {}),
+          ...(naoTemos.length ? { we_do_not_have: naoTemos } : {}),
+          note:
+            "Anything not listed here is unknown to you — do not say the business has it, and do not say it lacks it.",
+        },
+      }
+      : {}),
+    ...(extra?.business_facts?.trim()
+      ? { about_the_business: extra.business_facts.trim() }
+      : {}),
+  };
 }
 
 function tomorrowIn(hours: BusinessHours, timeZone: string) {
@@ -335,9 +385,7 @@ export function buildRuntimeContext(context: RequestContext) {
      * quais chaves existem — e a próxima pergunta do próximo cliente inventa
      * uma nova. - 2026/08/09
      */
-    ...(context.organization.extra?.business_facts?.trim()
-      ? { about_the_business: context.organization.extra.business_facts.trim() }
-      : {}),
+    ...describeBusiness(context.organization.extra),
     ...(configured
       ? {
         business_hours: describeHours(configured),

@@ -68,6 +68,36 @@ export type OrganizationExtra = {
    * o assistente recebe isso como fato do negócio. - 2026/08/09
    */
   business_facts?: string;
+  /**
+   * O endereço em partes, porque o número e a referência não vêm do CEP.
+   *
+   * "Rua das Flores, 123, fundos, ao lado da farmácia" é o que o cliente
+   * precisa para chegar, e só a primeira parte o ViaCEP sabe. Separado, cada
+   * pedaço tem dono: o CEP preenche rua/bairro/cidade, a pessoa completa
+   * número e referência, e nada se sobrescreve na próxima busca.
+   */
+  business_address?: {
+    cep?: string;
+    street?: string;
+    number?: string;
+    /** "fundos", "ao lado da farmácia", "portão azul" — como se acha o lugar. */
+    reference?: string;
+    district?: string;
+    city?: string;
+    state?: string;
+  };
+  /**
+   * As perguntas de sempre, com três estados e não dois.
+   *
+   * Caixa de marcar comum tem "marcado" e "desmarcado", e desmarcado teria de
+   * significar "não temos" — o que faria o assistente afirmar ausência de wifi
+   * numa loja que só não preencheu o campo. É exatamente a invenção que se
+   * consertou em 2026/08/09, de volta pela porta da frente.
+   *
+   * Ausente é "ninguém disse", e sobre isso ele continua chamando uma pessoa.
+   * Só `no` autoriza dizer que não tem. - 2026/08/09
+   */
+  amenities?: Record<string, "yes" | "no">;
   business_hours?: BusinessHours;
   /**
    * Sent when someone writes outside `business_hours`. Empty means the feature
