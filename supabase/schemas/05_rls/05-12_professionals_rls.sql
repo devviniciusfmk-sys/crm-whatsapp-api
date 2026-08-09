@@ -1,5 +1,19 @@
 alter table public.professionals enable row level security;
 
+-- Permissão de TABELA, explícita.
+--
+-- Em produção a tabela nasceu com isto de graça, pelos privilégios padrão do
+-- projeto, e eu podei os `grant` da migração gerada confiando neles. No banco
+-- local montado do zero pelas migrações os padrões são outros: a mesma tabela
+-- respondia em produção e devolvia "permission denied for table professionals"
+-- no local. É a divergência silenciosa que só aparece quando alguém monta o
+-- ambiente do zero — que foi hoje, e por isso o ambiente local se paga.
+--
+-- RLS continua decidindo QUAIS linhas; isto só abre a porta da tabela.
+-- - 2026/08/09
+grant select, insert, update, delete on public.professionals
+to anon, authenticated, service_role;
+
 create policy "members can read their orgs professionals"
 on public.professionals
 for select
