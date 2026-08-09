@@ -50,6 +50,12 @@ create table public.appointments (
   notes text,
   -- Evento correspondente no Google Calendar, quando sincronizado.
   external_id text,
+  -- Quem atende, quando a loja tem mais de uma cadeira.
+  --
+  -- Nulo em duas situações legítimas: compromissos anteriores a 2026/08/09,
+  -- quando o sistema achava que toda loja tinha uma cadeira só, e negócios de
+  -- uma pessoa, que não têm por que cadastrar ninguém.
+  professional_id uuid,
   extra jsonb default '{}'::jsonb not null,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
@@ -69,6 +75,15 @@ alter table only public.appointments
 add constraint appointments_conversation_id_fkey
 foreign key (conversation_id)
 references public.conversations(id)
+on delete set null;
+
+-- `set null`, e não `cascade`: o compromisso de ontem continua existindo quando
+-- o profissional sai do cadastro. Perder o histórico de atendimento por causa de
+-- uma demissão seria destruir o dado mais valioso da loja.
+alter table only public.appointments
+add constraint appointments_professional_id_fkey
+foreign key (professional_id)
+references public.professionals(id)
 on delete set null;
 
 -- A pergunta que esta tela faz é sempre "o que tem hoje", "o que tem amanhã".
