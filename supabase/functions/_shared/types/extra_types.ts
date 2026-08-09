@@ -51,6 +51,23 @@ export type OrganizationExtra = {
    * it just answered as if it were tomorrow. - 2026/08/01
    */
   timezone?: string;
+  /**
+   * O que mais o cliente pergunta e o sistema não tem onde guardar.
+   *
+   * Estacionamento, wifi, formas de pagamento, se tem sala de espera, se pode
+   * levar criança, onde fica a entrada. Nada disso cabe em catálogo nem em
+   * horário, e sem lugar para morar o assistente fazia uma de duas coisas, as
+   * duas ruins: chamava uma pessoa para responder "temos estacionamento?" —
+   * ninguém aparece às onze da noite — ou inventava. Medido em 2026/08/09:
+   * perguntado sobre estacionamento, respondeu "não temos estacionamento no
+   * salão", que ele não tinha como saber.
+   *
+   * Texto livre e um campo só, de propósito. Estacionamento, wifi e pagamento
+   * são os três primeiros de uma lista sem fim, e caixa de marcar para cada um
+   * seria uma tela nova a cada pergunta nova. Quem atende escreve como fala, e
+   * o assistente recebe isso como fato do negócio. - 2026/08/09
+   */
+  business_facts?: string;
   business_hours?: BusinessHours;
   /**
    * Sent when someone writes outside `business_hours`. Empty means the feature

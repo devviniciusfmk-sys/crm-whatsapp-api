@@ -326,6 +326,18 @@ export function buildRuntimeContext(context: RequestContext) {
     ...(context.appointments?.length
       ? { your_appointments: context.appointments }
       : {}),
+    /**
+     * O que a casa escreveu sobre si, verbatim.
+     *
+     * Vai como texto, e não repartido em campos, porque foi escrito por quem
+     * atende e para ser lido: "ficamos na Rua X, 123, tem estacionamento na
+     * frente, aceitamos pix e cartão". Repartir isso em chaves seria adivinhar
+     * quais chaves existem — e a próxima pergunta do próximo cliente inventa
+     * uma nova. - 2026/08/09
+     */
+    ...(context.organization.extra?.business_facts?.trim()
+      ? { about_the_business: context.organization.extra.business_facts.trim() }
+      : {}),
     ...(configured
       ? {
         business_hours: describeHours(configured),
