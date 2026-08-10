@@ -1298,6 +1298,57 @@ export type Database = {
           },
         ]
       }
+      time_off: {
+        Row: {
+          created_at: string
+          ends_at: string
+          extra: Json
+          id: string
+          organization_id: string
+          professional_id: string | null
+          reason: string | null
+          starts_at: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          ends_at: string
+          extra?: Json
+          id?: string
+          organization_id: string
+          professional_id?: string | null
+          reason?: string | null
+          starts_at: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          ends_at?: string
+          extra?: Json
+          id?: string
+          organization_id?: string
+          professional_id?: string | null
+          reason?: string | null
+          starts_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "time_off_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_off_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professionals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       webhooks: {
         Row: {
           created_at: string
