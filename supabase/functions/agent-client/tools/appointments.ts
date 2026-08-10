@@ -758,6 +758,7 @@ async function scheduleReminder(
   supabaseClient: SupabaseClient,
   startsAt: Date,
   timeZone: string,
+  appointmentId: string,
 ): Promise<Date | null> {
   const extra = (context.organization.extra ?? {}) as OrganizationExtra;
   const config = extra.appointment_reminder;
@@ -772,9 +773,29 @@ async function scheduleReminder(
 
   const local = utcToLocal(startsAt, timeZone);
 
+  /**
+   * O nome, e nunca o telefone no lugar dele.
+   *
+   * A primeira variável caía em `contact_address` quando a ficha não tinha
+   * nome, e a ficha quase nunca tem: quem escreve "sou o Téo" no meio da
+   * conversa não vira cadastro. Medido em 2026/08/10, num lembrete pronto para
+   * sair: `"5511471962211"` na saudação. O cliente receberia o próprio número
+   * de telefone como se fosse o nome dele.
+   *
+   * O nome da conversa é o do perfil do WhatsApp, que a pessoa mesma escolheu —
+   * melhor palpite que existe aqui. Sem nenhum dos dois, vazio: um "olá," seco
+   * é menos estranho que um telefone. - 2026/08/10
+   */
+  const nome = context.contact?.name?.trim() ||
+    context.conversation.name?.trim() || "";
+
+  // A data como gente escreve, não como o banco guarda. `2026-08-12` num
+  // WhatsApp brasileiro é um valor de sistema vazando para o cliente.
+  const [ano, mes, diaDoMes] = local.slice(0, 10).split("-");
+
   const values = [
-    context.contact?.name || context.conversation.contact_address || "",
-    local.slice(0, 10),
+    nome,
+    `${diaDoMes}/${mes}/${ano}`,
     local.slice(11),
   ].slice(0, config.variables ?? 0);
 
@@ -805,6 +826,19 @@ async function scheduleReminder(
       kind: "template",
       data: template,
       text: values.join(" · "),
+      /**
+       * De qual compromisso este lembrete é.
+       *
+       * Sem isto, cancelar o compromisso deixava o lembrete de pé: o cliente
+       * desmarcava e recebia, no dia seguinte, "seu horário é hoje às 15h" —
+       * uma mensagem errada, PAGA, sobre algo que ele já tinha cancelado. E
+       * remarcar deixava o lembrete do horário antigo.
+       *
+       * Uma chave no `content` e não uma coluna nova porque é isto que ela é:
+       * parte do conteúdo daquela mensagem, lida só por quem a criou e por quem
+       * precisa desfazê-la. - 2026/08/10
+       */
+      appointment_id: appointmentId,
     },
     timestamp: at.toISOString(),
   });
@@ -812,6 +846,33 @@ async function scheduleReminder(
   // Um lembrete que não pôde ser gravado não derruba o agendamento: o
   // compromisso é o que importa, e a resposta diz que não haverá aviso.
   return error ? null : at;
+}
+
+/**
+ * Apaga o lembrete de um compromisso que deixou de existir.
+ *
+ * Só o que ainda não saiu: `status->pending` é a marca de mensagem que espera a
+ * hora chegar. Uma já enviada não se desfaz apagando a linha — o cliente já
+ * leu, e sumir com o registro só apagaria a prova de que foi enviada.
+ *
+ * Falha em silêncio de propósito. Quem chama está cancelando ou remarcando um
+ * compromisso, e o compromisso é o que importa: derrubar um cancelamento porque
+ * o lembrete não saiu da fila seria trocar um erro pequeno por um grande.
+ * - 2026/08/10
+ */
+async function cancelarLembretes(
+  supabaseClient: SupabaseClient,
+  appointmentIds: string[],
+): Promise<void> {
+  if (!appointmentIds.length) return;
+
+  for (const id of appointmentIds) {
+    await supabaseClient
+      .from("messages")
+      .delete()
+      .eq("content->>appointment_id", id)
+      .not("status->pending", "is", null);
+  }
 }
 
 /**
@@ -1477,6 +1538,7 @@ async function bookImplementation(
     supabaseClient,
     startsAt,
     timeZone,
+    data.id as string,
   );
 
   return {
@@ -1566,6 +1628,8 @@ async function cancelImplementation(
       refused: "No appointment of yours was found at that time.",
     };
   }
+
+  await cancelarLembretes(supabaseClient, data.map((a) => a.id as string));
 
   return { cancelled: true, refused: null };
 }
@@ -1794,6 +1858,23 @@ async function rescheduleImplementation(
       ...(novoDono ? { professional_id: novoDono.id } : {}),
     })
     .eq("id", appointment.id as string);
+
+  /**
+   * O lembrete acompanha a remarcação: fora o velho, dentro o novo.
+   *
+   * Sem isto o cliente que passou de quarta para sexta recebia, na terça, o
+   * lembrete de quarta — e não recebia nenhum de sexta. Pior que não lembrar:
+   * lembra da hora errada, e ele aparece no dia em que a cadeira está ocupada.
+   */
+  await cancelarLembretes(supabaseClient, [appointment.id as string]);
+
+  await scheduleReminder(
+    context,
+    supabaseClient,
+    to,
+    timeZone,
+    appointment.id as string,
+  );
 
   return {
     rescheduled: true,
