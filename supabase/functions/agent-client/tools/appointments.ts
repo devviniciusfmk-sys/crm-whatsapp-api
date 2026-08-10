@@ -339,6 +339,19 @@ const DaySchema = z.object({
   ).describe(
     "Slots already booked that day, for every customer. Offer times that do not collide with these.",
   ),
+  away: z.array(
+    z.object({
+      from: z.string().describe("Local time it starts, 'YYYY-MM-DD HH:MM'."),
+      to: z.string().describe(
+        "Local time it ends, and the end is OPEN: an appointment that starts exactly at this time is fine. Somebody away 'until 13:00' is back at 13:00 — measured on 2026/08/09, a customer asking for 13:00 was refused because the block ended at 13:00, and the hour was free.",
+      ),
+      professional: z.string().nullable().describe(
+        "Who is away. NULL MEANS THE WHOLE BUSINESS — a holiday or a closure — and then nobody can be booked in that window.",
+      ),
+    }),
+  ).describe(
+    "Time off: hours nobody is there, on top of the regular week. Treat it exactly like a booked slot — never offer a time inside it. NEVER tell the customer WHY somebody is away: you are not told the reason, and it is the business's private matter. 'Não temos nesse horário' is the whole answer.",
+  ),
 });
 
 const ListOutputSchema = z.object({
@@ -447,6 +460,22 @@ async function listImplementation(
 
   const nomeDoProfissional = new Map(equipe.map((p) => [p.id, p.name]));
 
+  /**
+   * As folgas do intervalo consultado, para ele não oferecer o que será
+   * recusado.
+   *
+   * Sem isto o cliente ouve duas coisas contrárias em dois minutos: "tem quinta
+   * às 14h com o Jorge" e, logo depois, "esse horário não está disponível".
+   * Aparecem como bloco ocupado, com o nome de quem está de folga — e SEM o
+   * motivo, que não desce até aqui de propósito.
+   */
+  const { data: folgasDoPeriodo } = await supabaseClient
+    .from("time_off")
+    .select("professional_id, starts_at, ends_at")
+    .eq("organization_id", context.organization.id)
+    .lt("starts_at", to.toISOString())
+    .gt("ends_at", from.toISOString());
+
   const days = [];
 
   for (let index = 0; index < dayCount; index++) {
@@ -478,6 +507,22 @@ async function listImplementation(
           title: row.title as string,
           professional:
             nomeDoProfissional.get(row.professional_id as string) ?? null,
+        })),
+      // Folgas do dia, na mesma forma de "ocupado": para quem oferece horário,
+      // folga e compromisso são a mesma coisa — hora que não dá.
+      away: (folgasDoPeriodo ?? [])
+        .filter((folga) => {
+          const inicio = new Date(folga.starts_at as string);
+          const fim = new Date(folga.ends_at as string);
+
+          return inicio < end && fim > start;
+        })
+        .map((folga) => ({
+          from: utcToLocal(new Date(folga.starts_at as string), timeZone),
+          to: utcToLocal(new Date(folga.ends_at as string), timeZone),
+          professional: folga.professional_id
+            ? nomeDoProfissional.get(folga.professional_id as string) ?? null
+            : null,
         })),
     });
   }
@@ -660,6 +705,64 @@ export type Professional = {
     business_hours?: BusinessHours;
   } | null;
 };
+
+export type Folga = {
+  professional_id: string | null;
+  starts_at: string;
+  ends_at: string;
+};
+
+/**
+ * As folgas que tocam este intervalo.
+ *
+ * Uma janela generosa em volta pelo mesmo motivo dos compromissos: férias
+ * começam dias antes e continuam valendo, e buscar só o dia perderia isso.
+ */
+async function folgasDe(
+  supabaseClient: SupabaseClient,
+  organizationId: string,
+  startsAt: Date,
+  minutes: number,
+): Promise<Folga[]> {
+  const endsAt = new Date(startsAt.getTime() + minutes * 60 * 1000);
+
+  const { data } = await supabaseClient
+    .from("time_off")
+    .select("professional_id, starts_at, ends_at")
+    .eq("organization_id", organizationId)
+    .lt("starts_at", endsAt.toISOString())
+    .gt("ends_at", startsAt.toISOString());
+
+  return (data ?? []) as Folga[];
+}
+
+/**
+ * Se alguma folga cobre este horário para esta pessoa.
+ *
+ * `professional_id` nulo na folga é a LOJA INTEIRA — feriado, reforma — e vale
+ * para todo mundo. Preenchido, vale só para quem ela nomeia.
+ *
+ * Basta encostar: uma folga das 14h às 16h impede um corte que começa 15h30 e
+ * termina 16h, porque metade dele cai dentro. Quem sai às 16h não corta cabelo
+ * pela metade. - 2026/08/09
+ */
+function estaDeFolga(
+  folgas: Folga[],
+  profissionalId: string | null,
+  startsAt: Date,
+  minutes: number,
+): boolean {
+  const fim = new Date(startsAt.getTime() + minutes * 60 * 1000);
+
+  return folgas.some((folga) => {
+    if (folga.professional_id && folga.professional_id !== profissionalId) {
+      return false;
+    }
+
+    return new Date(folga.starts_at) < fim &&
+      new Date(folga.ends_at) > startsAt;
+  });
+}
 
 /**
  * Se esta pessoa trabalha nesta hora.
@@ -941,9 +1044,18 @@ async function bookImplementation(
 
     const fazem = pedidos.filter((pessoa) => atende(pessoa, input.service));
 
-    const candidatos = fazem.filter((pessoa) =>
-      trabalhaEm(pessoa, hours ?? undefined, timeZone, startsAt, minutes)
+    const folgas = await folgasDe(
+      supabaseClient,
+      context.organization.id,
+      startsAt,
+      minutes,
     );
+
+    const candidatos = fazem
+      .filter((pessoa) =>
+        trabalhaEm(pessoa, hours ?? undefined, timeZone, startsAt, minutes)
+      )
+      .filter((pessoa) => !estaDeFolga(folgas, pessoa.id, startsAt, minutes));
 
     if (pedido && !pedidos.length) {
       return refuse(
@@ -961,9 +1073,13 @@ async function bookImplementation(
 
     // Recusa por HORÁRIO da pessoa, e não por agenda cheia: o cliente precisa
     // saber que é o dia dela, senão insiste no mesmo pedido meia hora depois.
+    //
+    // O MOTIVO da folga não sai daqui. "Não está disponível" é o que o cliente
+    // precisa saber; que é dentista, funeral ou férias é assunto da loja, e
+    // contar seria o mesmo erro de abrir a agenda de quem está ocupado.
     if (pedido && !candidatos.length) {
       return refuse(
-        `${input.professional} does not work at that time. Offer another time, or another person.`,
+        `${input.professional} is not available at that time. Offer another time, or another person — and do not speculate about why.`,
       );
     }
 
@@ -1000,6 +1116,28 @@ async function bookImplementation(
 
     profissional = escolhido;
   } else {
+    /**
+     * Loja de uma pessoa: a folga vale para ela do mesmo jeito.
+     *
+     * Aqui não há profissional cadastrado, então só as folgas da CASA — as de
+     * `professional_id` nulo — podem existir, e são justamente o feriado e o
+     * fechamento. Sem esta checagem, o negócio de uma pessoa seria o único que
+     * não consegue tirar folga, que é o contrário do razoável: quem trabalha
+     * sozinho é quem mais precisa avisar que não estará lá. - 2026/08/09
+     */
+    const folgas = await folgasDe(
+      supabaseClient,
+      context.organization.id,
+      startsAt,
+      minutes,
+    );
+
+    if (estaDeFolga(folgas, null, startsAt, minutes)) {
+      return refuse(
+        "The business is not available at that time. Offer another time, and do not speculate about why.",
+      );
+    }
+
     const conflict = await findConflict(
       supabaseClient,
       context.organization.id,
@@ -1281,6 +1419,30 @@ async function rescheduleImplementation(
         `${novoDono.name} does not work at that time. Offer another time, or another person.`,
       );
     }
+  }
+
+  /**
+   * A folga vale ao remarcar também.
+   *
+   * Sem isto sobra uma porta dos fundos: marca-se num horário livre e move-se
+   * para dentro da folga, que é justamente o que um cliente insistente tenta
+   * quando ouve não. Vale para quem vai FICAR com o compromisso — trocar de
+   * barbeiro para um que está de folga é o mesmo furo.
+   */
+  const folgas = await folgasDe(
+    supabaseClient,
+    context.organization.id,
+    to,
+    minutes,
+  );
+
+  const donoDepois = novoDono?.id ??
+    (appointment.professional_id as string | null);
+
+  if (estaDeFolga(folgas, donoDepois, to, minutes)) {
+    return refuse(
+      "That time is not available. Offer another time, and do not speculate about why.",
+    );
   }
 
   /**
