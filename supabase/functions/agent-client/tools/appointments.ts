@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolDefinition } from "./base.ts";
 import type { RequestContext } from "../protocols/base.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "../protocols/context.ts";
+import { convidarDaFila } from "./waitlist.ts";
 import type {
   BusinessHours,
   OrganizationExtra,
@@ -672,7 +673,7 @@ async function listImplementation(
         // `away` para decidir é refazer à mão a conta que o `book_appointment`
         // já faz certo.
         about_availability:
-          "WHEN THE CUSTOMER ALREADY NAMED A TIME, BOOK THAT TIME — do not offer a menu. Call book_appointment with the hour THEY said, exactly as they said it; `free` is for when they ask what is available, never a list to pick from on their behalf. Measured on 2026/08/10: a customer asked for 13h, the assistant sent 12:00 to book_appointment — an hour off the list, not the one they wanted — was refused, and answered with three options instead of the booking they had already asked for. When they name a time and it is not in `free`, say that time is taken and offer what is. OFFER ONLY WHAT `free` SAYS, and check a named person against `free_per_person`. AN EMPTY `free` MEANS THERE IS NOTHING THAT DAY: say so and offer ANOTHER DAY — never an hour of your own, and never a reason you were not given. Measured on 2026/08/10, on a day the shop was closed: `free` was empty, book_appointment refused, and the very next sentence offered '14h, 15h ou 16h na quinta' — three hours that did not exist, on a day nobody would open the door, with the customer no way of knowing. Both are already computed from the opening hours, each person's own hours, the time off, the bookings, the service duration and the gap between appointments — there is nothing left for you to subtract. `taken`, `away` and each person's week are here to answer OTHER questions (whose booking that is, who works on Tuesday), never to work out a free time: every wrong answer measured on 2026/08/09 and 2026/08/10 came from re-deriving by hand what `free` now hands over — an hour called full because one of four barbers had a booking in it, and a barber refused at 14:00 who worked 13:00-19:00 with an empty calendar. When the customer names a time, CALL book_appointment and let it decide; it does this same arithmetic and is the only thing that writes. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
+          "NEVER ASK THE CUSTOMER TO CONFIRM A DAY THEY ALREADY GAVE. You are told today's date: 'quarta dia 12' is the next 12th, 'sexta que vem' is the coming Friday, and asking 'dia 12 de qual mês?' spends a round trip on something you can work out. Measured on 2026/08/10: asked for 'sobrancelha na quarta dia 12', the assistant answered 'você quer marcar na quarta-feira, dia 12 de qual mês?' and the conversation never got anywhere. Ask only when a day is genuinely absent, never when it is merely written informally. WHEN THE CUSTOMER ALREADY NAMED A TIME, BOOK THAT TIME — do not offer a menu. Call book_appointment with the hour THEY said, exactly as they said it; `free` is for when they ask what is available, never a list to pick from on their behalf. Measured on 2026/08/10: a customer asked for 13h, the assistant sent 12:00 to book_appointment — an hour off the list, not the one they wanted — was refused, and answered with three options instead of the booking they had already asked for. When they name a time and it is not in `free`, say that time is taken and offer what is. OFFER ONLY WHAT `free` SAYS, and check a named person against `free_per_person`. AN EMPTY `free` MEANS THERE IS NOTHING THAT DAY: say so, offer ANOTHER DAY, and IN THE SAME MESSAGE offer to tell them if that day frees up ('quer que eu te avise se vagar?') — then call join_waitlist when they say yes. That offer is not optional politeness: a full day is the moment a customer goes somewhere else, and thirty seconds later they are gone. Measured on 2026/08/10, with the day genuinely full: 3 of 3 answered correctly and none of the three offered the list, so the chair that freed an hour later stayed empty. Never an hour of your own, and never a reason you were not given. Measured on 2026/08/10, on a day the shop was closed: `free` was empty, book_appointment refused, and the very next sentence offered '14h, 15h ou 16h na quinta' — three hours that did not exist, on a day nobody would open the door, with the customer no way of knowing. Both are already computed from the opening hours, each person's own hours, the time off, the bookings, the service duration and the gap between appointments — there is nothing left for you to subtract. `taken`, `away` and each person's week are here to answer OTHER questions (whose booking that is, who works on Tuesday), never to work out a free time: every wrong answer measured on 2026/08/09 and 2026/08/10 came from re-deriving by hand what `free` now hands over — an hour called full because one of four barbers had a booking in it, and a barber refused at 14:00 who worked 13:00-19:00 with an empty calendar. When the customer names a time, CALL book_appointment and let it decide; it does this same arithmetic and is the only thing that writes. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
       }
       : {}),
     days,
@@ -1327,7 +1328,7 @@ async function bookImplementation(
    * escolher. - 2026/08/10
    */
   const ONDE_BUSCAR =
-    "Whatever you offer next MUST come from `free` in list_appointments for that day — call it again if you need to. An empty `free` means that day has none at all: offer ANOTHER DAY, and never an hour of your own.";
+    "Whatever you offer next MUST come from `free` in list_appointments for that day — call it again if you need to. An empty `free` means that day has none at all: offer ANOTHER DAY and, in the same message, offer to let them know if that day frees up — join_waitlist is what puts them on the list. Never an hour of your own.";
 
   const refuse = (reason: string) => ({
     booked: false,
@@ -1541,6 +1542,24 @@ async function bookImplementation(
     data.id as string,
   );
 
+  /**
+   * Quem estava esperando e acabou de marcar sai da fila.
+   *
+   * Sem isto o convite aceito continuaria "aguardando resposta", e o relógio
+   * dos convites o daria por vencido — oferecendo a MESMA cadeira à próxima
+   * pessoa, já ocupada por quem disse sim. Dois clientes, uma cadeira, e a
+   * culpa parecendo do balcão.
+   *
+   * Qualquer pedido em aberto deste contato, e não só o que casa com o horário:
+   * quem esperava encaixe e conseguiu marcar não quer continuar na fila.
+   */
+  await supabaseClient
+    .from("waitlist")
+    .update({ status: "taken" })
+    .eq("organization_id", context.organization.id)
+    .eq("contact_address", context.conversation.contact_address ?? "")
+    .in("status", ["waiting", "offered"]);
+
   return {
     booked: true,
     professional: profissional?.name ?? null,
@@ -1620,7 +1639,7 @@ async function cancelImplementation(
     .eq("contact_address", context.conversation.contact_address ?? "")
     .eq("starts_at", startsAt.toISOString())
     .eq("status", "scheduled")
-    .select("id");
+    .select("id, professional_id");
 
   if (!data?.length) {
     return {
@@ -1630,6 +1649,20 @@ async function cancelImplementation(
   }
 
   await cancelarLembretes(supabaseClient, data.map((a) => a.id as string));
+
+  /**
+   * A cadeira que acabou de vagar é oferecida a quem estava esperando.
+   *
+   * Aqui e não numa varredura periódica: o encaixe tem prazo curto — quem
+   * cancela às 14h para as 15h deixa uma hora, e um cron de dez minutos gasta
+   * um sexto dela antes de abrir a boca. E é aqui que se sabe QUAL horário
+   * vagou, sem ter de descobrir comparando dois retratos da agenda.
+   */
+  await convidarDaFila(supabaseClient, context.organization.id, {
+    startsAt,
+    professionalId: (data[0].professional_id as string | null) ?? null,
+    timeZone,
+  });
 
   return { cancelled: true, refused: null };
 }
@@ -1697,7 +1730,7 @@ async function rescheduleImplementation(
   // A mesma regra do agendamento: a recusa diz de onde sai o próximo horário,
   // porque ela é lida como ordem. Ver o comentário em `bookImplementation`.
   const ONDE_BUSCAR =
-    "Whatever you offer next MUST come from `free` in list_appointments for that day — call it again if you need to. An empty `free` means that day has none at all: offer ANOTHER DAY, and never an hour of your own.";
+    "Whatever you offer next MUST come from `free` in list_appointments for that day — call it again if you need to. An empty `free` means that day has none at all: offer ANOTHER DAY and, in the same message, offer to let them know if that day frees up — join_waitlist is what puts them on the list. Never an hour of your own.";
 
   const refuse = (reason: string) => ({
     rescheduled: false,
@@ -1875,6 +1908,14 @@ async function rescheduleImplementation(
     timeZone,
     appointment.id as string,
   );
+
+  // Remarcar também libera uma cadeira — a do horário ANTIGO. Some do dono
+  // anterior, e ninguém saberia se este ponto não avisasse.
+  await convidarDaFila(supabaseClient, context.organization.id, {
+    startsAt: from,
+    professionalId: (appointment.professional_id as string | null) ?? null,
+    timeZone,
+  });
 
   return {
     rescheduled: true,

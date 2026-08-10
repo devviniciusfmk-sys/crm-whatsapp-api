@@ -34,6 +34,7 @@ import {
   RescheduleAppointmentTool,
 } from "./appointments.ts";
 import { SaveContactDetailsTool } from "./contact_details.ts";
+import { JoinWaitlistTool } from "./waitlist.ts";
 import { TagContactTool } from "./tag_contact.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
@@ -52,6 +53,10 @@ const FunctionTools = [
   BookAppointmentTool,
   RescheduleAppointmentTool,
   CancelAppointmentTool,
+  // A quinta da agenda, e ela só existe por causa das outras: entrar na fila é
+  // o que sobra quando `book_appointment` recusa. Fora do mesmo interruptor,
+  // uma loja poderia oferecer encaixe sem saber marcar. - 2026/08/10
+  JoinWaitlistTool,
   // Sozinha, e desligada por padrão: guardar documento de quem não pediu é
   // tratamento de dado pessoal por conta própria, e essa é decisão de quem
   // opera. Estar aqui só a torna disponível; quem liga é a tela. - 2026/08/03
