@@ -1483,26 +1483,43 @@ Deno.serve(async (req) => {
      * não tem o que dizer, quem diz é uma pessoa. O que muda é que agora essa
      * pessoa fica sabendo. - 2026/08/08
      */
-    let chamouAlguem = false;
+    /**
+     * Quando o assistente já transferiu, a rede não transfere de novo.
+     *
+     * Ela grava `kind: cannot_resolve`, e o `extra.handoff` inteiro é
+     * substituído — então a classificação do modelo era apagada pela nossa
+     * própria proteção. Medido em 2026/08/10, numa reclamação: o modelo
+     * chamou a ferramenta com `complaint`, estourou o limite de tokens ao
+     * escrever a resposta, e a rede regravou por cima. Na lista, a conversa
+     * que devia estar vermelha apareceu cinza — e vermelho é justamente o que
+     * faz alguém pegá-la primeiro.
+     *
+     * Não há o que transferir aqui: a conversa já está pausada e já espera
+     * uma pessoa. O que falta é a nota interna dizendo que o contato ficou sem
+     * resposta, e essa continua sendo escrita abaixo. - 2026/08/10
+     */
+    let chamouAlguem = handedOff;
 
-    try {
-      await transferToHumanAgentImplementation(
-        {
-          reason:
-            "O assistente não conseguiu responder a esta mensagem e o sistema chamou uma pessoa. O contato está sem resposta.",
-          kind: "cannot_resolve" as const,
-        },
-        undefined,
-        { conversation: conv, agent },
-        client,
-      );
+    if (!handedOff) {
+      try {
+        await transferToHumanAgentImplementation(
+          {
+            reason:
+              "O assistente não conseguiu responder a esta mensagem e o sistema chamou uma pessoa. O contato está sem resposta.",
+            kind: "cannot_resolve" as const,
+          },
+          undefined,
+          { conversation: conv, agent },
+          client,
+        );
 
-      chamouAlguem = true;
-    } catch (error) {
-      log.error("System handoff after a silence failed", {
-        conversation_id: conv.id,
-        error: describeError(error),
-      });
+        chamouAlguem = true;
+      } catch (error) {
+        log.error("System handoff after a silence failed", {
+          conversation_id: conv.id,
+          error: describeError(error),
+        });
+      }
     }
 
     await client.from("messages").insert({
@@ -1519,7 +1536,9 @@ Deno.serve(async (req) => {
         kind: "text" as const,
         text: [
           "O assistente não produziu resposta para esta mensagem. Nada foi enviado ao contato.",
-          chamouAlguem
+          handedOff
+            ? "O próprio assistente já havia transferido a conversa: ela está esperando uma pessoa, com o motivo que ele registrou."
+            : chamouAlguem
             ? "O sistema transferiu a conversa: ela está esperando uma pessoa."
             : "A transferência automática também falhou — ninguém foi chamado.",
           // Sempre um motivo. Quando ninguém declarou um, diga ao menos a forma
