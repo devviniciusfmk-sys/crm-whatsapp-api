@@ -543,8 +543,16 @@ async function listImplementation(
         // disponibilidade" — medido em 2026/08/09. Nomear só o lado
         // disponível responde a mesma pergunta sem abrir a agenda de
         // ninguém.
+        // Vale também quando o cliente nomeia a PESSOA, e essa parte faltava.
+        // Medido em 2026/08/10: pediram 14h com o Jorge, que trabalha
+        // 13:00–19:00 naquele dia e não tinha nada marcado. A resposta foi "o
+        // Jorge só começa a atender a partir das 13h" e, na mesma frase, "que
+        // tal 13h ou 14h com ele?" — recusou e ofereceu a mesma hora, sem
+        // nunca chamar a ferramenta que sabe responder. Ler `who_works_here` e
+        // `away` para decidir é refazer à mão a conta que o `book_appointment`
+        // já faz certo.
         about_availability:
-          "Each person has their own calendar: a time is free while ANYONE is free then, and `taken` says who each booking belongs to. NEVER call an hour full because you see a booking in it — one booking means one person is busy and the others are not. Measured on 2026/08/09: three customers asked for 10:00 in a four-chair shop and two were told 'that hour is taken', with two barbers idle. When the customer names a time, CALL book_appointment and let it decide: it checks every calendar and refuses only when nobody at all is free. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
+          "Each person has their own calendar: a time is free while ANYONE is free then, and `taken` says who each booking belongs to. NEVER call an hour full because you see a booking in it — one booking means one person is busy and the others are not. Measured on 2026/08/09: three customers asked for 10:00 in a four-chair shop and two were told 'that hour is taken', with two barbers idle. When the customer names a time, CALL book_appointment and let it decide: it checks every calendar and refuses only when nobody at all is free. THIS HOLDS JUST AS MUCH WHEN THEY NAME A PERSON: never decide from `days` or `away` whether that person can take the time — call book_appointment with `professional` and let it answer, because it is the only thing that reads their hours, their time off and their bookings together. Measured on 2026/08/10: a customer asked for 14:00 with Jorge, who works 13:00-19:00 that day and had nothing booked; the reply was 'Jorge only starts at 13:00' followed, in the same sentence, by 'how about 13:00 or 14:00 with him?' — a refusal and an offer of the very same hour, with the tool never called. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
       }
       : {}),
     days,
