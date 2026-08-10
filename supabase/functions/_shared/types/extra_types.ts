@@ -47,11 +47,32 @@ export type BusinessHours = (
   | null
 )[];
 
+/**
+ * Os módulos que um negócio pode ligar.
+ *
+ * Hoje é um só, e mesmo assim vale a lista: uma barbearia usa agenda, e uma
+ * agência que atende no WhatsApp não usa nada disso. Um produto que mostra tudo
+ * para todo mundo obriga cada cliente a aprender a ignorar metade dele.
+ *
+ * `agenda` é o pacote inteiro do "quem marca hora": compromissos, equipe,
+ * folgas, lista de espera e lembrete. Eles não se separam — quem marca hora
+ * precisa poder bloquear o dentista do barbeiro, e quem não marca não precisa
+ * de nenhum dos cinco.
+ *
+ * Quem obedece a isto hoje é a TELA. Aqui do lado do agente, quais ferramentas
+ * ele tem já é decidido por `agents.extra.tools`, que o ramo do negócio
+ * preenche na criação — duas chaves para a mesma decisão seriam duas chances de
+ * discordarem. O tipo mora aqui para o dia em que algo do agente precisar
+ * perguntar. - 2026/08/10
+ */
+export type ModuleName = "agenda";
+
 export type OrganizationExtra = {
   response_delay_seconds?: number;
   welcome_message?: string;
   authorized_contacts_only?: boolean;
   default_agent_id?: string;
+  modules?: ModuleName[];
   media_preprocessing?: PreprocessingConfig;
   error_messages_direction?: "internal" | "outgoing";
   /**
