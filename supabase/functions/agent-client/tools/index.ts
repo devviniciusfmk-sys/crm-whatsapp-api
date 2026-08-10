@@ -35,6 +35,7 @@ import {
 } from "./appointments.ts";
 import { SaveContactDetailsTool } from "./contact_details.ts";
 import { JoinWaitlistTool } from "./waitlist.ts";
+import { MyScheduleTool } from "./staff.ts";
 import { TagContactTool } from "./tag_contact.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
@@ -57,6 +58,11 @@ const FunctionTools = [
   // o que sobra quando `book_appointment` recusa. Fora do mesmo interruptor,
   // uma loja poderia oferecer encaixe sem saber marcar. - 2026/08/10
   JoinWaitlistTool,
+  // A sexta, e a única que atende a CASA e não o cliente: o barbeiro
+  // perguntando a própria agenda pelo WhatsApp da loja. Quem ele é se decide
+  // pelo número que o dono cadastrou, dentro da ferramenta — nunca pelo que a
+  // pessoa escreve. - 2026/08/10
+  MyScheduleTool,
   // Sozinha, e desligada por padrão: guardar documento de quem não pediu é
   // tratamento de dado pessoal por conta própria, e essa é decisão de quem
   // opera. Estar aqui só a torna disponível; quem liga é a tela. - 2026/08/03
