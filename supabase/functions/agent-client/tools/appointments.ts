@@ -301,7 +301,30 @@ export function fitsOpeningHours(
   // 18:00 em ponto acabou em tempo, e às 18:00 a loja já está fechada.
   const lastMoment = new Date(startsAt.getTime() + minutes * 60 * 1000 - 1);
 
-  return isOpenAt(hours, timeZone, lastMoment);
+  if (!isOpenAt(hours, timeZone, lastMoment)) return false;
+
+  /**
+   * E não pode ATRAVESSAR o almoço, mesmo com as duas pontas abertas.
+   *
+   * Conferir só o começo e o fim bastava enquanto o expediente era um bloco só.
+   * Com o buraco do meio deixa de bastar: um corte com barba das 11h30 às 13h30
+   * começa aberto, termina aberto, e passa por cima da hora em que não tem
+   * ninguém na loja. O cliente ficaria uma hora sozinho na cadeira.
+   *
+   * Meia em meia hora porque é o passo em que os horários são oferecidos —
+   * varrer minuto a minuto custaria sessenta vezes mais para responder a mesma
+   * pergunta. Um almoço mais curto que meia hora escaparia; nunca vi um.
+   * - 2026/08/10
+   */
+  for (
+    let instante = startsAt.getTime() + 30 * 60 * 1000;
+    instante < lastMoment.getTime();
+    instante += 30 * 60 * 1000
+  ) {
+    if (!isOpenAt(hours, timeZone, new Date(instante))) return false;
+  }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +569,20 @@ async function listImplementation(
         new Date(folga.ends_at as string) >= fechamento
       );
 
-    const aberto = (hours ? isOpenAt(hours, timeZone, noon) : true) && !feriado;
+    /**
+     * "A casa abre neste dia" é ter linha na semana — não estar aberta agora.
+     *
+     * Isto perguntava `isOpenAt` ao MEIO-DIA, como jeito de não perguntar à
+     * meia-noite (que responderia "fechado" para toda loja que abre às 9h). No
+     * dia em que o almoço passou a existir, meio-dia virou justamente a hora em
+     * que não tem ninguém — e a primeira barbearia com almoço das 12h às 13h
+     * teve a semana inteira marcada como fechada. Medido em 2026/08/10: `open`
+     * falso e `free` vazio em todos os dias, com a loja aberta 9h às 19h.
+     *
+     * A linha da semana responde a pergunta certa e não depende de escolher uma
+     * hora de sondagem que amanhã pode ser feriado, almoço ou o que vier.
+     */
+    const aberto = (hours ? !!range : true) && !feriado;
 
     const { livres, porPessoa } = aberto
       ? horariosLivres({

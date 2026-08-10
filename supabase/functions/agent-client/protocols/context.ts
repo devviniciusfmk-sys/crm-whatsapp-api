@@ -211,7 +211,13 @@ export function isOpenAt(
     if (
       overnight ? time >= today.from : time >= today.from && time < today.to
     ) {
-      return true;
+      // O almoço é um buraco DENTRO do expediente: a casa abre às 9h, fecha às
+      // 19h, e às 12h30 não tem ninguém. Sem isto o assistente ofereceria 12h30
+      // todo dia e o cliente encontraria a porta trancada. - 2026/08/10
+      const noAlmoco = !!today.break &&
+        time >= today.break.from && time < today.break.to;
+
+      return !noAlmoco;
     }
   }
 
@@ -228,7 +234,17 @@ function describeHours(hours: BusinessHours): Record<string, string> {
     WEEKDAYS.map((day, index) => {
       const range = hours[index];
 
-      return [day, range ? `${range.from}-${range.to}` : "closed"];
+      if (!range) return [day, "closed"];
+
+      // O almoço escrito na mesma linha, e não numa chave à parte: quem lê uma
+      // tabela de horários lê uma linha por dia, e uma segunda tabela de
+      // exceções seria mais uma coisa para o modelo cruzar sozinho.
+      return [
+        day,
+        range.break
+          ? `${range.from}-${range.break.from} and ${range.break.to}-${range.to}`
+          : `${range.from}-${range.to}`,
+      ];
     }),
   );
 }

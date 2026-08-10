@@ -462,3 +462,67 @@ Deno.test("hora que já passou não é hora livre", () => {
   assertEquals(livres.includes("14:00"), false);
   assertEquals(livres[0], "14:30");
 });
+
+// ---------------------------------------------------------------------------
+// O almoço
+// ---------------------------------------------------------------------------
+
+/**
+ * Barbearia que fecha das 12h às 13h é a regra, não a exceção — e até
+ * 2026/08/10 não havia onde dizer isso. O contorno era o dono bloquear o
+ * almoço à mão, uma vez por dia, para sempre.
+ */
+const COM_ALMOCO: BusinessHours = Array.from(
+  { length: 7 },
+  () => ({ from: "09:00", to: "19:00", break: { from: "12:00", to: "13:00" } }),
+) as BusinessHours;
+
+Deno.test("dentro do almoço a casa está fechada", () => {
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 12:30"), 30), false);
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 12:00"), 30), false);
+});
+
+Deno.test("o almoço tem fim aberto: 13:00 já é atendimento", () => {
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 13:00"), 30), true);
+});
+
+Deno.test("encostar no começo do almoço ainda cabe", () => {
+  // 11:30-12:00 termina no instante em que a loja para. Recusar seria perder o
+  // último horário da manhã por um minuto que não existe.
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:30"), 30), true);
+});
+
+Deno.test("terminar dentro do almoço não cabe", () => {
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:45"), 30), false);
+});
+
+Deno.test("um serviço longo não ATRAVESSA o almoço", () => {
+  // As duas pontas abertas e a hora do meio fechada: é o caso que passava
+  // quando só o começo e o fim eram conferidos.
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:30"), 120), false);
+});
+
+Deno.test("o mesmo serviço longo cabe fora do almoço", () => {
+  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 13:00"), 120), true);
+});
+
+Deno.test("os horários livres pulam o almoço", () => {
+  const { livres } = horariosLivres({
+    ...base,
+    horarioDaLoja: COM_ALMOCO,
+    abre: "09:00",
+    fecha: "19:00",
+  });
+
+  assertEquals(livres.includes("11:30"), true);
+  assertEquals(livres.includes("12:00"), false);
+  assertEquals(livres.includes("12:30"), false);
+  assertEquals(livres.includes("13:00"), true);
+});
+
+Deno.test("sem almoço nada muda", () => {
+  const { livres } = horariosLivres(base);
+
+  assertEquals(livres.includes("12:00"), true);
+  assertEquals(livres.includes("12:30"), true);
+});

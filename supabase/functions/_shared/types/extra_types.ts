@@ -25,14 +25,27 @@ export type PreprocessingConfig = {
  * Times are "HH:mm" wall-clock in the organization's own timezone, never UTC:
  * a business says "we close at six", and six does not move when the clocks do.
  *
- * One range per day. Places that shut for lunch exist, and this cannot express
- * them; two ranges would double the form for a case that is not the common one
- * and can be spelled out in the agent's instructions meanwhile.
- *
  * `to` earlier than `from` means the day runs past midnight (a bar open 18:00
  * to 02:00), which is why the check has to look at the previous day too.
+ *
+ * ## O almoço, e por que é um buraco e não duas faixas
+ *
+ * Até 2026/08/10 era uma faixa por dia e nada mais, com o argumento de que duas
+ * faixas dobrariam o formulário por um caso incomum. O caso não é incomum:
+ * barbearia que fecha das 12h às 13h é a regra, não a exceção, e sem lugar para
+ * dizer isso o assistente oferece 12h30 todo dia. O contorno era o dono
+ * bloquear o almoço à mão, uma vez por dia, para sempre.
+ *
+ * `break` e não uma lista de faixas porque o formulário continua sendo um
+ * começo, um fim e — atrás de uma caixinha — o buraco do meio. Uma lista pede
+ * botão de adicionar, de remover, e ordenação; para expressar exatamente a
+ * mesma coisa no único formato que alguém usa. Se um dia aparecer a casa de
+ * três turnos, ela vira lista. - 2026/08/10
  */
-export type BusinessHours = ({ from: string; to: string } | null)[];
+export type BusinessHours = (
+  | { from: string; to: string; break?: { from: string; to: string } }
+  | null
+)[];
 
 export type OrganizationExtra = {
   response_delay_seconds?: number;
