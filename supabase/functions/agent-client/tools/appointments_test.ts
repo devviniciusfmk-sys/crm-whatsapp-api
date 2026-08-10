@@ -2,6 +2,7 @@ import { assertEquals } from "jsr:@std/assert";
 import {
   findOverlap,
   fitsOpeningHours,
+  horariosLivres,
   localToUtc,
   minutesFor,
   priceFor,
@@ -273,4 +274,191 @@ Deno.test("antes de abrir continua fora", () => {
     fitsOpeningHours(NINE_TO_SIX, SP, at("2026-08-05 08:00"), 30),
     false,
   );
+});
+
+/**
+ * A conta que o modelo errava.
+ *
+ * Ele recebia as peças — horário da loja, horário próprio de cada pessoa,
+ * folgas, o que estava marcado, duração e intervalo — e subtraía em prosa.
+ * Errava. Estes testes fixam a mesma conta em código, onde ela custa
+ * milissegundos e não erra duas vezes o mesmo jeito. - 2026/08/10
+ */
+
+const QUARTA = "2026-08-12";
+const ONTEM = new Date("2020-01-01T00:00:00Z");
+
+const SEMPRE_ABERTA: BusinessHours = Array.from(
+  { length: 7 },
+  () => ({ from: "09:00", to: "19:00" }),
+) as BusinessHours;
+
+const base = {
+  date: QUARTA,
+  abre: "09:00",
+  fecha: "19:00",
+  timeZone: SP,
+  minutes: 30,
+  config: { buffer_minutes: 0, default_minutes: 30 },
+  horarioDaLoja: SEMPRE_ABERTA,
+  equipe: [],
+  folgas: [],
+  marcados: [],
+  agora: ONTEM,
+};
+
+// Quem tem horário próprio: 13:00-19:00 na quarta, o resto fechado.
+const JORGE = {
+  id: "jorge",
+  name: "Jorge",
+  extra: {
+    business_hours: [
+      null,
+      null,
+      null,
+      { from: "13:00", to: "19:00" },
+      null,
+      null,
+      null,
+    ],
+  },
+} as never;
+
+const MARCOS = { id: "marcos", name: "Marcos", extra: {} } as never;
+
+Deno.test("sem ninguém cadastrado, a loja é uma agenda só", () => {
+  const { livres } = horariosLivres(base);
+
+  assertEquals(livres[0], "09:00");
+  assertEquals(livres.at(-1), "18:30");
+  assertEquals(livres.length, 20);
+});
+
+Deno.test("compromisso marcado tira só o horário dele", () => {
+  const { livres } = horariosLivres({
+    ...base,
+    marcados: [{
+      starts_at: "2026-08-12T13:00:00-03:00",
+      duration_minutes: 30,
+      professional_id: null,
+    }],
+  });
+
+  assertEquals(livres.includes("13:00"), false);
+  assertEquals(livres.includes("13:30"), true);
+  assertEquals(livres.includes("12:30"), true);
+});
+
+Deno.test("o mesmo horário continua livre com outro barbeiro na cadeira", () => {
+  const { livres } = horariosLivres({
+    ...base,
+    equipe: [JORGE, MARCOS],
+    marcados: [{
+      starts_at: "2026-08-12T14:00:00-03:00",
+      duration_minutes: 30,
+      professional_id: "jorge",
+    }],
+  });
+
+  // Uma cadeira ocupada não fecha a hora: o Marcos está livre.
+  assertEquals(livres.includes("14:00"), true);
+});
+
+Deno.test("quem entra às 13h não aparece de manhã, e o resto aparece", () => {
+  const { livres, porPessoa } = horariosLivres({
+    ...base,
+    equipe: [JORGE, MARCOS],
+  });
+
+  // A casa abre às 9h porque o Marcos está lá.
+  assertEquals(livres.includes("09:00"), true);
+  // E o Jorge é a exceção que precisa ser dita.
+  assertEquals(porPessoa?.Jorge?.startsWith("13:00 13:30"), true);
+  assertEquals(porPessoa?.Jorge?.includes("09:00"), false);
+  // O Marcos pega tudo, então não repete a lista inteira.
+  assertEquals(porPessoa?.Marcos, undefined);
+});
+
+Deno.test("14h com quem trabalha 13h-19h é horário livre", () => {
+  const { porPessoa } = horariosLivres({ ...base, equipe: [JORGE, MARCOS] });
+
+  // A falha medida em 2026/08/10, agora em código: "só começa às 13h" era
+  // verdade e não respondia o pedido, que era das 14h.
+  assertEquals(porPessoa?.Jorge?.includes("14:00"), true);
+});
+
+Deno.test("folga de uma pessoa não fecha a loja", () => {
+  const { livres, porPessoa } = horariosLivres({
+    ...base,
+    equipe: [JORGE, MARCOS],
+    folgas: [{
+      professional_id: "jorge",
+      starts_at: "2026-08-12T13:00:00-03:00",
+      ends_at: "2026-08-12T15:00:00-03:00",
+    }] as never,
+  });
+
+  assertEquals(livres.includes("13:00"), true);
+  assertEquals(porPessoa?.Jorge?.includes("13:00"), false);
+  assertEquals(porPessoa?.Jorge?.includes("15:00"), true);
+});
+
+Deno.test("feriado da casa não deixa nada", () => {
+  const { livres } = horariosLivres({
+    ...base,
+    equipe: [JORGE, MARCOS],
+    folgas: [{
+      professional_id: null,
+      starts_at: "2026-08-12T00:00:00-03:00",
+      ends_at: "2026-08-13T00:00:00-03:00",
+    }] as never,
+  });
+
+  assertEquals(livres, []);
+});
+
+Deno.test("quem não tem hora nenhuma no dia sai dito, e não omitido", () => {
+  const { porPessoa } = horariosLivres({
+    ...base,
+    equipe: [JORGE, MARCOS],
+    folgas: [{
+      professional_id: "jorge",
+      starts_at: "2026-08-12T00:00:00-03:00",
+      ends_at: "2026-08-13T00:00:00-03:00",
+    }] as never,
+  });
+
+  assertEquals(porPessoa?.Jorge, "none");
+});
+
+Deno.test("serviço de uma hora não cabe na última meia hora", () => {
+  const { livres } = horariosLivres({ ...base, minutes: 60 });
+
+  assertEquals(livres.at(-1), "18:00");
+});
+
+Deno.test("o intervalo entre atendimentos entra na conta", () => {
+  const { livres } = horariosLivres({
+    ...base,
+    config: { buffer_minutes: 10, default_minutes: 30 },
+    marcados: [{
+      starts_at: "2026-08-12T13:00:00-03:00",
+      duration_minutes: 30,
+      professional_id: null,
+    }],
+  });
+
+  // 13:00-13:30 mais dez minutos de arrumar: 13:30 deixa de caber.
+  assertEquals(livres.includes("13:30"), false);
+  assertEquals(livres.includes("14:00"), true);
+});
+
+Deno.test("hora que já passou não é hora livre", () => {
+  const { livres } = horariosLivres({
+    ...base,
+    agora: new Date("2026-08-12T14:10:00-03:00"),
+  });
+
+  assertEquals(livres.includes("14:00"), false);
+  assertEquals(livres[0], "14:30");
 });

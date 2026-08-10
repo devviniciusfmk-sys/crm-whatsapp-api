@@ -315,6 +315,11 @@ const ListInputSchema = z.object({
   until: z.string().optional().describe(
     "Last day to look at, YYYY-MM-DD, inclusive. Use it whenever the customer asks about more than one day — 'this week', 'any day', 'the next few days' — so you get the answer in ONE call instead of one call per day.",
   ),
+  // Sem o serviço, `free` é calculado com a duração padrão — e um corte de uma
+  // hora oferecido numa vaga de meia acaba recusado no agendamento.
+  service: z.string().optional().describe(
+    "The service the customer asked for, when they named one. Pass it so `free` is computed with that service's real duration: a one-hour service does not fit every slot a fifteen-minute one fits.",
+  ),
 });
 
 const DaySchema = z.object({
@@ -327,6 +332,20 @@ const DaySchema = z.object({
   ),
   opens_at: z.string().nullable().describe("Opening time, HH:MM, or null."),
   closes_at: z.string().nullable().describe("Closing time, HH:MM, or null."),
+  /**
+   * A resposta pronta, e não as peças da resposta.
+   *
+   * `taken`, `away`, `opens_at` e a semana de cada pessoa continuam abaixo
+   * porque respondem outras perguntas — de quem é aquele compromisso, quem
+   * trabalha na terça. Mas nenhuma delas precisa mais ser subtraída para
+   * oferecer um horário: isto aqui já é o resultado. - 2026/08/10
+   */
+  free: z.string().describe(
+    "THE TIMES YOU CAN OFFER, space-separated, in the business's own timezone — already computed from the opening hours, each person's own hours, the time off, what is booked, the service duration and the gap between appointments. USE THIS AND ONLY THIS when you offer a time. NEVER work out a free time yourself from `taken`, `away` or `opens_at`: those answer other questions, and every wrong answer measured on 2026/08/10 came from re-deriving this list by hand. Empty means nothing is free that day — then say so and offer another day, never an hour of your own invention. Times already past today are gone from here.",
+  ),
+  free_per_person: z.record(z.string(), z.string()).nullable().describe(
+    "Only the people whose free times DIFFER from `free` — someone who starts at 13:00, or is off in the afternoon. Their value is their own space-separated list, or 'none' when they have no time at all that day. Anyone not listed here can take ANY time in `free`. Use this when the customer names a person: if they are absent from this object, every time in `free` works with them. Measured on 2026/08/10: asked for 14:00 with a barber who works 13:00-19:00 and had nothing booked, the assistant refused saying he 'only starts at 13:00' and offered 14:00 with him in the same sentence — it was deriving what this field now hands over.",
+  ),
   taken: z.array(
     z.object({
       starts_at: z.string().describe("Local time, HH:MM."),
@@ -478,6 +497,16 @@ async function listImplementation(
 
   const days = [];
 
+  // A duração de verdade quando o cliente nomeou o serviço: uma vaga de meia
+  // hora não serve para um corte com barba, e oferecê-la é oferecer o que o
+  // agendamento recusa em seguida.
+  const servico = input.service
+    ? serviceIn(config.services ?? [], { service: input.service })
+    : undefined;
+
+  const duracao = servico?.minutes ?? fallbackMinutes(config);
+  const agora = new Date();
+
   for (let index = 0; index < dayCount; index++) {
     const start = new Date(from.getTime() + index * 24 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
@@ -486,15 +515,70 @@ async function listImplementation(
     // responderia "não" para toda loja que abre às 9h.
     const noon = new Date(start.getTime() + 12 * 60 * 60 * 1000);
     const range = hours?.[wallClockDayIndex(noon, timeZone)];
+    const date = utcToLocal(noon, timeZone).slice(0, 10);
+
+    /**
+     * O feriado fecha o dia, e não o deixa aberto e vazio.
+     *
+     * A folga da casa inteira chegava como um bloco a mais, com o dia ainda
+     * dizendo `open: true` das 9h às 19h — duas coisas contrárias na mesma
+     * resposta. Medido em 2026/08/10: num feriado, o agendamento recusou
+     * corretamente e a frase seguinte ofereceu "14h, 15h ou 16h na quinta".
+     * Horários inventados num dia em que ninguém abre a porta, e o cliente sem
+     * como saber.
+     *
+     * Fecha só quando a folga cobre o expediente inteiro. Uma tarde bloqueada
+     * não é dia fechado — ali `free` já responde sozinho, e dizer "fechado"
+     * mandaria embora quem cabia de manhã. - 2026/08/10
+     */
+    const abertura = range?.from
+      ? localToUtc(`${date} ${range.from}`, timeZone)
+      : null;
+
+    const fechamento = range?.to
+      ? localToUtc(`${date} ${range.to}`, timeZone)
+      : null;
+
+    const feriado = !!abertura && !!fechamento &&
+      (folgasDoPeriodo ?? []).some((folga) =>
+        !folga.professional_id &&
+        new Date(folga.starts_at as string) <= abertura &&
+        new Date(folga.ends_at as string) >= fechamento
+      );
+
+    const aberto = (hours ? isOpenAt(hours, timeZone, noon) : true) && !feriado;
+
+    const { livres, porPessoa } = aberto
+      ? horariosLivres({
+        date,
+        abre: range?.from ?? null,
+        fecha: range?.to ?? null,
+        timeZone,
+        minutes: duracao,
+        config,
+        horarioDaLoja: hours ?? undefined,
+        equipe,
+        folgas: (folgasDoPeriodo ?? []) as Folga[],
+        marcados: (data ?? []) as {
+          starts_at: string;
+          duration_minutes: number | null;
+          professional_id: string | null;
+        }[],
+        agora,
+        servico: input.service ?? null,
+      })
+      : { livres: [], porPessoa: null };
 
     days.push({
-      date: utcToLocal(noon, timeZone).slice(0, 10),
+      date,
       weekday: weekdayOf(noon, timeZone),
-      open: hours ? isOpenAt(hours, timeZone, noon) : true,
+      open: aberto,
       // O horário do dia junto: sem ele o modelo teria de lembrar a tabela da
       // semana para saber até que horas pode oferecer.
       opens_at: range?.from ?? null,
       closes_at: range?.to ?? null,
+      free: livres.join(" "),
+      free_per_person: porPessoa,
       taken: (data ?? [])
         .filter((row) => {
           const at = new Date(row.starts_at as string);
@@ -552,7 +636,7 @@ async function listImplementation(
         // `away` para decidir é refazer à mão a conta que o `book_appointment`
         // já faz certo.
         about_availability:
-          "Each person has their own calendar: a time is free while ANYONE is free then, and `taken` says who each booking belongs to. NEVER call an hour full because you see a booking in it — one booking means one person is busy and the others are not. Measured on 2026/08/09: three customers asked for 10:00 in a four-chair shop and two were told 'that hour is taken', with two barbers idle. When the customer names a time, CALL book_appointment and let it decide: it checks every calendar and refuses only when nobody at all is free. THIS HOLDS JUST AS MUCH WHEN THEY NAME A PERSON: never decide from `days` or `away` whether that person can take the time — call book_appointment with `professional` and let it answer, because it is the only thing that reads their hours, their time off and their bookings together. Measured on 2026/08/10: a customer asked for 14:00 with Jorge, who works 13:00-19:00 that day and had nothing booked; the reply was 'Jorge only starts at 13:00' followed, in the same sentence, by 'how about 13:00 or 14:00 with him?' — a refusal and an offer of the very same hour, with the tool never called. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
+          "WHEN THE CUSTOMER ALREADY NAMED A TIME, BOOK THAT TIME — do not offer a menu. Call book_appointment with the hour THEY said, exactly as they said it; `free` is for when they ask what is available, never a list to pick from on their behalf. Measured on 2026/08/10: a customer asked for 13h, the assistant sent 12:00 to book_appointment — an hour off the list, not the one they wanted — was refused, and answered with three options instead of the booking they had already asked for. When they name a time and it is not in `free`, say that time is taken and offer what is. OFFER ONLY WHAT `free` SAYS, and check a named person against `free_per_person`. AN EMPTY `free` MEANS THERE IS NOTHING THAT DAY: say so and offer ANOTHER DAY — never an hour of your own, and never a reason you were not given. Measured on 2026/08/10, on a day the shop was closed: `free` was empty, book_appointment refused, and the very next sentence offered '14h, 15h ou 16h na quinta' — three hours that did not exist, on a day nobody would open the door, with the customer no way of knowing. Both are already computed from the opening hours, each person's own hours, the time off, the bookings, the service duration and the gap between appointments — there is nothing left for you to subtract. `taken`, `away` and each person's week are here to answer OTHER questions (whose booking that is, who works on Tuesday), never to work out a free time: every wrong answer measured on 2026/08/09 and 2026/08/10 came from re-deriving by hand what `free` now hands over — an hour called full because one of four barbers had a booking in it, and a barber refused at 14:00 who worked 13:00-19:00 with an empty calendar. When the customer names a time, CALL book_appointment and let it decide; it does this same arithmetic and is the only thing that writes. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
       }
       : {}),
     days,
@@ -970,6 +1054,152 @@ async function escolherProfissional(
   return { escolhido, conflito: null };
 }
 
+/** De meia em meia hora: é como uma barbearia fala o horário dela. */
+const PASSO_MINUTOS = 30;
+
+/**
+ * O que dá para marcar — em vez do que está ocupado.
+ *
+ * Até aqui esta ferramenta devolvia as PEÇAS: o horário da loja, o horário
+ * próprio de cada pessoa, as folgas, o que já estava marcado, a duração do
+ * serviço e o intervalo entre atendimentos. Descobrir o que sobra era conta do
+ * modelo, feita em prosa, seis restrições ao mesmo tempo. Toda falha que
+ * sobrou nas medições de 2026/08/10 foi erro nessa conta — nunca erro de dado.
+ *
+ * A mais clara: pediram 14h com o Jorge, que trabalha 13:00–19:00 naquele dia e
+ * não tinha nada marcado. A resposta recusou dizendo que ele "só começa às 13h"
+ * e ofereceu, na mesma frase, 14h com ele. O dado estava certo na mão dele.
+ *
+ * O agendamento nunca errou essa conta, porque ele não a faz em prosa: compõe
+ * `trabalhaEm`, `estaDeFolga`, `atende` e `findOverlap`. É por isso que o banco
+ * ficou certo em todas as medições enquanto a frase saía errada. Esta função
+ * compõe as MESMAS quatro, para que a frase e o banco venham do mesmo cálculo.
+ *
+ * Sem folgas para o modelo somar, não há soma para ele errar. - 2026/08/10
+ */
+export function horariosLivres(args: {
+  /** O dia, YYYY-MM-DD, no fuso do negócio. */
+  date: string;
+  abre: string | null;
+  fecha: string | null;
+  timeZone: string;
+  minutes: number;
+  config: AppointmentsConfig;
+  horarioDaLoja: BusinessHours | undefined;
+  equipe: Professional[];
+  folgas: Folga[];
+  marcados: {
+    starts_at: string;
+    duration_minutes: number | null;
+    professional_id: string | null;
+  }[];
+  agora: Date;
+  servico?: string | null;
+}): { livres: string[]; porPessoa: Record<string, string> | null } {
+  if (!args.abre || !args.fecha) return { livres: [], porPessoa: null };
+
+  const emMinutos = (hhmm: string) => {
+    const [h, m] = hhmm.split(":").map(Number);
+
+    return h * 60 + m;
+  };
+
+  const abertura = emMinutos(args.abre);
+  const fechamento = emMinutos(args.fecha);
+
+  // Quem faz ESTE serviço: oferecer o horário de quem não faz é oferecer o que
+  // será recusado depois.
+  const podem = args.equipe.filter((pessoa) => atende(pessoa, args.servico));
+
+  const livres: string[] = [];
+  const porPessoa = new Map<string, string[]>(
+    podem.map((pessoa) => [pessoa.name, []]),
+  );
+
+  for (
+    let minuto = abertura;
+    minuto + args.minutes <= fechamento;
+    minuto += PASSO_MINUTOS
+  ) {
+    const hhmm = `${String(Math.floor(minuto / 60)).padStart(2, "0")}:${
+      String(minuto % 60).padStart(2, "0")
+    }`;
+
+    const startsAt = localToUtc(`${args.date} ${hhmm}`, args.timeZone);
+
+    // Horário que já passou não é horário livre — e hoje é o dia em que mais
+    // se pergunta.
+    if (!startsAt || startsAt <= args.agora) continue;
+
+    if (
+      args.horarioDaLoja &&
+      !fitsOpeningHours(
+        args.horarioDaLoja,
+        args.timeZone,
+        startsAt,
+        args.minutes,
+      )
+    ) {
+      continue;
+    }
+
+    // Sem ninguém cadastrado a loja é uma agenda só — o salão de uma pessoa,
+    // que não tem por que cadastrar a si mesma.
+    if (!podem.length) {
+      if (estaDeFolga(args.folgas, null, startsAt, args.minutes)) continue;
+      if (findOverlap(args.marcados, startsAt, args.minutes, args.config)) {
+        continue;
+      }
+
+      livres.push(hhmm);
+      continue;
+    }
+
+    const quem = podem.filter((pessoa) =>
+      trabalhaEm(
+        pessoa,
+        args.horarioDaLoja,
+        args.timeZone,
+        startsAt,
+        args.minutes,
+      ) &&
+      !estaDeFolga(args.folgas, pessoa.id, startsAt, args.minutes) &&
+      !findOverlap(
+        args.marcados.filter((m) => m.professional_id === pessoa.id),
+        startsAt,
+        args.minutes,
+        args.config,
+      )
+    );
+
+    if (!quem.length) continue;
+
+    livres.push(hhmm);
+
+    for (const pessoa of quem) porPessoa.get(pessoa.name)?.push(hhmm);
+  }
+
+  /**
+   * Só quem foge da lista geral.
+   *
+   * Quem pega todos os horários livres da casa não acrescenta nada, e repetir a
+   * mesma lista em quatro nomes enche o contexto com a mesma informação quatro
+   * vezes — foi por isso que `days` já só aparece para quem tem horário
+   * próprio. O que interessa é a EXCEÇÃO: o que entra às 13h, o que está de
+   * folga à tarde.
+   */
+  const excecoes = [...porPessoa.entries()]
+    .filter(([, horas]) => horas.length !== livres.length)
+    .map(([nome, horas]) => [nome, horas.join(" ") || "none"] as const);
+
+  return {
+    livres,
+    porPessoa: podem.length > 1 && excecoes.length
+      ? Object.fromEntries(excecoes)
+      : null,
+  };
+}
+
 async function bookImplementation(
   input: z.infer<typeof BookInputSchema>,
   _config: void,
@@ -985,6 +1215,23 @@ async function bookImplementation(
   // tem como recalcular. - 2026/08/02
   const today = utcToLocal(new Date(), timeZone).slice(0, 10);
 
+  /**
+   * A recusa dizia "ofereça outro horário", e ele oferecia — inventado.
+   *
+   * Medido em 2026/08/10, num feriado: `open` era false, `free` estava vazio,
+   * esta ferramenta recusou com "Nobody who takes that service works at that
+   * time. Offer another time." — e a frase seguinte ao cliente foi "que tal
+   * 14h, 15h ou 16h na mesma quinta?". Três horários num dia em que ninguém
+   * abre a porta.
+   *
+   * A recusa é lida como ordem, e era uma ordem sem limite. Agora ela diz de
+   * ONDE o próximo horário sai. O texto de cada motivo perdeu o "offer another
+   * time" solto: duas instruções sobre a mesma coisa é uma a mais para
+   * escolher. - 2026/08/10
+   */
+  const ONDE_BUSCAR =
+    "Whatever you offer next MUST come from `free` in list_appointments for that day — call it again if you need to. An empty `free` means that day has none at all: offer ANOTHER DAY, and never an hour of your own.";
+
   const refuse = (reason: string) => ({
     booked: false,
     professional: null,
@@ -992,7 +1239,7 @@ async function bookImplementation(
     weekday: null,
     reminder_at: null,
     price: null,
-    refused: `${reason} (today is ${today})`,
+    refused: `${reason} (today is ${today}) ${ONDE_BUSCAR}`,
   });
 
   const startsAt = localToUtc(input.starts_at, timeZone);
@@ -1087,7 +1334,7 @@ async function bookImplementation(
     // contar seria o mesmo erro de abrir a agenda de quem está ocupado.
     if (pedido && !candidatos.length) {
       return refuse(
-        `${input.professional} is not available at that time. Offer another time, or another person — and do not speculate about why.`,
+        `${input.professional} is not available at that time. Another person may be — and do not speculate about why.`,
       );
     }
 
@@ -1099,7 +1346,7 @@ async function bookImplementation(
 
     if (!candidatos.length) {
       return refuse(
-        `Nobody who takes that service works at that time. Offer another time.`,
+        `Nobody who takes that service works at that time.`,
       );
     }
 
@@ -1118,7 +1365,7 @@ async function bookImplementation(
           conflito
             ? ` — the clash starts at ${utcToLocal(conflito, timeZone).slice(11)}`
             : ""
-        }. Offer another time.`,
+        }.`,
       );
     }
 
@@ -1142,7 +1389,7 @@ async function bookImplementation(
 
     if (estaDeFolga(folgas, null, startsAt, minutes)) {
       return refuse(
-        "The business is not available at that time. Offer another time, and do not speculate about why.",
+        "The business is not available at that time, and do not speculate about why.",
       );
     }
 
@@ -1158,7 +1405,7 @@ async function bookImplementation(
       return refuse(
         `That time overlaps an appointment already booked at ${
           utcToLocal(conflict, timeZone).slice(11)
-        }. Offer another time.`,
+        }.`,
       );
     }
   }
@@ -1335,12 +1582,17 @@ async function rescheduleImplementation(
 
   const today = utcToLocal(new Date(), timeZone).slice(0, 10);
 
+  // A mesma regra do agendamento: a recusa diz de onde sai o próximo horário,
+  // porque ela é lida como ordem. Ver o comentário em `bookImplementation`.
+  const ONDE_BUSCAR =
+    "Whatever you offer next MUST come from `free` in list_appointments for that day — call it again if you need to. An empty `free` means that day has none at all: offer ANOTHER DAY, and never an hour of your own.";
+
   const refuse = (reason: string) => ({
     rescheduled: false,
     professional: null,
     starts_at: null,
     weekday: null,
-    refused: `${reason} (today is ${today})`,
+    refused: `${reason} (today is ${today}) ${ONDE_BUSCAR}`,
   });
 
   const from = localToUtc(input.from, timeZone);
@@ -1424,7 +1676,7 @@ async function rescheduleImplementation(
       !trabalhaEm(novoDono, hours ?? undefined, timeZone, to, minutes)
     ) {
       return refuse(
-        `${novoDono.name} does not work at that time. Offer another time, or another person.`,
+        `${novoDono.name} does not work at that time. Another person may be free then.`,
       );
     }
   }
@@ -1449,7 +1701,7 @@ async function rescheduleImplementation(
 
   if (estaDeFolga(folgas, donoDepois, to, minutes)) {
     return refuse(
-      "That time is not available. Offer another time, and do not speculate about why.",
+      "That time is not available, and do not speculate about why.",
     );
   }
 
@@ -1483,7 +1735,7 @@ async function rescheduleImplementation(
     return refuse(
       `The new time overlaps an appointment already booked at ${
         utcToLocal(conflict, timeZone).slice(11)
-      }. Offer another time.`,
+      }.`,
     );
   }
 
