@@ -12,6 +12,7 @@ import {
   type CallUsage,
   contextHeaders,
   DEFAULT_MAX_OUTPUT_TOKENS,
+  podeIrAoCliente,
   type RequestContext,
   type ResponseContext,
   silenceNote,
@@ -768,6 +769,48 @@ export class ResponsesHandler
     // ferramenta `respond`. Texto que chega por fora dela não é resposta, é
     // defeito — e num caso real o "defeito" era o raciocínio interno do modelo,
     // que foi entregue e lido por um cliente. Fica interno. - 2026/08/04
+    //
+    // A saída estreita de 2026/08/10 vale aqui igual: texto que passa pelo
+    // crivo vai ao cliente, porque silêncio também é um jeito de errar com ele.
+    // O porquê inteiro está em `podeIrAoCliente`.
+    if (text && MULTI_MESSAGE_RESPONSE && podeIrAoCliente(text)) {
+      log.warn("Loose text passed the leak screen and was sent as the reply.");
+
+      return {
+        messages: [
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "outgoing" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text,
+            },
+          },
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "internal" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text:
+                "O modelo escreveu esta resposta em texto solto, sem usar a ferramenta de resposta. O texto foi conferido e enviado ao contato assim mesmo — o contrário seria deixá-lo sem nada.",
+            },
+          },
+        ],
+      };
+    }
+
     if (text && MULTI_MESSAGE_RESPONSE) {
       log.warn(
         "Model answered with loose text while tool_choice was required. Kept internal.",

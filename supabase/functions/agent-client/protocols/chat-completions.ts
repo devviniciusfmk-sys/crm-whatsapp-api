@@ -21,6 +21,7 @@ import {
   type CallUsage,
   contextHeaders,
   DEFAULT_MAX_OUTPUT_TOKENS,
+  podeIrAoCliente,
   type RequestContext,
   type ResponseContext,
   silenceNote,
@@ -1617,7 +1618,61 @@ export class ChatCompletionsHandler
      *
      * Sem `tool_choice` obrigatório o atalho continua valendo: ali o texto é a
      * resposta mesmo. - 2026/08/04
+     *
+     * ## E o preço dela, medido em 2026/08/10
+     *
+     * Num dia de movimento, 5 clientes em 30 ficaram MUDOS por aqui — e nos três
+     * que abri o modelo tinha escrito a resposta certa, em português, limpa.
+     * Chegar até este ponto já é o último recurso: as duas trocas de fornecedor
+     * por texto solto acontecem antes, dentro de `sendRequest`. Se o texto passa
+     * pelo crivo de `podeIrAoCliente` — nenhuma marca do canal de raciocínio,
+     * nenhuma sintaxe de ferramenta, curto como resposta — ele vai, porque
+     * silêncio também é um jeito de errar com o cliente. O que não passa
+     * continua interno, exatamente como antes.
      */
+    if (
+      finish_reason === "stop" && message.content && MULTI_MESSAGE_RESPONSE &&
+      podeIrAoCliente(message.content)
+    ) {
+      log.warn(
+        "Loose text passed the leak screen and was sent as the reply.",
+      );
+
+      return {
+        messages: [
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "outgoing" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text: message.content,
+            },
+          },
+          {
+            organization_id: conversation.organization_id,
+            service: conversation.service,
+            organization_address: conversation.organization_address,
+            contact_address: conversation.contact_address,
+            direction: "internal" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text:
+                "O modelo escreveu esta resposta em texto solto, sem usar a ferramenta de resposta. O texto foi conferido e enviado ao contato assim mesmo — o contrário seria deixá-lo sem nada.",
+            },
+          },
+        ],
+      };
+    }
+
     if (finish_reason === "stop" && message.content && MULTI_MESSAGE_RESPONSE) {
       log.warn(
         "Model answered with loose text while tool_choice was required. Kept internal.",

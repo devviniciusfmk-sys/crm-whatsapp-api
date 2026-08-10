@@ -1461,8 +1461,20 @@ export const BookAppointmentTool: ToolDefinition<
   provider: "local",
   type: "function",
   name: "book_appointment",
+  // "Do not ask them to confirm what they already said" entrou em 2026/08/10:
+  // um cliente escreveu "marca manicure na próxima quarta, dia 12, às 13h. sou
+  // a Rita" — serviço, dia, número do dia, hora e nome — e ouviu de volta "só
+  // para confirmar: você quer marcar na quarta, dia 12, às 13h?". Nada foi
+  // marcado, e a mensagem seguinte dela, "preciso cancelar", caiu no vazio
+  // porque não havia o que cancelar.
+  //
+  // O modelo estava desambiguando "próxima quarta", que de fato é ambíguo em
+  // português — só que o "dia 12" já tinha resolvido. E a conta pende para o
+  // outro lado: perguntar custa uma volta em TODA conversa, e marcar errado
+  // custa um cancelamento nas poucas em que erra. Desmarcar é barato aqui, e
+  // por isso a dúvida se resolve marcando.
   description:
-    "Book an appointment for the person you are talking to. The customer is taken from this conversation — you cannot book for anybody else, and there is no phone number to pass. Check `list_appointments` first. If it comes back refused, tell the customer the reason and offer another time; never claim it is booked when it is not. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
+    "Book an appointment for the person you are talking to. The customer is taken from this conversation — you cannot book for anybody else, and there is no phone number to pass. Check `list_appointments` first. DO NOT ASK THEM TO CONFIRM WHAT THEY ALREADY SAID: when the service, the day and the time are all there, book it — the booking confirmation IS your reply. A day number settles a vague weekday: 'próxima quarta, dia 12' is the 12th, and asking which Wednesday costs a round trip in every conversation to save a cancellation in the rare one. Booking is undoable — cancel_appointment and reschedule_appointment exist and cost nothing — so resolve doubt by booking, not by asking. Only ask when something is genuinely MISSING and you cannot act without it. If it comes back refused, tell the customer the reason and offer another time; never claim it is booked when it is not. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(BookInputSchema),
   outputSchema: z.toJSONSchema(BookOutputSchema),
   implementation: bookImplementation,
