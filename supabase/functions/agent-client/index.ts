@@ -20,6 +20,8 @@ import { DEFAULT_TIMEZONE, isOpenAt } from "./protocols/context.ts";
 import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
 import { transferToHumanAgentImplementation } from "./tools/handoff.ts";
+import { avisarAEquipe } from "../_shared/avisar.ts";
+import type { ConversationExtra } from "../_shared/types/extra_types.ts";
 import { z } from "zod";
 import Ajv2020 from "ajv";
 import type { AgentRowWithExtra, ResponseContext } from "./protocols/base.ts";
@@ -1550,6 +1552,50 @@ Deno.serve(async (req) => {
         ].join(" "),
       },
     });
+  }
+
+  /**
+   * Puxar alguém, quando ninguém está olhando a tela.
+   *
+   * Aqui embaixo de propósito: é o único ponto em que os dois caminhos já se
+   * resolveram — o assistente transferindo por conta, e a rede transferindo
+   * pelo silêncio. Avisar lá em cima seria avisar duas vezes pela mesma
+   * conversa, ou avisar com a classificação que ainda ia mudar.
+   *
+   * Lê o `kind` do banco em vez de deduzir das variáveis daqui: quem gravou por
+   * último é quem manda, e foi exatamente confiar na dedução que fez a
+   * reclamação chegar cinza em 2026/08/10.
+   *
+   * `await` e não solto: a função de borda morre quando a resposta sai, e um
+   * envio começado sem espera morreria junto. São dezenas de milissegundos, e
+   * o contato já recebeu o que tinha de receber. - 2026/08/10
+   */
+  if (handedOff || !answeredContact) {
+    try {
+      const [{ data: estado }, contato] = await Promise.all([
+        client
+          .from("conversations")
+          .select("extra")
+          .eq("id", conv.id)
+          .single(),
+        Promise.resolve(conv.name ?? conv.contact_address),
+      ]);
+
+      const kind = (estado?.extra as ConversationExtra | null)?.handoff?.kind;
+
+      await avisarAEquipe(
+        client,
+        organization_id,
+        // Sem `kind` gravado, o que houve foi silêncio: ninguém declarou nada e
+        // o contato ficou sem resposta.
+        kind ?? "silence",
+        { conversationId: conv.id, contato },
+      );
+    } catch (error) {
+      // Aviso que falha não pode derrubar a resposta: quem esperava era o
+      // cliente, e ele já foi atendido.
+      log.warn("Falha ao avisar a equipe", { error: describeError(error) });
+    }
   }
 
   // STORE RESPONSE

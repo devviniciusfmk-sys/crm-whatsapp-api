@@ -1,3 +1,9 @@
+-- O aviso de 15 minutos passa a puxar alguém no aparelho, e não só na tela.
+--
+-- Escrita à mão: `db diff` não distingue esta mudança do resto do esquema e
+-- emitiria os 168 `revoke` de sempre junto. Corpo idêntico ao arquivo
+-- declarativo, com o `net.http_post` novo no meio do laço.
+
 -- O prazo da transferência: quem espera demais volta para o assistente.
 --
 -- Nasceu como migração à mão em 2026/08/07 e nunca entrou no esquema
