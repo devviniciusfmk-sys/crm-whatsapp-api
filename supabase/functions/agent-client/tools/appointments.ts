@@ -4,6 +4,7 @@ import type { ToolDefinition } from "./base.ts";
 import type { RequestContext } from "../protocols/base.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "../protocols/context.ts";
 import { convidarDaFila } from "./waitlist.ts";
+import { profissionalDoNumero } from "./staff.ts";
 import type {
   BusinessHours,
   OrganizationExtra,
@@ -370,17 +371,28 @@ const DaySchema = z.object({
   free_per_person: z.record(z.string(), z.string()).nullable().describe(
     "Only the people whose free times DIFFER from `free` — someone who starts at 13:00, or is off in the afternoon. Their value is their own space-separated list, or 'none' when they have no time at all that day. Anyone not listed here can take ANY time in `free`. Use this when the customer names a person: if they are absent from this object, every time in `free` works with them. Measured on 2026/08/10: asked for 14:00 with a barber who works 13:00-19:00 and had nothing booked, the assistant refused saying he 'only starts at 13:00' and offered 14:00 with him in the same sentence — it was deriving what this field now hands over.",
   ),
-  taken: z.array(
+  /**
+   * A agenda de quem escreve, e SÓ dela — quando quem escreve trabalha aqui.
+   *
+   * Existe porque pedir ao modelo que troque de ferramenta não funcionou.
+   * Medido em 2026/08/11: o barbeiro perguntou quem tinha marcado com ele, o
+   * modelo chamou `list_appointments`, não achou a resposta ali, e transferiu
+   * para uma pessoa — duas vezes — em vez de chamar `my_schedule`, que estava
+   * ligada e descrita. Escolher entre duas ferramentas é uma decisão, e toda
+   * decisão que eu deixei com o modelo hoje voltou como defeito.
+   *
+   * Então a resposta vem junto. Quem confere se a pessoa é da casa continua
+   * sendo o código, pelo número — a mesma conferência de `my_schedule`, no
+   * mesmo lugar de sempre. Para um cliente, isto simplesmente não existe.
+   */
+  your_bookings: z.array(
     z.object({
       starts_at: z.string().describe("Local time, HH:MM."),
-      duration_minutes: z.number().nullable(),
       title: z.string(),
-      professional: z.string().nullable().describe(
-        "Whose booking it is, when the business has people registered. A time is only busy for THAT person — the others are free.",
-      ),
+      customer: z.string().nullable(),
     }),
-  ).describe(
-    "Slots already booked that day, for every customer. Offer times that do not collide with these.",
+  ).nullable().describe(
+    "The bookings of the person WRITING, when the number they write from belongs to somebody on the team. Null for everybody else, which is almost everybody — a customer must never be told who is booked. When it is present, this is what they are asking about: answer from it.",
   ),
   away: z.array(
     z.object({
@@ -476,7 +488,7 @@ async function listImplementation(
   // Uma consulta ao banco para o intervalo inteiro, repartida em memória.
   const { data } = await supabaseClient
     .from("appointments")
-    .select("starts_at, duration_minutes, title, professional_id")
+    .select("starts_at, duration_minutes, title, professional_id, notes")
     .eq("organization_id", context.organization.id)
     .eq("status", "scheduled")
     .gte("starts_at", from.toISOString())
@@ -520,6 +532,37 @@ async function listImplementation(
     .gt("ends_at", from.toISOString());
 
   const days = [];
+
+  /**
+   * Quem escreve é da casa? A mesma conferência de sempre, pelo número.
+   *
+   * Uma vez, fora do laço dos dias: é a resposta para a conversa inteira, e
+   * repeti-la por dia seria a mesma pergunta catorze vezes.
+   */
+  const daCasa = profissionalDoNumero(
+    equipe,
+    context.conversation.contact_address,
+  );
+
+  const minhasReservas = (comeco: Date, fim: Date) => {
+    if (!daCasa) return null;
+
+    return (data ?? [])
+      .filter((row) => {
+        const at = new Date(row.starts_at as string);
+
+        return at >= comeco && at < fim &&
+          row.professional_id === daCasa.id;
+      })
+      .map((row) => ({
+        starts_at: utcToLocal(new Date(row.starts_at as string), timeZone)
+          .slice(11),
+        title: row.title as string,
+        customer:
+          (row.notes as string | null)?.match(/cliente:?\s*([^\n·|]+)/i)?.[1]
+            ?.trim() ?? null,
+      }));
+  };
 
   // A duração de verdade quando o cliente nomeou o serviço: uma vaga de meia
   // hora não serve para um corte com barba, e oferecê-la é oferecer o que o
@@ -616,19 +659,26 @@ async function listImplementation(
       closes_at: range?.to ?? null,
       free: livres.join(" "),
       free_per_person: porPessoa,
-      taken: (data ?? [])
-        .filter((row) => {
-          const at = new Date(row.starts_at as string);
-          return at >= start && at < end;
-        })
-        .map((row) => ({
-          starts_at: utcToLocal(new Date(row.starts_at as string), timeZone)
-            .slice(11),
-          duration_minutes: (row.duration_minutes as number | null) ?? null,
-          title: row.title as string,
-          professional:
-            nomeDoProfissional.get(row.professional_id as string) ?? null,
-        })),
+      /**
+       * `taken` saiu daqui em 2026/08/11, e é a lição do dia inteiro.
+       *
+       * Ele listava todo compromisso do dia, com hora, serviço e dono. A ideia
+       * era responder "de quem é aquela reserva" — pergunta que um cliente
+       * nunca deve ouvir respondida, e que a equipe agora faz por
+       * `your_bookings`.
+       *
+       * O preço era alto e voltou três vezes: com `free` dizendo "11:00 livre"
+       * e `taken` mostrando um dos quatro barbeiros ocupado às 11h, a resposta
+       * saiu "11h já está ocupado". Medido em 2026/08/09, 08/10 e de novo em
+       * 08/11, DEPOIS de `free` existir e DEPOIS de a regra estar escrita em
+       * primeiro lugar na lista.
+       *
+       * Eu tinha tirado a necessidade de calcular e deixado a tentação na
+       * mesa. Enquanto os dois números estiverem lado a lado, um deles vai ser
+       * lido — e o errado é o mais chamativo. Instrução não compete com dado
+       * na cara: some com o dado.
+       */
+      your_bookings: minhasReservas(start, end),
       // Folgas do dia, na mesma forma de "ocupado": para quem oferece horário,
       // folga e compromisso são a mesma coisa — hora que não dá.
       away: (folgasDoPeriodo ?? [])
@@ -672,8 +722,7 @@ async function listImplementation(
         // nunca chamar a ferramenta que sabe responder. Ler `who_works_here` e
         // `away` para decidir é refazer à mão a conta que o `book_appointment`
         // já faz certo.
-        about_availability:
-          "IF THEY ARE ASKING ABOUT THEIR OWN BOOKINGS AS SOMEBODY WHO WORKS HERE — 'quem tem marcado comigo hoje?', 'quais são meus horários?' — that is `my_schedule`, not this tool, and you must call it: this one only ever tells you what is FREE, so answering from it you would tell a barber his day is empty while two customers are booked with him. Measured on 2026/08/10, exactly that. Call `my_schedule` and let it decide whether they really work here — it checks the number they write from, which is the only thing that can. NEVER ASK THE CUSTOMER TO CONFIRM A DAY THEY ALREADY GAVE. You are told today's date: 'quarta dia 12' is the next 12th, 'sexta que vem' is the coming Friday, and asking 'dia 12 de qual mês?' spends a round trip on something you can work out. Measured on 2026/08/10: asked for 'sobrancelha na quarta dia 12', the assistant answered 'você quer marcar na quarta-feira, dia 12 de qual mês?' and the conversation never got anywhere. Ask only when a day is genuinely absent, never when it is merely written informally. WHEN THE CUSTOMER ALREADY NAMED A TIME, BOOK THAT TIME — do not offer a menu. Call book_appointment with the hour THEY said, exactly as they said it; `free` is for when they ask what is available, never a list to pick from on their behalf. Measured on 2026/08/10: a customer asked for 13h, the assistant sent 12:00 to book_appointment — an hour off the list, not the one they wanted — was refused, and answered with three options instead of the booking they had already asked for. When they name a time and it is not in `free`, say that time is taken and offer what is. OFFER ONLY WHAT `free` SAYS, and check a named person against `free_per_person`. AN EMPTY `free` MEANS THERE IS NOTHING THAT DAY: say so, offer ANOTHER DAY, and IN THE SAME MESSAGE offer to tell them if that day frees up ('quer que eu te avise se vagar?') — then call join_waitlist when they say yes. That offer is not optional politeness: a full day is the moment a customer goes somewhere else, and thirty seconds later they are gone. Measured on 2026/08/10, with the day genuinely full: 3 of 3 answered correctly and none of the three offered the list, so the chair that freed an hour later stayed empty. Never an hour of your own, and never a reason you were not given. Measured on 2026/08/10, on a day the shop was closed: `free` was empty, book_appointment refused, and the very next sentence offered '14h, 15h ou 16h na quinta' — three hours that did not exist, on a day nobody would open the door, with the customer no way of knowing. Both are already computed from the opening hours, each person's own hours, the time off, the bookings, the service duration and the gap between appointments — there is nothing left for you to subtract. `taken`, `away` and each person's week are here to answer OTHER questions (whose booking that is, who works on Tuesday), never to work out a free time: every wrong answer measured on 2026/08/09 and 2026/08/10 came from re-deriving by hand what `free` now hands over — an hour called full because one of four barbers had a booking in it, and a barber refused at 14:00 who worked 13:00-19:00 with an empty calendar. When the customer names a time, CALL book_appointment and let it decide; it does this same arithmetic and is the only thing that writes. Asked who is available, name ONLY the ones who can take it — 'Marcos, Rafa e Duda podem' — and say nothing about the others: not that they are busy, not at what time, not how full their day is.",
+        about_availability: REGRAS_DA_AGENDA,
       }
       : {}),
     days,
@@ -1162,6 +1211,61 @@ async function escolherProfissional(
 
   return { escolhido, conflito: null };
 }
+
+/**
+ * As regras da agenda, cinco, na ordem do que custa mais errar.
+ *
+ * ## Por que curtas, e por que isto virou uma constante
+ *
+ * Este texto tinha 6.179 caracteres em 2026/08/10, ao fim de um dia em que
+ * cada defeito medido virou mais um parágrafo aqui — sempre no fim, sempre em
+ * caixa alta, sempre com a história da medição junto. Onze parágrafos
+ * imperativos disputando a atenção do modelo.
+ *
+ * E as regras começaram a voltar. Na mesma tarde, com o texto no auge:
+ *
+ *   - `free` listava 11:00 e a resposta foi "11h já está ocupado"
+ *   - `free` estava VAZIO e a resposta ofereceu "09:30, 13:00 ou 16:30"
+ *
+ * As duas são regras que estavam escritas ali, palavra por palavra, e que
+ * tinham sido medidas funcionando quando entraram sozinhas. Instrução não se
+ * acumula: cada acréscimo divide a atenção com os anteriores, e o décimo
+ * parágrafo enfraquece o primeiro em vez de somar a ele.
+ *
+ * As histórias das medições saíram daqui e foram para os comentários, que é o
+ * lugar delas: elas existem para o humano que vai mexer nisto entender por que
+ * a regra existe e não apagá-la. O modelo precisa da regra.
+ *
+ * As medições que geraram cada uma, para quem vier depois:
+ *
+ *   1. 2026/08/09 e 08/10 — hora chamada de cheia porque um dos quatro
+ *      barbeiros tinha compromisso nela; barbeiro recusado às 14:00 com turno
+ *      13:00-19:00 e agenda vazia. Toda resposta errada veio de refazer à mão
+ *      a conta que `free` já entrega.
+ *   2. 2026/08/10 — dia fechado, `free` vazio, e a frase seguinte ofereceu
+ *      "14h, 15h ou 16h na quinta". Três horários que não existiam. E, com o
+ *      dia genuinamente cheio, 3 de 3 respostas corretas e nenhuma ofereceu a
+ *      fila: a cadeira que vagou uma hora depois ficou vazia.
+ *   3. 2026/08/10 — cliente pediu 13h, o modelo mandou 12:00 para o
+ *      `book_appointment`, foi recusado, e respondeu com três opções em vez do
+ *      agendamento que já tinha sido pedido. E "quarta dia 12" virou "dia 12
+ *      de qual mês?", com a conversa morrendo ali.
+ *   4. 2026/08/10 — barbeiro perguntou quem tinha marcado com ele e ouviu
+ *      "não há nada marcado", com dois clientes na agenda: a resposta saiu
+ *      desta ferramenta, que só sabe o que está LIVRE.
+ *   5. 2026/08/09 — perguntado quem estava disponível, respondeu "o Jorge
+ *      está ocupado às 9h, mas Marcos, Rafa e Duda têm disponibilidade".
+ *      Abriu a agenda de quem ninguém perguntou.
+ *
+ * - 2026/08/11
+ */
+const REGRAS_DA_AGENDA = [
+  "1. OFFER ONLY WHAT `free` SAYS. It is already computed from the opening hours, each person's own hours, time off, bookings, service duration and the gap between appointments. For a named person, check `free_per_person`; anyone absent from it can take any time in `free`.",
+  "2. AN EMPTY `free` MEANS NOTHING THAT DAY. Say so, offer another day, and in the same message offer to tell them if it frees up ('quer que eu te avise se vagar?') — then call join_waitlist if they accept. Never an hour of your own, never a reason you were not given.",
+  "3. WHEN THEY NAME A TIME, CALL book_appointment WITH THAT TIME — not a menu, not a different hour. Do not ask them to confirm a day they already gave: you are told today's date, so 'quarta dia 12' is the next 12th. Ask only when a day is genuinely missing.",
+  "4. `your_bookings` IS THE AGENDA OF WHOEVER IS WRITING, filled only when the number they write from belongs to somebody on the team — already checked, so trust it. When it is there, that is what they asked about: read it out, with the customer names. When it is null they are a customer, and you never say who is booked, at what time, or how full anyone's day is.",
+  "5. ASKED WHO IS AVAILABLE, NAME ONLY WHO CAN TAKE IT — 'Marcos, Rafa e Duda podem'. Say nothing about the others: not that they are busy, not at what time, not how full their day is.",
+].join(" ");
 
 /** De meia em meia hora: é como uma barbearia fala o horário dela. */
 const PASSO_MINUTOS = 30;
