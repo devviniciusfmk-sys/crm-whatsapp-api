@@ -21,7 +21,10 @@ import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
 import { transferToHumanAgentImplementation } from "./tools/handoff.ts";
 import { avisarAEquipe } from "../_shared/avisar.ts";
-import type { ConversationExtra } from "../_shared/types/extra_types.ts";
+import type {
+  ConversationExtra,
+  OrganizationExtra,
+} from "../_shared/types/extra_types.ts";
 import { z } from "zod";
 import Ajv2020 from "ajv";
 import type { AgentRowWithExtra, ResponseContext } from "./protocols/base.ts";
@@ -1044,7 +1047,39 @@ Deno.serve(async (req) => {
 
       // AGENT CLIENT REQUEST AND RESPONSE
 
-      const handler = ProtocolFactory.getHandler(tools, context, client);
+      /**
+       * A última rodada é sem ferramenta nenhuma, e por isso ele responde.
+       *
+       * O teto de dez rodadas existia para o laço não correr para sempre, e
+       * quando ele estourava o cliente ficava mudo: o assistente tinha gastado
+       * as dez chamando ferramenta atrás de ferramenta sem nunca escrever uma
+       * frase. Medido em 2026/08/11, numa corrida de 25 minutos: 6 silêncios em
+       * 132 respostas, e 4 deles eram exatamente isto — "o laço terminou em 6,
+       * 8 e 11 rodadas sem escrever nada".
+       *
+       * Instrução não resolveria, e nem tentei: o modelo não está desobedecendo
+       * uma ordem, está perdido numa busca. O que resolve é tirar a saída.
+       * Chegando na última rodada ele recebe a lista de ferramentas VAZIA, e
+       * como `respond` é obrigatória e é a única que sobra, a única coisa que
+       * ele pode fazer é falar com o cliente — com o que já descobriu nas nove
+       * anteriores, que costuma ser bastante.
+       *
+       * É a mesma lição do `taken`: enquanto a porta errada estiver aberta,
+       * alguma hora ele passa por ela. Some com a porta. - 2026/08/11
+       */
+      const ultimaChance = iteration === max_iterations;
+
+      if (ultimaChance) {
+        log.warn(
+          `Round ${iteration} of ${max_iterations}: tools withdrawn so the contact gets an answer.`,
+        );
+      }
+
+      const handler = ProtocolFactory.getHandler(
+        ultimaChance ? [] : tools,
+        context,
+        client,
+      );
 
       /**
        * Em que etapa o laço estava quando quebrou.
@@ -1484,6 +1519,17 @@ Deno.serve(async (req) => {
      * Ao contato não se manda pedido de desculpas automático — se o assistente
      * não tem o que dizer, quem diz é uma pessoa. O que muda é que agora essa
      * pessoa fica sabendo. - 2026/08/08
+     *
+     * REVISTO EM 2026/08/11, e a última frase acima é a que caiu. Ela valia
+     * quando o silêncio era 1 em 30 e a transferência acabara de nascer. Medido
+     * numa corrida de 25 minutos: 6 silêncios em 132 respostas — 4,5%, um
+     * cliente em vinte e dois. E a pessoa que a transferência chama não existe
+     * às 21h de um sábado.
+     *
+     * O que sai agora não é o sistema pedindo desculpas: é uma frase que o DONO
+     * escreveu, guardada em `silence_message`, que não passa por modelo nenhum
+     * e por isso não pode falhar. Silêncio vira conversa segurada. Quem não
+     * escreveu frase nenhuma continua no comportamento antigo.
      */
     /**
      * Quando o assistente já transferiu, a rede não transfere de novo.
@@ -1500,6 +1546,63 @@ Deno.serve(async (req) => {
      * uma pessoa. O que falta é a nota interna dizendo que o contato ficou sem
      * resposta, e essa continua sendo escrita abaixo. - 2026/08/10
      */
+    /**
+     * O piso: a frase do dono sai ANTES de qualquer outra coisa.
+     *
+     * Antes da transferência de propósito. Se a transferência falhar — e ela
+     * falha, é uma escrita no banco como outra qualquer — o cliente já terá
+     * recebido alguma coisa. A ordem inversa faria o piso depender justamente
+     * do que ele existe para cobrir.
+     *
+     * Uma vez por conversa em silêncio, e não uma por falha: um cliente que
+     * escreve três vezes seguidas num minuto ruim receberia a mesma frase três
+     * vezes, que é pior que recebê-la uma. Basta olhar se a última coisa que
+     * saiu daqui já foi ela.
+     */
+    // `?.` mesmo com `extra` sendo `not null` no banco: este bloco existe para
+    // o caminho em que tudo já deu errado, e é o último lugar do sistema onde
+    // vale confiar numa garantia de esquema.
+    const fraseDoPiso = (org.extra as OrganizationExtra | null)?.silence_message
+      ?.trim();
+
+    if (fraseDoPiso) {
+      const { data: ultimas } = await client
+        .from("messages")
+        .select("content")
+        .eq("conversation_id", conv.id)
+        .eq("direction", "outgoing")
+        .order("timestamp", { ascending: false })
+        .limit(1);
+
+      const jaSaiu = (ultimas?.[0]?.content as { text?: string } | undefined)
+        ?.text?.trim() === fraseDoPiso;
+
+      if (!jaSaiu) {
+        const { error } = await client.from("messages").insert({
+          organization_id,
+          conversation_id: conv.id,
+          service: conv.service,
+          organization_address: conv.organization_address,
+          contact_address: conv.contact_address,
+          direction: "outgoing" as const,
+          agent_id: agent.id,
+          content: {
+            version: "1" as const,
+            type: "text" as const,
+            kind: "text" as const,
+            text: fraseDoPiso,
+          },
+        });
+
+        if (error) {
+          log.error("Falha ao enviar a frase de piso", {
+            conversation_id: conv.id,
+            error: describeError(error),
+          });
+        }
+      }
+    }
+
     let chamouAlguem = handedOff;
 
     if (!handedOff) {

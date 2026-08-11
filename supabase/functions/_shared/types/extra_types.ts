@@ -143,6 +143,28 @@ export type OrganizationExtra = {
    */
   away_message?: string;
   /**
+   * O piso: o que sai quando o assistente não conseguiu escrever nada.
+   *
+   * Até 2026/08/11 esse caso terminava em SILÊNCIO. A regra era explícita e
+   * tinha razão de ser: "ao contato não se manda pedido de desculpas
+   * automático — se o assistente não tem o que dizer, quem diz é uma pessoa".
+   * Escrita quando o silêncio era raro e a transferência era nova.
+   *
+   * A evidência mudou. Numa corrida de 25 minutos: 6 silêncios em 132
+   * respostas — 4,5%, ou um cliente em vinte e dois. E a pessoa que a
+   * transferência chama não existe às 21h de um sábado: o cliente escreveu
+   * para uma barbearia e não ouviu nada.
+   *
+   * Então o piso não é um pedido de desculpas do sistema, é UMA FRASE DO DONO,
+   * escrita por ele, que só sai quando não houve o que dizer. "Recebi sua
+   * mensagem, já te respondo." Não pode falhar, porque não passa por modelo
+   * nenhum — e transforma silêncio em conversa segurada.
+   *
+   * Vazio desliga, como as outras duas: mensagem que ninguém escreveu é
+   * mensagem que ninguém quer mandar. Os ramos de negócio já nascem com uma.
+   */
+  silence_message?: string;
+  /**
    * Whether the agent also stays quiet outside opening hours.
    *
    * Both answers are legitimate and they are not the same product: a shop that
