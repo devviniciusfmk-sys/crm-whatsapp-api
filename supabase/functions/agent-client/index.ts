@@ -26,7 +26,7 @@ import type {
   OrganizationExtra,
 } from "../_shared/types/extra_types.ts";
 import { z } from "zod";
-import Ajv2020 from "ajv";
+import { Ajv2020 } from "ajv";
 import type { AgentRowWithExtra, ResponseContext } from "./protocols/base.ts";
 import { getFileMetadata } from "../_shared/media.ts";
 import { type MessageRowV0, toV1 } from "../_shared/messages-v0.ts";

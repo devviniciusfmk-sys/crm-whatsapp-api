@@ -96,3 +96,17 @@ entrypoint = "./functions/storage-gc/index.ts"
 verify_jwt = false
 import_map = "./functions/deno.json"
 entrypoint = "./functions/contact-memory/index.ts"
+
+# As duas nasceram em 2026/08/10 e ficaram FORA daqui, o que só apareceu no dia
+# em que o mapa de importação passou a importar: elas subiam por acaso, com o
+# CLI adivinhando, e pararam de subir quando as dependências deixaram o CDN.
+# Função que não está declarada é função que funciona até não funcionar.
+[functions.avisar]
+verify_jwt = false
+import_map = "./functions/deno.json"
+entrypoint = "./functions/avisar/index.ts"
+
+[functions.encaixe]
+verify_jwt = false
+import_map = "./functions/deno.json"
+entrypoint = "./functions/encaixe/index.ts"
