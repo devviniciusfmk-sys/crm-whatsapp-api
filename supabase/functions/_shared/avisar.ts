@@ -106,17 +106,17 @@ export async function avisarAEquipe(
   organizationId: string,
   motivo: MotivoDoAviso,
   detalhe: { conversationId: string; contato?: string | null },
-): Promise<number> {
+): Promise<{ enviados: number; falhas: string[] }> {
   const app = await servidorDeAviso();
 
-  if (!app) return 0;
+  if (!app) return { enviados: 0, falhas: ["sem VAPID_KEYS configurada"] };
 
   const { data: inscricoes } = await client
     .from("push_subscriptions")
     .select("id, endpoint, p256dh, auth")
     .eq("organization_id", organizationId);
 
-  if (!inscricoes?.length) return 0;
+  if (!inscricoes?.length) return { enviados: 0, falhas: [] };
 
   const texto = TEXTOS[motivo];
 
@@ -129,6 +129,10 @@ export async function avisarAEquipe(
   });
 
   let enviados = 0;
+
+  // Devolvidas a quem chamou: sem elas, "enviados: 0" é um número sem motivo,
+  // e foi exatamente assim que este defeito ficou opaco. - 2026/08/11
+  const falhas: string[] = [];
 
   await Promise.all(inscricoes.map(async (inscricao) => {
     try {
@@ -156,23 +160,41 @@ export async function avisarAEquipe(
        * aviso futuro carrega a tentativa morta junto, e quem lê a tabela não
        * distingue quem está inscrito de quem esteve.
        */
-      const morta = erro instanceof webpush.PushMessageError &&
-        (erro.response.status === 404 || erro.response.status === 410);
+      const status = erro instanceof webpush.PushMessageError
+        ? erro.response.status
+        : 0;
 
-      if (morta) {
+      /**
+       * O motivo sai SEMPRE, inclusive quando a inscrição é apagada.
+       *
+       * A primeira versão registrava só as falhas que NÃO eram 404/410 — as
+       * outras sumiam caladas, porque "inscrição morta" parecia rotina. Medido
+       * em 2026/08/11: o teste do aviso caiu de 4/4 para 2/4 e a única pista
+       * era "enviados: 0", com a linha desaparecendo do banco. Um caminho que
+       * APAGA dado tem de dizer por quê, ainda mais quando apagar é o normal
+       * dele.
+       */
+      console.warn("aviso não entregue", {
+        organization_id: organizationId,
+        motivo,
+        status,
+        erro: erro instanceof Error ? erro.message : String(erro),
+      });
+
+      falhas.push(
+        `${status || "?"}: ${
+          (erro instanceof Error ? erro.message : String(erro)).slice(0, 120)
+        }`,
+      );
+
+      if (status === 404 || status === 410) {
         await client
           .from("push_subscriptions")
           .delete()
           .eq("id", inscricao.id);
-      } else {
-        console.warn("aviso não entregue", {
-          organization_id: organizationId,
-          motivo,
-          erro: erro instanceof Error ? erro.message : String(erro),
-        });
       }
     }
   }));
 
-  return enviados;
+  return { enviados, falhas };
 }

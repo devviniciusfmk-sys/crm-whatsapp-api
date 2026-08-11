@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     ? corpo.motivo as MotivoDoAviso
     : "stale";
 
-  const enviados = await avisarAEquipe(
+  const resultado = await avisarAEquipe(
     client,
     corpo.organization_id,
     motivo,
@@ -81,5 +81,5 @@ Deno.serve(async (req) => {
     },
   );
 
-  return responder({ enviados });
+  return responder(resultado);
 });
