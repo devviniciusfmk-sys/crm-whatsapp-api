@@ -42,8 +42,28 @@ const TransferToHumanAgentInputSchema = z.object({
   // isso" e escolheu literalmente, e o caso mais grave do dia saiu com a cor
   // calma. A ordem da pergunta é o conserto — decidir PRIMEIRO se algo deu
   // errado com a pessoa, e só depois pensar em quem resolve. - 2026/08/08
+  /**
+   * As medições que escreveram cada frase da descrição abaixo, guardadas AQUI
+   * e não lá dentro.
+   *
+   * Uma descrição de ferramenta é paga em toda chamada ao modelo, para sempre.
+   * Medido em 2026/08/11: 4.615 tokens de descrição por chamada, 86% da
+   * entrada — e boa parte era narrativa de medição, escrita para humano e
+   * cobrada do modelo. Comentário custa zero e é lido por quem vai mexer, que
+   * é quem precisa dela. A regra fica na descrição; a história fica aqui.
+   *
+   *   2026/08/09 — "cortaram minha orelha, tô no pronto socorro" saiu como
+   *   `cannot_resolve` 3 vezes em 3: o modelo leu "não consigo resolver isso" e
+   *   escolheu literalmente, e o caso mais grave do dia chegou na cor calma.
+   *   Daí a ordem das perguntas, e daí a frase de que "não consigo resolver"
+   *   descreve VOCÊ e não o que aconteceu com ELE.
+   *
+   *   2026/08/09 — pedido de estorno também caía em `cannot_resolve`, pelo
+   *   mesmo motivo: o modelo classificava pela própria impotência. Daí dinheiro
+   *   já pago ser reclamação, dito com todas as letras.
+   */
   kind: z.enum(["complaint", "wants_person", "cannot_resolve"]).describe(
-    "What kind of handoff this is. Ask the questions IN THIS ORDER and stop at the first yes. (1) Did something go wrong FOR THIS PERSON — a bad result, an injury or any physical harm, a service that failed, or are they simply upset or in distress? ANYTHING ABOUT MONEY ALREADY PAID also counts: being charged more than agreed, asking for a refund or a chargeback, wanting their money back, disputing a bill. Then it is 'complaint', no matter how urgent it is or how far outside your reach the fix is. An emergency IS a complaint; a refund request IS a complaint. SOMEONE HURT BY THE SERVICE IS THE CLEAREST COMPLAINT THERE IS — a cut, a burn, a chemical reaction, an injury, a trip to hospital — and it stays 'complaint' even though what they need next is a doctor and not you: measured on 2026/08/09, 'cortaram minha orelha, tô no pronto socorro' was filed as 'cannot_resolve' three times out of three, which is the worst case of the day arriving in the calm colour. 'I cannot resolve this' describes YOU, not what happened to THEM, and it never decides this field. (2) Did they just ask to speak to a human, with nothing having gone wrong? Then 'wants_person'. (3) Otherwise 'cannot_resolve' — and ONLY this: a question you lack the information to answer, or a decision that is not yours to make, with a customer who is not upset, owed nothing, and to whom nothing bad happened. Staff see complaints marked in red and pick them up first; when hesitating, choose 'complaint', because a missed one costs far more than an extra one.",
+    "Ask these IN ORDER, stop at the first yes. (1) Did something go wrong FOR THEM — bad result, injury, failed service, upset or in distress — or is it about money already paid (overcharged, refund, chargeback, disputing a bill)? Then 'complaint', however urgent and however far the fix is from you. An emergency is a complaint; a refund request is a complaint; somebody hurt by the service is the clearest complaint there is, even when what they need next is a doctor. 'I cannot resolve this' describes YOU, not what happened to THEM, and never decides this field. (2) Did they simply ask for a human, nothing having gone wrong? Then 'wants_person'. (3) Otherwise 'cannot_resolve', and only this: something you lack the information to answer, with a customer who is not upset, owed nothing, and to whom nothing bad happened. Complaints show red and get picked up first — when hesitating, choose 'complaint'.",
   ),
 });
 
@@ -136,7 +156,7 @@ export const TransferToHumanAgentTool: ToolDefinition<
   // adivinhar". Faltava dizer que horário, catálogo e preço não são adivinhação
   // — são o que ela tem na mão.
   description:
-    "Hand the conversation over to a human colleague and stop answering it yourself. Use this when you cannot resolve what is being asked: missing access, a decision that is not yours to make, a complaint, a payment that already happened, or an explicit request to speak to a person. NEVER call this for something you can already answer from what you were given — opening hours, closed days, the service catalogue, prices, or what the calendar shows. Explaining that the shop is closed on a day, or that a service is not offered, is your job, not a colleague's: answer it and keep going. The reverse is just as important: anything about the business that is NOT in what you were given — parking, wifi, payment methods, the address, promotions, who works which day, whether a product is in stock — you simply do not know, and you must NEVER state it as fact in either direction. Measured on 2026/08/09: asked 'do you have parking?', the assistant answered 'we have no parking at the salon' — invented, and the kind of invention a customer acts on. When you do not know, say you will check and call this tool. Calling this tool PAUSES the conversation, so everything the customer writes next goes unanswered until a person shows up — transferring what you could have answered leaves them waiting for nothing. CALLING THIS TOOL IS THE ONLY THING THAT ACTUALLY SUMMONS ANYONE — writing 'I will call someone' or 'I have called the team' in a message summons nobody, and leaves the customer waiting for a person who was never told. If you tell the customer that a colleague will take over, you MUST call this tool in the same turn. After calling it, tell the customer plainly that a colleague will take over, and do not promise a deadline. ALWAYS WRITE TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING — this instruction being in English says nothing about the language of your reply. Prefer transferring over guessing: an invented answer costs more than a wait.",
+    "Hand the conversation to a human colleague and stop answering it yourself: a complaint, money already paid, a decision that is not yours, or an explicit request for a person. CALLING THIS TOOL IS THE ONLY THING THAT SUMMONS ANYBODY — writing 'I will call someone' summons nobody and leaves them waiting for a person who was never told. If you say a colleague will take over, you MUST call it in the same turn. NEVER call it for something you can answer from what you were given — opening hours, closed days, the catalogue, prices, the calendar. Explaining that the shop is closed on a day is your job, not a colleague's. The reverse matters just as much: anything about the business NOT in what you were given — parking, wifi, payment methods, the address, promotions, stock — you do not know, and must never state either way; say you will check and call this tool. Calling it PAUSES the conversation, so everything they write next goes unanswered until a person shows up. Afterwards tell them plainly that a colleague will take over, without promising a deadline. ALWAYS WRITE IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(TransferToHumanAgentInputSchema),
   outputSchema: z.toJSONSchema(TransferToHumanAgentOutputSchema),
   implementation: transferToHumanAgentImplementation,

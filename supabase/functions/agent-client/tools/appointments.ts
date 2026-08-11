@@ -366,10 +366,10 @@ const DaySchema = z.object({
    * oferecer um horário: isto aqui já é o resultado. - 2026/08/10
    */
   free: z.string().describe(
-    "THE TIMES YOU CAN OFFER, space-separated, in the business's own timezone — already computed from the opening hours, each person's own hours, the time off, what is booked, the service duration and the gap between appointments. USE THIS AND ONLY THIS when you offer a time. NEVER work out a free time yourself from `taken`, `away` or `opens_at`: those answer other questions, and every wrong answer measured on 2026/08/10 came from re-deriving this list by hand. Empty means nothing is free that day — then say so and offer another day, never an hour of your own invention. Times already past today are gone from here.",
+    "THE TIMES YOU CAN OFFER, space-separated, in the business's own timezone — already computed from the opening hours, each person's own hours, time off, bookings, service duration and the gap between appointments. Use this and only this when offering a time; never work one out from the other fields. Empty means nothing that day. Times already past are gone from here.",
   ),
   free_per_person: z.record(z.string(), z.string()).nullable().describe(
-    "Only the people whose free times DIFFER from `free` — someone who starts at 13:00, or is off in the afternoon. Their value is their own space-separated list, or 'none' when they have no time at all that day. Anyone not listed here can take ANY time in `free`. Use this when the customer names a person: if they are absent from this object, every time in `free` works with them. Measured on 2026/08/10: asked for 14:00 with a barber who works 13:00-19:00 and had nothing booked, the assistant refused saying he 'only starts at 13:00' and offered 14:00 with him in the same sentence — it was deriving what this field now hands over.",
+    "Only the people whose free times DIFFER from `free` — someone who starts at 13:00, or is off in the afternoon. Their value is their own space-separated list, or 'none' when they have nothing that day. Anyone absent from here can take ANY time in `free`. This is the answer when the customer names a person.",
   ),
   /**
    * A agenda de quem escreve, e SÓ dela — quando quem escreve trabalha aqui.
@@ -398,14 +398,18 @@ const DaySchema = z.object({
     z.object({
       from: z.string().describe("Local time it starts, 'YYYY-MM-DD HH:MM'."),
       to: z.string().describe(
-        "Local time it ends, and the end is OPEN: an appointment that starts exactly at this time is fine. Somebody away 'until 13:00' is back at 13:00 — measured on 2026/08/09, a customer asking for 13:00 was refused because the block ended at 13:00, and the hour was free.",
+        // Medido em 2026/08/09: um cliente pediu 13:00 e foi recusado porque o
+        // bloqueio terminava às 13:00 — e a hora estava livre.
+        "Local time it ends, and the end is OPEN: somebody away 'until 13:00' is back at 13:00.",
       ),
       professional: z.string().nullable().describe(
         "Who is away. NULL MEANS THE WHOLE BUSINESS — a holiday or a closure — and then nobody can be booked in that window.",
       ),
     }),
   ).describe(
-    "Time off: hours nobody is there, on top of the regular week. Treat it exactly like a booked slot — never offer a time inside it. NEVER tell the customer WHY somebody is away: you are not told the reason, and it is the business's private matter. 'Não temos nesse horário' is the whole answer.",
+    // O motivo da folga não desce até aqui de propósito — o dentista do Jorge
+    // não é assunto do cliente.
+    "Time off: hours nobody is there, on top of the regular week. NEVER tell the customer WHY somebody is away — 'não temos nesse horário' is the whole answer.",
   ),
 });
 
@@ -741,7 +745,7 @@ export const ListAppointmentsTool: ToolDefinition<
   // agenda da casa, com nome de quem marcou; serve para NÃO oferecer aquela
   // hora, e nunca para contar o que tem nela.
   description:
-    "See what is already booked, and when the business opens. Call this BEFORE offering times, so you never offer a taken slot or a closed day. Pass `until` to cover a range in ONE call whenever the customer asks about more than one day — asking day by day is slow and the customer waits. It returns every booking of the business, not only this customer's. WHAT IT RETURNS IS FOR YOUR EYES ONLY: `taken` is the business's private schedule and carries other customers' bookings. Use it to pick free times to offer — never repeat it, never say which hours are taken or busy, never mention the gaps between bookings. The customer hears only the times they can have.",
+    "What can be offered, and when the business opens. Call this BEFORE offering any time. Pass `until` to cover a range in ONE call whenever they ask about more than one day — day by day is slow and they wait. WHAT IT RETURNS IS FOR YOUR EYES ONLY: the customer hears only the times they can have, never which hours are busy or how full a day is.",
   inputSchema: z.toJSONSchema(ListInputSchema),
   outputSchema: z.toJSONSchema(ListOutputSchema),
   implementation: listImplementation,
@@ -1706,7 +1710,7 @@ export const BookAppointmentTool: ToolDefinition<
   // custa um cancelamento nas poucas em que erra. Desmarcar é barato aqui, e
   // por isso a dúvida se resolve marcando.
   description:
-    "Book an appointment for the person you are talking to. The customer is taken from this conversation — you cannot book for anybody else, and there is no phone number to pass. Check `list_appointments` first. DO NOT ASK THEM TO CONFIRM WHAT THEY ALREADY SAID: when the service, the day and the time are all there, book it — the booking confirmation IS your reply. A day number settles a vague weekday: 'próxima quarta, dia 12' is the 12th, and asking which Wednesday costs a round trip in every conversation to save a cancellation in the rare one. Booking is undoable — cancel_appointment and reschedule_appointment exist and cost nothing — so resolve doubt by booking, not by asking. Only ask when something is genuinely MISSING and you cannot act without it. If it comes back refused, tell the customer the reason and offer another time; never claim it is booked when it is not. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
+    "Book an appointment for the person you are talking to — the customer comes from this conversation, so there is nobody else to book for and no number to pass. Check `list_appointments` first. DO NOT ASK THEM TO CONFIRM WHAT THEY ALREADY SAID: with the service, the day and the time all there, book it — the confirmation IS your reply. A day number settles a vague weekday ('próxima quarta, dia 12' is the 12th). Booking is undoable and cancelling costs nothing, so resolve doubt by booking, not by asking; ask only when something is genuinely missing. If it comes back refused, tell them the reason and offer another time — never claim it is booked when it is not. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(BookInputSchema),
   outputSchema: z.toJSONSchema(BookOutputSchema),
   implementation: bookImplementation,
@@ -2052,7 +2056,9 @@ export const RescheduleAppointmentTool: ToolDefinition<
   type: "function",
   name: "reschedule_appointment",
   description:
-    "Move an existing appointment of the person you are talking to, to a new day or time, or to a different colleague. USE THIS instead of booking again when the customer changes their mind about a time or a person they already have — booking again leaves them with two appointments, and cancelling first frees the slot for somebody else while you type. To switch only who attends, send the same time and the new name. ALWAYS REPLY TO THE CUSTOMER IN THE LANGUAGE THEY ARE USING.",
+    // Marcar de novo deixaria a pessoa com dois compromissos; cancelar antes
+    // libera a cadeira para outro enquanto você digita.
+    "Move an existing appointment of the person you are talking to — new day, new time, or a different colleague. USE THIS, never a second booking, when they change their mind about something they already have. To switch only who attends, send the same time and the new name. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(RescheduleInputSchema),
   outputSchema: z.toJSONSchema(RescheduleOutputSchema),
   implementation: rescheduleImplementation,
