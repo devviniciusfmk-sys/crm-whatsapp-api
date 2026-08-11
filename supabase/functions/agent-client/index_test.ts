@@ -22,6 +22,14 @@ Deno.test("promessa de terceiro é reconhecida", () => {
       // o "te". Foi a única perdida em seis, medida em 2026/08/08.
       "Confirmando o valor com a equipe, já retorno pra você.",
       "Preciso checar isso tudo com o responsável.",
+      // A quarta que escapou, medida em 2026/08/11: seis palavras entre o
+      // verbo e o "com", e "respondo" no lugar de "retorno". Foi ela que fez
+      // o critério mudar de preciso para generoso — errar transferindo custa
+      // uma conversa fechada em dois segundos; errar sem transferir custa um
+      // cliente esperando para sempre.
+      "Bom dia! Vou confirmar o valor do corte + barba com a equipe e já te respondo.",
+      "Deixa eu perguntar isso pro pessoal e te aviso.",
+      "Vou dar um retorno assim que souber.",
     ]
   ) {
     assertEquals(PROMISE_OF_A_PERSON.test(frase), true, frase);

@@ -126,6 +126,34 @@ function describeError(error: unknown): string {
  * chamar alguém", "já te retorno". Ficam de fora as que o assistente cumpre
  * sozinho — "já verifico a agenda" é promessa dele, e ele cumpre na mesma
  * volta. - 2026/08/07
+ *
+ * ## O critério mudou em 2026/08/11, e é isso que importa aqui
+ *
+ * Este é o quarto remendo nesta expressão, e os três primeiros foram do mesmo
+ * feitio: uma medição mostrava uma frase escapando, e eu acrescentava aquela
+ * variante. A quarta foi "Vou confirmar o valor do corte + barba com a equipe e
+ * já te respondo" — escapou por seis palavras entre o verbo e o "com" (o teto
+ * era três) e por "respondo" no lugar de "retorno".
+ *
+ * O defeito não era a expressão, era o CRITÉRIO dela. Ela vinha sendo afinada
+ * para evitar falso positivo — o teto de três palavras existia exatamente para
+ * isso, e está escrito abaixo. Mas os dois erros não custam a mesma coisa:
+ *
+ *   falso positivo → uma conversa transferida à toa, que alguém fecha em dois
+ *                    segundos ao ver que já estava resolvida
+ *   falso negativo → um cliente esperando para sempre uma pessoa que nunca foi
+ *                    chamada, e que ninguém sabe que ele espera
+ *
+ * Com essa assimetria, precisão é o alvo errado. A expressão passa a ser
+ * generosa de propósito: oito palavras de folga entre o verbo e o "com", e toda
+ * forma de "eu te falo depois" que apareceu. Se ela transferir demais, o
+ * conserto é lê-la de novo; se transferir de menos, o conserto é um cliente
+ * perdido que ninguém contou.
+ *
+ * E vale dizer o teto disto: expressão regular não converge em linguagem
+ * natural. Ela vai errar de novo. O que a torna aceitável é a rede embaixo —
+ * o piso de 2026/08/11 garante que o cliente recebe alguma coisa mesmo quando
+ * tudo isto falha junto.
  */
 export const PROMISE_OF_A_PERSON =
   // `\S*` e não `\w+` no fim de "responsável": `\w` não casa acento, e foi
@@ -142,9 +170,12 @@ export const PROMISE_OF_A_PERSON =
   // "retorno", e essa frase — promessa das mais claras — passava pelas duas
   // peneiras. Era 1 conversa perdida em 6.
   //
-  // O limite de 3 palavras é o que separa "confirmo O VALOR com a equipe" de
-  // uma frase que só por acaso tem as duas palavras longe uma da outra.
-  /(confirm\w+|verific\w+|falar|checar)(\s+\S+){0,3}\s+com\s+(a\s+|o\s+|um\s+|uma\s+)?(equipe|time|colega|profissional|respons\S*|gerente|dono)|vou\s+(chamar|passar|encaminhar|transferir)|(estou|vou)\s+transferindo|transferindo\s+(voc[êe]|sua|seu|isso|a\s+conversa)|(j[áa]|te)\s+retorno|volto\s+a\s+(falar|te)|assim\s+que\s+(souber|confirmar|a\s+equipe)/i;
+  // Oito palavras entre o verbo e o "com", e não três: "confirmar o valor do
+  // corte + barba com a equipe" tem seis, e é promessa das mais claras. Uma
+  // frase que por acaso tenha as duas pontas a oito palavras de distância e
+  // fale de equipe quase certamente está prometendo isso mesmo — e se não
+  // estiver, custa uma transferência à toa.
+  /(confirm\w+|verific\w+|falar|checar|perguntar)(\s+\S+){0,8}\s+com\s+(a\s+|o\s+|um\s+|uma\s+)?(equipe|time|colega|profissional|respons\S*|gerente|dono|pessoal)|vou\s+(chamar|passar|encaminhar|transferir)|(estou|vou)\s+transferindo|transferindo\s+(voc[êe]|sua|seu|isso|a\s+conversa)|(j[áa]|te)\s+(retorno|respondo|aviso|falo)|volto\s+a\s+(falar|te)|assim\s+que\s+(souber|confirmar|a\s+equipe)|(dou|dar)\s+(um\s+)?retorno/i;
 
 const MESSAGES_TIME_LIMIT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MESSAGES_QUANTITY_LIMIT = 50;
