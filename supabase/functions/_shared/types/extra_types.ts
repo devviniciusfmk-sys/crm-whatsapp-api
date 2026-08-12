@@ -189,6 +189,17 @@ export type OrganizationExtra = {
     language?: string;
     hours_before?: number;
     variables?: number;
+    /**
+     * O corpo do modelo, com os `{{1}}` no lugar, guardado quando a pessoa
+     * escolheu o modelo na tela.
+     *
+     * Serve para UMA coisa: escrever na conversa o que o cliente vai ler. Sem
+     * ele a mensagem enviada aparecia no painel como a lista de variáveis —
+     * "Vinícius · 12/08/2026 · 09:52" — e quem abria o chat não via o que tinha
+     * sido mandado. Quando o cliente respondia "confirmo", ninguém sabia a quê.
+     * Medido em 2026/08/12, no primeiro lembrete que chegou de verdade.
+     */
+    body?: string;
   };
   /**
    * Quanto tempo um compromisso ocupa, e quanto sobra depois dele.

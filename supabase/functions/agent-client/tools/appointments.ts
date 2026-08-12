@@ -879,7 +879,26 @@ async function scheduleReminder(
       type: "data",
       kind: "template",
       data: template,
-      text: values.join(" · "),
+      /**
+       * O que o CLIENTE vai ler, e não a lista de variáveis.
+       *
+       * O painel mostra `content.text` na conversa. Enquanto isso era
+       * `values.join(" · ")`, a loja via "Vinícius · 12/08/2026 · 09:52" no
+       * lugar da mensagem — e quando o cliente respondia "confirmo", ninguém
+       * sabia a quê. Medido em 2026/08/12, no primeiro lembrete entregue de
+       * verdade: chegou certo no celular e chegou ilegível no painel.
+       *
+       * Sem corpo guardado — organização configurada antes disto existir —
+       * volta a lista, mas rotulada. Ilegível com etiqueta ainda é melhor que
+       * ilegível sem.
+       */
+      text: config.body
+        ? values.reduce(
+          (texto, valor, indice) =>
+            texto.replaceAll(`{{${indice + 1}}}`, valor),
+          config.body,
+        )
+        : `Lembrete · ${values.join(" · ")}`,
       /**
        * De qual compromisso este lembrete é.
        *
