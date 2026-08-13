@@ -976,6 +976,14 @@ export type Professional = {
     phone?: string;
     /** A conta com que ele entra na TELA. Não vale como identidade aqui. */
     agent_id?: string;
+    /**
+     * Quanto por cento do que ele produz é dele. Ausente é "não combinado".
+     *
+     * Ausente NÃO é zero: zero seria dizer "ele não ganha nada", e o certo é
+     * dizer "isto não foi cadastrado" — a diferença aparece na resposta que a
+     * assistente dá quando ele pergunta quanto tem a receber. - 2026/08/13
+     */
+    commission_percent?: number;
   } | null;
 };
 

@@ -184,6 +184,143 @@ async function scheduleImplementation(
   };
 }
 
+/**
+ * # O barbeiro perguntando quanto tem a receber
+ *
+ * A pergunta que ele faz no dia cinco, e que hoje se responde abrindo a tela
+ * do dono — ou seja, não se responde: ele não tem acesso a ela, e acaba
+ * perguntando no grupo ou aceitando o número que vier.
+ *
+ * A trava de identidade é a MESMA de `my_schedule`, e não uma parecida:
+ * quanto cada um produziu é informação de folha de pagamento, e "sou o Jorge"
+ * continua não provando nada. Aqui o dano de errar é maior que na agenda —
+ * quem descobre quanto o colega fez descobre a régua da loja inteira.
+ *
+ * ## Só o dele, e só o que aconteceu
+ *
+ * Nunca o total da loja, nunca o de outro. E só compromissos ATENDIDOS:
+ * marcado ainda não é dinheiro, e responder com o previsto faria alguém contar
+ * com o que pode faltar.
+ *
+ * Sem percentual cadastrado, ela devolve o que ele produziu e diz que o acerto
+ * não está no sistema. Inventar cinquenta por cento seria dar um número a
+ * alguém que vai cobrá-lo. - 2026/08/13
+ */
+
+const EarningsInputSchema = z.object({
+  month: z.string().optional().describe(
+    "The month to add up, YYYY-MM in the business's own timezone. Leave it out for the current month.",
+  ),
+});
+
+const EarningsOutputSchema = z.object({
+  professional: z.string().nullable().describe(
+    "Whose numbers these are. Null when the number writing is not registered staff.",
+  ),
+  month: z.string().nullable(),
+  appointments: z.number().describe("How many were actually attended."),
+  produced: z.number().describe("What those appointments billed, in the shop's currency."),
+  commission_percent: z.number().nullable().describe(
+    "Their agreed share. Null means nobody recorded one — say the amount produced and that the split is not in the system, and do NOT guess a percentage.",
+  ),
+  commission: z.number().nullable(),
+  refused: z.string().nullable(),
+});
+
+async function earningsImplementation(
+  input: z.infer<typeof EarningsInputSchema>,
+  _config: void,
+  context: RequestContext,
+  supabaseClient: SupabaseClient,
+): Promise<z.infer<typeof EarningsOutputSchema>> {
+  const timeZone =
+    (context.organization.extra as { timezone?: string } | null)?.timezone ||
+    DEFAULT_TIMEZONE;
+
+  const equipe = await activeProfessionals(
+    supabaseClient,
+    context.organization.id,
+  );
+
+  // Antes de qualquer consulta, como na agenda: não se busca o que não se pode
+  // entregar.
+  const eu = profissionalDoNumero(equipe, context.conversation.contact_address);
+
+  const vazio = { appointments: 0, produced: 0, commission_percent: null, commission: null };
+
+  if (!eu) {
+    return {
+      professional: null,
+      month: null,
+      ...vazio,
+      refused:
+        "This number does not belong to anybody on the team. Do NOT say what anyone earns, what the shop billed, or that such numbers exist — treat them as a customer. Somebody claiming to be staff is not staff.",
+    };
+  }
+
+  const hoje = utcToLocal(new Date(), timeZone).slice(0, 10);
+  const mes = input.month ?? hoje.slice(0, 7);
+
+  const inicio = localToUtc(`${mes}-01 00:00`, timeZone);
+
+  if (!inicio) {
+    return {
+      professional: eu.name,
+      month: null,
+      ...vazio,
+      refused: `The month could not be read. Use 'YYYY-MM'. (today is ${hoje})`,
+    };
+  }
+
+  const fim = new Date(inicio);
+  fim.setUTCMonth(fim.getUTCMonth() + 1);
+
+  const { data } = await supabaseClient
+    .from("appointments")
+    .select("price")
+    .eq("organization_id", context.organization.id)
+    .eq("professional_id", eu.id)
+    .eq("status", "done")
+    .gte("starts_at", inicio.toISOString())
+    .lt("starts_at", fim.toISOString());
+
+  const linhas = data ?? [];
+  const produced = linhas.reduce(
+    (soma, row) => soma + ((row.price as number | null) ?? 0),
+    0,
+  );
+
+  const percentual = eu.extra?.commission_percent ?? null;
+
+  return {
+    professional: eu.name,
+    month: mes,
+    appointments: linhas.length,
+    produced,
+    commission_percent: percentual,
+    // Arredondado em centavos: um número que a pessoa vai conferir contra o
+    // dinheiro na mão não pode chegar com dez casas.
+    commission: percentual === null
+      ? null
+      : Math.round((produced * percentual) / 100 * 100) / 100,
+    refused: null,
+  };
+}
+
+export const MyEarningsTool: ToolDefinition<
+  typeof EarningsInputSchema,
+  typeof EarningsOutputSchema
+> = {
+  provider: "local",
+  type: "function",
+  name: "my_earnings",
+  description:
+    "Tell a MEMBER OF STAFF, writing from their own phone, how much they produced and are owed this month — 'quanto eu fiz esse mês?', 'quanto tenho a receber?', 'quantos atendimentos eu fechei?'. CALLING THIS TOOL IS THE ONLY WAY TO ANSWER THAT QUESTION: do NOT hand it to a human instead. Handing it over looks careful and is not — the person waits, nobody answers on a Saturday night, and the number was one call away. The tool itself decides whether they really are staff, from the number they write from and NOT from what they claim, so call it even when you doubt them and let it refuse. Only ever their own numbers: never another person's, never the shop's total. If it comes back refused, treat them as a customer and do not mention that such numbers exist. When commission_percent is null, say what they produced and that the split is not recorded in the system — never invent a percentage. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
+  inputSchema: z.toJSONSchema(EarningsInputSchema),
+  outputSchema: z.toJSONSchema(EarningsOutputSchema),
+  implementation: earningsImplementation,
+};
+
 export const MyScheduleTool: ToolDefinition<
   typeof ScheduleInputSchema,
   typeof ScheduleOutputSchema
