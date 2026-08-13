@@ -37,6 +37,7 @@ import { SaveContactDetailsTool } from "./contact_details.ts";
 import { JoinWaitlistTool } from "./waitlist.ts";
 import { MyEarningsTool, MyScheduleTool } from "./staff.ts";
 import { LoyaltyCardTool } from "./loyalty.ts";
+import { ScheduleFollowUpTool } from "./follow_up.ts";
 import { TagContactTool } from "./tag_contact.ts";
 
 // Only what is registered here reaches an agent. `attachment.ts` and `code.ts`
@@ -66,6 +67,7 @@ const FunctionTools = [
   MyScheduleTool,
   MyEarningsTool,
   LoyaltyCardTool,
+  ScheduleFollowUpTool,
   // Sozinha, e desligada por padrão: guardar documento de quem não pediu é
   // tratamento de dado pessoal por conta própria, e essa é decisão de quem
   // opera. Estar aqui só a torna disponível; quem liga é a tela. - 2026/08/03
