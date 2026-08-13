@@ -38,6 +38,108 @@ import { DEFAULT_TIMEZONE } from "../protocols/context.ts";
 
 const JANELA_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * O modelo que o retorno usa quando a janela já terá fechado.
+ *
+ * O nome é contrato com a tela: `MODELO_DE_RETORNO` em
+ * `open-bsp-ui/src/config/modelosProntos.ts`. Ele vem no catálogo de modelos
+ * prontos, e o dono manda aprovar num clique.
+ */
+const NOME_DO_MODELO_DE_RETORNO = "retorno_solicitado";
+
+/** O modelo aprovado, ou nulo quando a loja ainda não tem um. */
+async function modeloDeRetorno(
+  supabaseClient: SupabaseClient,
+  context: RequestContext,
+): Promise<{ name: string; language: string; body: string } | null> {
+  const { data } = await supabaseClient.functions.invoke(
+    "whatsapp-management/templates",
+    {
+      method: "PUT",
+      body: {
+        organization_id: context.organization.id,
+        organization_address: context.conversation.organization_address,
+      },
+    },
+  );
+
+  const lista = (data ?? []) as {
+    name: string;
+    status: string;
+    language: string;
+    components?: { type: string; text?: string }[];
+  }[];
+
+  const achado = lista.find(
+    (item) =>
+      item.name === NOME_DO_MODELO_DE_RETORNO && item.status === "APPROVED",
+  );
+
+  if (!achado) return null;
+
+  const body = achado.components?.find((c) => c.type === "BODY")?.text ?? "";
+
+  return { name: achado.name, language: achado.language, body };
+}
+
+/** Grava a mensagem, apagando o pedido anterior desta conversa. */
+async function gravar(input: {
+  supabaseClient: SupabaseClient;
+  context: RequestContext;
+  quando: Date;
+  timeZone: string;
+  conteudo: Record<string, unknown>;
+}) {
+  const { supabaseClient, context, quando, timeZone, conteudo } = input;
+
+  /**
+   * O pedido anterior sai de cena.
+   *
+   * Apagado e não mantido: quem remarca o retorno duas vezes espera UM retorno,
+   * e receber os dois faz o sistema parecer descontrolado. Só as que ainda não
+   * saíram — mexer no que já foi entregue seria reescrever o histórico.
+   */
+  const { data: pendentes } = await supabaseClient
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", context.conversation.id)
+    .eq("direction", "outgoing")
+    .gt("timestamp", new Date().toISOString())
+    .contains("content", { follow_up: true });
+
+  const anteriores = pendentes ?? [];
+
+  for (const linha of anteriores) {
+    await supabaseClient.from("messages").delete().eq("id", linha.id);
+  }
+
+  const { error } = await supabaseClient.from("messages").insert({
+    id: crypto.randomUUID(),
+    organization_id: context.organization.id,
+    conversation_id: context.conversation.id,
+    service: context.conversation.service,
+    organization_address: context.conversation.organization_address,
+    contact_address: context.conversation.contact_address,
+    direction: "outgoing",
+    content: conteudo,
+    timestamp: quando.toISOString(),
+  });
+
+  if (error) {
+    return {
+      scheduled_for: null,
+      replaced_earlier: false,
+      refused: `Could not save it: ${error.message}`,
+    };
+  }
+
+  return {
+    scheduled_for: utcToLocal(quando, timeZone),
+    replaced_earlier: anteriores.length > 0,
+    refused: null,
+  };
+}
+
 const FollowUpInputSchema = z.object({
   when: z.string().describe(
     "When to write back, 'YYYY-MM-DD HH:mm' in the business's own timezone. Resolve what they said — 'às seis', 'amanhã de manhã', 'depois do almoço' — into a real date and time. If it is ambiguous, ASK before calling this.",
@@ -110,79 +212,83 @@ async function followUpImplementation(
     const fecha = ultima ? new Date(ultima).getTime() + JANELA_MS : 0;
 
     if (quando.getTime() >= fecha) {
-      return {
-        scheduled_for: null,
-        replaced_earlier: false,
-        refused: `WhatsApp only lets us write freely for 24 hours after their last message, and that time is past it — the message would be refused when it went out, days later, with nobody watching. The last moment that still works is ${
-          utcToLocal(new Date(fecha), timeZone)
-        }. Offer to write back before then, or ask them to send you a message when they are free — do NOT promise to contact them at the time they asked for.`,
-      };
+      /**
+       * Fora da janela, o modelo aprovado é a saída — e ele existe justamente
+       * para isso.
+       *
+       * `retorno_solicitado` vem no catálogo de modelos prontos da tela, e o
+       * nome é CONTRATO entre os dois repositórios (ver `modelosProntos.ts` no
+       * open-bsp-ui). Renomear de um lado só desliga o recurso em silêncio.
+       *
+       * Só aprovado serve: um em análise é recusado no envio, e agendar contra
+       * ele seria trocar uma falha visível hoje por uma invisível na semana que
+       * vem.
+       */
+      const modelo = await modeloDeRetorno(supabaseClient, context);
+
+      if (!modelo) {
+        return {
+          scheduled_for: null,
+          replaced_earlier: false,
+          refused: `WhatsApp only lets us write freely for 24 hours after their last message, and that time is past it — the message would be refused when it went out, days later, with nobody watching. The last moment that still works is ${
+            utcToLocal(new Date(fecha), timeZone)
+          }. Offer to write back before then, or ask them to send you a message when they are free — do NOT promise to contact them at the time they asked for.`,
+        };
+      }
+
+      // O nome de quem recebe, e o número quando não há nome: o modelo pede
+      // uma variável e mandar vazio é recusa da Meta na hora do envio.
+      const paraQuem = context.conversation.name ||
+        context.conversation.contact_address || "";
+
+      return await gravar({
+        supabaseClient,
+        context,
+        quando,
+        timeZone,
+        // O modelo carrega o nome de quem recebe; o texto que a assistente
+        // escreveu não cabe num modelo aprovado, cujo corpo é fixo.
+        conteudo: {
+          version: "1",
+          type: "data",
+          kind: "template",
+          data: {
+            name: modelo.name,
+            language: { code: modelo.language },
+            components: [{
+              type: "body",
+              parameters: [{ type: "text", text: paraQuem }],
+            }],
+          },
+          text: modelo.body.replaceAll("{{1}}", paraQuem),
+          follow_up: true,
+        },
+      });
     }
   }
 
   /**
-   * O pedido anterior sai de cena.
+   * Dentro da janela, o texto que a assistente escreveu.
    *
-   * Apagado e não mantido: quem remarca o retorno duas vezes espera UM retorno,
-   * e receber os dois faz o sistema parecer descontrolado. Só as que ainda não
-   * saíram — mexer no que já foi entregue seria reescrever o histórico.
+   * `kind` continua "text", e a marca vai num campo à parte. Inventar
+   * `kind: "follow_up"` seria um valor que a TELA não conhece — e quem desenha
+   * a bolha decide pelo `kind`, então a mensagem chegaria ao cliente e
+   * apareceria em branco no painel. O lembrete já resolveu isso do mesmo jeito,
+   * guardando `appointment_id` dentro do `content`.
    */
-  const { data: pendentes } = await supabaseClient
-    .from("messages")
-    .select("id")
-    .eq("conversation_id", context.conversation.id)
-    .eq("direction", "outgoing")
-    .gt("timestamp", new Date().toISOString())
-    .contains("content", { follow_up: true });
-
-  const anteriores = pendentes ?? [];
-
-  for (const linha of anteriores) {
-    await supabaseClient.from("messages").delete().eq("id", linha.id);
-  }
-
-  const { error } = await supabaseClient.from("messages").insert({
-    id: crypto.randomUUID(),
-    organization_id: context.organization.id,
-    conversation_id: context.conversation.id,
-    service,
-    organization_address: context.conversation.organization_address,
-    contact_address: context.conversation.contact_address,
-    direction: "outgoing",
-    /**
-     * `kind` continua "text", e a marca vai num campo à parte.
-     *
-     * Inventar `kind: "follow_up"` seria um valor que a TELA não conhece — e
-     * quem desenha a bolha decide pelo `kind`, então a mensagem chegaria ao
-     * cliente e apareceria em branco no painel. O lembrete já resolveu isso do
-     * mesmo jeito, guardando `appointment_id` dentro do `content`.
-     *
-     * É por esta marca que o pedido anterior é encontrado e substituído, sem
-     * tocar nos lembretes de compromisso, que são outra coisa.
-     */
-    content: {
+  return await gravar({
+    supabaseClient,
+    context,
+    quando,
+    timeZone,
+    conteudo: {
       version: "1",
       type: "text",
       kind: "text",
       text: input.message,
       follow_up: true,
     },
-    timestamp: quando.toISOString(),
   });
-
-  if (error) {
-    return {
-      scheduled_for: null,
-      replaced_earlier: false,
-      refused: `Could not save it: ${error.message}`,
-    };
-  }
-
-  return {
-    scheduled_for: utcToLocal(quando, timeZone),
-    replaced_earlier: anteriores.length > 0,
-    refused: null,
-  };
 }
 
 export const ScheduleFollowUpTool: ToolDefinition<
