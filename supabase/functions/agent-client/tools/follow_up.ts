@@ -4,6 +4,7 @@ import type { ToolDefinition } from "./base.ts";
 import type { RequestContext } from "../protocols/base.ts";
 import { localToUtc, utcToLocal } from "./appointments.ts";
 import { DEFAULT_TIMEZONE } from "../protocols/context.ts";
+import { approvedTemplates } from "../../_shared/approved_templates.ts";
 
 /**
  * # "Agora não posso falar, me chama às seis"
@@ -47,39 +48,26 @@ const JANELA_MS = 24 * 60 * 60 * 1000;
  */
 const NOME_DO_MODELO_DE_RETORNO = "retorno_solicitado";
 
-/** O modelo aprovado, ou nulo quando a loja ainda não tem um. */
+/**
+ * O modelo aprovado, ou nulo quando a loja ainda não tem um.
+ *
+ * Lê direto da Meta, e NÃO chamando `whatsapp-management/templates`: aquele
+ * endpoint exige JWT de usuário ou chave de API, e a chave de serviço com que o
+ * agent-client fala é rejeitada com 401. Como `functions.invoke` devolve o erro
+ * em `error` e não estoura, a lista saía vazia e o recurso ficava desligado em
+ * silêncio numa loja que TINHA o modelo. Ver `_shared/approved_templates.ts`.
+ */
 async function modeloDeRetorno(
   supabaseClient: SupabaseClient,
   context: RequestContext,
-): Promise<{ name: string; language: string; body: string } | null> {
-  const { data } = await supabaseClient.functions.invoke(
-    "whatsapp-management/templates",
-    {
-      method: "PUT",
-      body: {
-        organization_id: context.organization.id,
-        organization_address: context.conversation.organization_address,
-      },
-    },
+) {
+  const lista = await approvedTemplates(
+    supabaseClient,
+    context.organization.id,
+    context.conversation.organization_address,
   );
 
-  const lista = (data ?? []) as {
-    name: string;
-    status: string;
-    language: string;
-    components?: { type: string; text?: string }[];
-  }[];
-
-  const achado = lista.find(
-    (item) =>
-      item.name === NOME_DO_MODELO_DE_RETORNO && item.status === "APPROVED",
-  );
-
-  if (!achado) return null;
-
-  const body = achado.components?.find((c) => c.type === "BODY")?.text ?? "";
-
-  return { name: achado.name, language: achado.language, body };
+  return lista.find((item) => item.name === NOME_DO_MODELO_DE_RETORNO) ?? null;
 }
 
 /** Grava a mensagem, apagando o pedido anterior desta conversa. */
@@ -93,28 +81,20 @@ async function gravar(input: {
   const { supabaseClient, context, quando, timeZone, conteudo } = input;
 
   /**
-   * O pedido anterior sai de cena.
+   * O anterior sai de cena — DEPOIS que o novo entrou.
    *
-   * Apagado e não mantido: quem remarca o retorno duas vezes espera UM retorno,
-   * e receber os dois faz o sistema parecer descontrolado. Só as que ainda não
-   * saíram — mexer no que já foi entregue seria reescrever o histórico.
+   * Apagar primeiro parecia natural e é errado: se a gravação falhar, o cliente
+   * fica sem o retorno que já tinha, e a assistente diz que não conseguiu
+   * marcar sem contar que desmarcou o anterior. Trocar a ordem custa nada e
+   * transforma "perdi os dois" em "fiquei com o antigo".
+   *
+   * Não há transação aqui — são duas chamadas ao PostgREST —, então a ordem é a
+   * única garantia que existe, e ela tem de ser a que falha para o lado seguro.
    */
-  const { data: pendentes } = await supabaseClient
-    .from("messages")
-    .select("id")
-    .eq("conversation_id", context.conversation.id)
-    .eq("direction", "outgoing")
-    .gt("timestamp", new Date().toISOString())
-    .contains("content", { follow_up: true });
-
-  const anteriores = pendentes ?? [];
-
-  for (const linha of anteriores) {
-    await supabaseClient.from("messages").delete().eq("id", linha.id);
-  }
+  const id = crypto.randomUUID();
 
   const { error } = await supabaseClient.from("messages").insert({
-    id: crypto.randomUUID(),
+    id,
     organization_id: context.organization.id,
     conversation_id: context.conversation.id,
     service: context.conversation.service,
@@ -131,6 +111,28 @@ async function gravar(input: {
       replaced_earlier: false,
       refused: `Could not save it: ${error.message}`,
     };
+  }
+
+  /**
+   * Só os que ainda não saíram, e nunca o que acabou de entrar.
+   *
+   * Quem remarca o retorno duas vezes espera UM retorno, e receber os dois faz
+   * o sistema parecer descontrolado. Mexer no que já foi entregue seria
+   * reescrever o histórico.
+   */
+  const { data: pendentes } = await supabaseClient
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", context.conversation.id)
+    .eq("direction", "outgoing")
+    .neq("id", id)
+    .gt("timestamp", new Date().toISOString())
+    .contains("content", { follow_up: true });
+
+  const anteriores = pendentes ?? [];
+
+  for (const linha of anteriores) {
+    await supabaseClient.from("messages").delete().eq("id", linha.id);
   }
 
   return {
