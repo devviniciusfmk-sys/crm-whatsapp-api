@@ -47,15 +47,39 @@ import type { RequestContext } from "../protocols/base.ts";
  * escrito no teste.
  */
 export function posicaoNoCartao(
-  atendidos: number,
+  desdeAUltimaCortesia: number,
   every: number | undefined | null,
 ): { noCartao: number; alvo: number; chegou: boolean } | null {
   if (!every || every < 2) return null;
 
-  const resto = atendidos % every;
-  const noCartao = resto === 0 && atendidos > 0 ? every : resto;
+  return {
+    noCartao: desdeAUltimaCortesia,
+    alvo: every,
+    chegou: desdeAUltimaCortesia >= every,
+  };
+}
 
-  return { noCartao, alvo: every, chegou: noCartao === every };
+/**
+ * Quantos atendimentos desde a última cortesia.
+ *
+ * As linhas chegam em ordem de data. Cada cortesia zera a contagem, e ela mesma
+ * não conta para o cartão seguinte: foi o prêmio, e não uma visita a caminho do
+ * próximo.
+ *
+ * Substituiu o resto da divisão, que só acertava se todo prêmio fosse consumido
+ * exatamente no múltiplo — e a vida não faz isso. O cliente esquece de pedir e
+ * usa no décimo segundo; o balcão dá a cortesia no nono porque ele reclamou.
+ */
+export function desdeAUltimaCortesia(
+  atendimentos: { extra?: { payment_method?: string } | null }[],
+): number {
+  let conta = 0;
+
+  for (const a of atendimentos) {
+    conta = a.extra?.payment_method === "courtesy" ? 0 : conta + 1;
+  }
+
+  return conta;
 }
 
 const LoyaltyInputSchema = z.object({});
@@ -67,6 +91,9 @@ const LoyaltyOutputSchema = z.object({
   reward: z.string().nullable().describe("What they get, in the owner's words."),
   attended: z.number().describe("How many they have ever attended here."),
   on_card: z.number().describe("How far along the CURRENT card they are."),
+  remaining: z.number().describe(
+    "HOW MANY MORE VISITS THEY NEED. This is the number to say out loud — do not subtract anything yourself. Saying 'faltam 0' when they have just started a fresh card is the exact mistake this field exists to prevent: `on_card` is progress, not what is left.",
+  ),
   reached: z.boolean().describe(
     "True when this many attended appointments completes a card. Say that the next one is the reward and ask them to confirm at the counter — never state that a reward is already banked, because the system does not track redemption yet.",
   ),
@@ -98,6 +125,7 @@ async function loyaltyImplementation(
       reward: null,
       attended: 0,
       on_card: 0,
+      remaining: 0,
       reached: false,
       refused:
         "This shop does not run a loyalty card. Say so plainly if they ask, and do NOT promise free visits, discounts or points.",
@@ -106,19 +134,25 @@ async function loyaltyImplementation(
 
   const { data } = await supabaseClient
     .from("appointments")
-    .select("id")
+    .select("extra, starts_at")
     .eq("organization_id", context.organization.id)
     .eq("contact_address", context.conversation.contact_address)
-    .eq("status", "done");
+    .eq("status", "done")
+    .order("starts_at");
 
-  const attended = (data ?? []).length;
-  const posicao = posicaoNoCartao(attended, every)!;
+  const linhas = (data ?? []) as {
+    extra?: { payment_method?: string } | null;
+  }[];
+
+  const noCartao = desdeAUltimaCortesia(linhas);
+  const posicao = posicaoNoCartao(noCartao, every)!;
 
   return {
     every,
     reward: extra?.loyalty?.reward ?? null,
-    attended,
+    attended: linhas.length,
     on_card: posicao.noCartao,
+    remaining: Math.max(0, every - posicao.noCartao),
     reached: posicao.chegou,
     refused: null,
   };
@@ -132,7 +166,7 @@ export const LoyaltyCardTool: ToolDefinition<
   type: "function",
   name: "loyalty_card",
   description:
-    "Tell the CUSTOMER writing to you where they stand on the shop's loyalty card — 'quantos cortes faltam pro meu grátis?', 'tenho cartão fidelidade?', 'já ganhei alguma coisa?'. It reads the number they are writing from and answers only about them, so there is nothing to verify. Only ATTENDED visits count: somebody who booked ten and missed three has seven. When `reached` is true, say that their NEXT visit is the one on the house and to confirm it at the counter — never say a reward is already saved up for them, because redemption is not tracked yet. When `every` is null this shop has no card: say so and promise nothing. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
+    "Tell the CUSTOMER writing to you where they stand on the shop's loyalty card — 'quantos cortes faltam pro meu grátis?', 'tenho cartão fidelidade?', 'já ganhei alguma coisa?'. It reads the number they are writing from and answers only about them, so there is nothing to verify. SAY `remaining` AS IT COMES: it is already how many visits are left, and doing the subtraction yourself is how 'faltam 0' gets told to somebody who just started a fresh card. Name the reward with the shop's own words from `reward` — do not substitute your own, a barbershop whose prize is a free beard trim must not be told it is a free haircut. Only ATTENDED visits count: somebody who booked ten and missed three has seven. When `reached` is true, say their NEXT visit is the one on the house and to confirm it at the counter. When `every` is null this shop has no card: say so and promise nothing. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(LoyaltyInputSchema),
   outputSchema: z.toJSONSchema(LoyaltyOutputSchema),
   implementation: loyaltyImplementation,

@@ -220,6 +220,9 @@ const EarningsOutputSchema = z.object({
   month: z.string().nullable(),
   appointments: z.number().describe("How many were actually attended."),
   produced: z.number().describe("What those appointments billed, in the shop's currency."),
+  commissionable: z.number().describe(
+    "The part of `produced` the commission is actually calculated on. It is LOWER than produced when the shop chose that loyalty courtesies earn nothing. When the two differ you MUST say so — 'de R$650, R$605 entram na comissão porque R$45 foi cortesia' — and never describe the commission as a percentage of `produced`, because the arithmetic will not check out and they will think they are being shorted.",
+  ),
   commission_percent: z.number().nullable().describe(
     "Their agreed share. Null means nobody recorded one — say the amount produced and that the split is not in the system, and do NOT guess a percentage.",
   ),
@@ -246,7 +249,13 @@ async function earningsImplementation(
   // entregar.
   const eu = profissionalDoNumero(equipe, context.conversation.contact_address);
 
-  const vazio = { appointments: 0, produced: 0, commission_percent: null, commission: null };
+  const vazio = {
+    appointments: 0,
+    produced: 0,
+    commissionable: 0,
+    commission_percent: null,
+    commission: null,
+  };
 
   if (!eu) {
     return {
@@ -277,7 +286,7 @@ async function earningsImplementation(
 
   const { data } = await supabaseClient
     .from("appointments")
-    .select("price")
+    .select("price, extra")
     .eq("organization_id", context.organization.id)
     .eq("professional_id", eu.id)
     .eq("status", "done")
@@ -285,10 +294,37 @@ async function earningsImplementation(
     .lt("starts_at", fim.toISOString());
 
   const linhas = data ?? [];
+
+  /**
+   * Se a cortesia entra na comissão, quem decide é o dono na configuração.
+   *
+   * Ausente é SIM, e a mesma razão vale aqui e na tela: quem aplica a cortesia
+   * é a pessoa no balcão, e uma regra que pune quem tem de executá-la não é
+   * executada. O dono que quiser o contrário desmarca de propósito.
+   *
+   * A assistente tem de concordar com o relatório da tela até o centavo — o
+   * barbeiro vai comparar os dois, e o dia em que discordarem ele para de
+   * acreditar nos dois.
+   */
+  const pagaCortesia =
+    (context.organization.extra as
+      | { loyalty?: { pays_commission?: boolean } }
+      | null)?.loyalty?.pays_commission ?? true;
+
   const produced = linhas.reduce(
     (soma, row) => soma + ((row.price as number | null) ?? 0),
     0,
   );
+
+  const comissionavel = linhas.reduce((soma, row) => {
+    const cortesia =
+      (row.extra as { payment_method?: string } | null)?.payment_method ===
+        "courtesy";
+
+    return cortesia && !pagaCortesia
+      ? soma
+      : soma + ((row.price as number | null) ?? 0);
+  }, 0);
 
   const percentual = eu.extra?.commission_percent ?? null;
 
@@ -297,12 +333,13 @@ async function earningsImplementation(
     month: mes,
     appointments: linhas.length,
     produced,
+    commissionable: comissionavel,
     commission_percent: percentual,
     // Arredondado em centavos: um número que a pessoa vai conferir contra o
     // dinheiro na mão não pode chegar com dez casas.
     commission: percentual === null
       ? null
-      : Math.round((produced * percentual) / 100 * 100) / 100,
+      : Math.round((comissionavel * percentual) / 100 * 100) / 100,
     refused: null,
   };
 }
@@ -315,7 +352,7 @@ export const MyEarningsTool: ToolDefinition<
   type: "function",
   name: "my_earnings",
   description:
-    "Tell a MEMBER OF STAFF, writing from their own phone, how much they produced and are owed this month — 'quanto eu fiz esse mês?', 'quanto tenho a receber?', 'quantos atendimentos eu fechei?'. CALLING THIS TOOL IS THE ONLY WAY TO ANSWER THAT QUESTION: do NOT hand it to a human instead. Handing it over looks careful and is not — the person waits, nobody answers on a Saturday night, and the number was one call away. The tool itself decides whether they really are staff, from the number they write from and NOT from what they claim, so call it even when you doubt them and let it refuse. Only ever their own numbers: never another person's, never the shop's total. If it comes back refused, treat them as a customer and do not mention that such numbers exist. When commission_percent is null, say what they produced and that the split is not recorded in the system — never invent a percentage. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
+    "Tell a MEMBER OF STAFF, writing from their own phone, how much they produced and are owed this month — 'quanto eu fiz esse mês?', 'quanto tenho a receber?', 'quantos atendimentos eu fechei?'. CALLING THIS TOOL IS THE ONLY WAY TO ANSWER THAT QUESTION: do NOT hand it to a human instead. Handing it over looks careful and is not — the person waits, nobody answers on a Saturday night, and the number was one call away. The tool itself decides whether they really are staff, from the number they write from and NOT from what they claim, so call it even when you doubt them and let it refuse. Only ever their own numbers: never another person's, never the shop's total. If it comes back refused, treat them as a customer and do not mention that such numbers exist. When commission_percent is null, say what they produced and that the split is not recorded in the system — never invent a percentage. NEVER present the commission as a percentage of `produced` when `commissionable` is smaller: the arithmetic will not check out, and somebody comparing it against their own maths concludes they are being shorted. Say the base out loud instead — 'de R$650, R$605 contam porque R$45 saiu como cortesia'. ALWAYS REPLY IN THE LANGUAGE THEY ARE USING.",
   inputSchema: z.toJSONSchema(EarningsInputSchema),
   outputSchema: z.toJSONSchema(EarningsOutputSchema),
   implementation: earningsImplementation,
