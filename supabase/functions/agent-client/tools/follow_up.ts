@@ -40,13 +40,17 @@ import { approvedTemplates } from "../../_shared/approved_templates.ts";
 const JANELA_MS = 24 * 60 * 60 * 1000;
 
 /**
- * O modelo que o retorno usa quando a janela já terá fechado.
+ * Os modelos que o retorno usa quando a janela já terá fechado.
  *
- * O nome é contrato com a tela: `MODELO_DE_RETORNO` em
- * `open-bsp-ui/src/config/modelosProntos.ts`. Ele vem no catálogo de modelos
+ * Os nomes são contrato com a tela: `MODELOS_DE_RETORNO` em
+ * `open-bsp-ui/src/config/modelosProntos.ts`. Eles vêm no catálogo de modelos
  * prontos, e o dono manda aprovar num clique.
+ *
+ * São dois porque o `retorno_solicitado` foi aprovado como MARKETING e a Meta
+ * não deixa trocar a categoria de um modelo aprovado. O `retorno_utilidade`
+ * nasceu com o texto que aponta para o compromisso; o velho fica de reserva.
  */
-const NOME_DO_MODELO_DE_RETORNO = "retorno_solicitado";
+const NOMES_DO_MODELO_DE_RETORNO = ["retorno_utilidade", "retorno_solicitado"];
 
 /**
  * Quantas variáveis o corpo aprovado pede.
@@ -109,7 +113,24 @@ async function modeloDeRetorno(
     context.conversation.organization_address,
   );
 
-  return lista.find((item) => item.name === NOME_DO_MODELO_DE_RETORNO) ?? null;
+  const candidatos = NOMES_DO_MODELO_DE_RETORNO
+    .map((nome) => lista.find((item) => item.name === nome))
+    .filter((item) => item !== undefined);
+
+  /**
+   * O barato primeiro, e o caro só se não houver barato.
+   *
+   * Utilidade custa R$ 0,0340 e promoção R$ 0,3125 — nove vezes. A ordem dos
+   * nomes já põe o novo na frente, mas a categoria manda: se um dia a Meta
+   * reclassificar o `retorno_utilidade` também, a escolha continua caindo no
+   * que for utilidade em vez de seguir a ordem cegamente.
+   *
+   * Mandar o caro quando é o único é de propósito. A alternativa é não escrever
+   * — e a pessoa pediu o retorno, então uma mensagem cara é melhor que uma
+   * promessa quebrada. Some sozinho quando o de utilidade for aprovado.
+   */
+  return candidatos.find((item) => item.category === "UTILITY") ??
+    candidatos[0] ?? null;
 }
 
 /** Grava a mensagem, apagando o pedido anterior desta conversa. */
