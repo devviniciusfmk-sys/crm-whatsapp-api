@@ -209,6 +209,26 @@ when (
 )
 execute function public.pause_conversation_on_human_message();
 
+-- O cliente voltou a escrever, e havia um retorno prestes a sair.
+--
+-- Mesmas guardas de tempo do gatilho acima, e pelo mesmo motivo: a importação
+-- de histórico insere entradas antigas em lote, e sem o piso de dez segundos um
+-- backfill cancelaria retornos legítimos de conversas que ninguém tocou.
+--
+-- `local` NÃO está de fora aqui — ao contrário da pausa, que existe para não
+-- atropelar um humano que não existe no serviço interno. Isto é regra de
+-- produto, e as suítes que rodam em `local` precisam vê-la funcionando.
+create trigger cancel_follow_up_on_reply
+after insert
+on public.messages
+for each row
+when (
+  new.direction = 'incoming'::public.direction
+  and new.timestamp <= now()
+  and new.timestamp >= now() - interval '10 seconds'
+)
+execute function public.cancel_follow_up_on_reply();
+
 create trigger handle_message_to_media_preprocessor
 after insert
 on public.messages

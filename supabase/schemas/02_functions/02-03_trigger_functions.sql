@@ -481,3 +481,59 @@ begin
   return new;
 end;
 $$;
+
+-- ## O retorno que não faz mais sentido
+--
+-- "Me chama às 19h" vira uma mensagem parada com carimbo futuro. Se às 18h40 o
+-- cliente escreve de novo, às 19h chega "Oi, você pediu para eu falar com você
+-- às 19h" — em cima de uma conversa que está acontecendo naquele instante. Do
+-- lado de fora, um robô que não percebe que já está falando com você.
+--
+-- ## Por que UMA HORA, e não qualquer resposta
+--
+-- O sistema de onde esta ideia veio cancela a sequência inteira a qualquer
+-- mensagem de entrada. Ali é o certo: são réguas de marketing, e uma resposta
+-- quer dizer "já engajou, pare de insistir".
+--
+-- Aqui seria errado. O retorno existe porque a PESSOA pediu, e um "obrigado"
+-- mandado trinta segundos depois do pedido cancelaria justamente a promessa que
+-- este recurso existe para cumprir — trocaríamos um constrangimento por um
+-- cliente esperando uma mensagem que ninguém vai mandar, que é o defeito
+-- original.
+--
+-- Então a régua é estreita e mecânica: só morre o retorno que sairia enquanto a
+-- conversa ainda está quente. Passada uma hora de silêncio, a promessa vale.
+--
+-- Apagar e não marcar: a linha ainda não é uma mensagem — nada foi para o
+-- WhatsApp, ninguém viu, e não há histórico a preservar. É o mesmo que a
+-- ferramenta já faz ao substituir um retorno por outro.
+--
+-- ## `security definer`, e por quê
+--
+-- `messages` concede SELECT e INSERT, e mais nada: a conversa é um registro
+-- imutável de propósito. Sem isto, o `delete` daqui é FILTRADO pela RLS — zero
+-- linhas, nenhum erro, nenhum log. Medido em 2026/08/14: o gatilho entrou no
+-- ar, o teste continuou vermelho, e nada em lugar nenhum dizia o motivo.
+--
+-- O raio de ação é estreito e vale conferir linha a linha: só saídas DAQUELA
+-- conversa, só no futuro, só pendentes, só marcadas como retorno. E a inserção
+-- que dispara isto já passou pela RLS — quem chega aqui já podia escrever
+-- naquela conversa. - 2026/08/14
+create function public.cancel_follow_up_on_reply() returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.messages
+   where conversation_id = new.conversation_id
+     and direction = 'outgoing'::public.direction
+     and timestamp > now()
+     and timestamp <= now() + interval '1 hour'
+     and (status ->> 'pending') is not null
+     and (status ->> 'sent') is null
+     and (content ->> 'follow_up') = 'true';
+
+  return new;
+end;
+$$;
