@@ -30,6 +30,7 @@ import { Ajv2020 } from "ajv";
 import type { AgentRowWithExtra, ResponseContext } from "./protocols/base.ts";
 import { getFileMetadata } from "../_shared/media.ts";
 import { type MessageRowV0, toV1 } from "../_shared/messages-v0.ts";
+import { sugerirRetorno } from "./sugerir_retorno.ts";
 
 const sanitizeLabel = (label: string) => {
   return label
@@ -342,6 +343,25 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  /**
+   * Ninguém vai responder — mas o "me chama às 19" não pode se perder.
+   *
+   * As quatro saídas abaixo têm a mesma consequência invisível: sem assistente
+   * no caminho, `schedule_follow_up` nunca é chamada, e um cliente que pediu
+   * retorno fica esperando uma mensagem que nenhuma parte do sistema vai
+   * mandar. Aqui não sai nada — fica um bilhete na conversa, e quem atende
+   * confirma num toque. Ver `sugerir_retorno.ts`.
+   */
+  const deixarBilhete = () =>
+    sugerirRetorno({
+      client,
+      conversationId: conv.id,
+      // `?.` porque a garantia de que `extra` existe só é feita mais abaixo, e
+      // o bilhete é deixado antes disso.
+      timeZone: org.extra?.timezone,
+      texto: (incoming.content as TextPart | null)?.text,
+    });
+
   // CHECK IF CONVERSATION IS PAUSED
 
   if (
@@ -349,6 +369,8 @@ Deno.serve(async (req) => {
     +new Date(conv.extra.paused) > +new Date() - PAUSED_CONV_WINDOW
   ) {
     log.info(`Conversation ${conv.id} is paused. Skipping response.`);
+
+    await deixarBilhete();
 
     return new Response("ok", { headers: corsHeaders });
   }
@@ -620,6 +642,8 @@ Deno.serve(async (req) => {
       if (org.extra.pause_agent_when_closed) {
         log.info(`Conversation ${conv.id} is out of hours. Skipping response.`);
 
+        await deixarBilhete();
+
         return new Response("ok", { headers: corsHeaders });
       }
     }
@@ -631,6 +655,9 @@ Deno.serve(async (req) => {
     log.info(
       `No AI agents found for conversation ${conv.id}. Skipping response.`,
     );
+
+    await deixarBilhete();
+
     return new Response("ok", { headers: corsHeaders });
   }
 
@@ -678,6 +705,9 @@ Deno.serve(async (req) => {
     log.info(
       `No active AI agents found for conversation ${conv.id}. Skipping response.`,
     );
+
+    await deixarBilhete();
+
     return new Response("ok", { headers: corsHeaders });
   }
 

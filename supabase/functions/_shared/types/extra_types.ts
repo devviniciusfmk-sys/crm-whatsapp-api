@@ -308,6 +308,25 @@ export type ConversationExtra = {
    * people block a number.
    */
   away_sent?: string;
+  /**
+   * "Ele pediu retorno às 19h" — um bilhete, e não um agendamento.
+   *
+   * Escrito quando o cliente diz uma hora e NENHUMA assistente vai responder
+   * (conversa pausada por um humano, loja fechada, agente inativo ou ausente).
+   * Nesses casos `schedule_follow_up` nunca é chamada e a promessa se perde.
+   *
+   * Nada sai daqui sozinho: a tela mostra um aviso de um toque acima do teclado
+   * e quem atende decide. `null` é como a tela o apaga — o `merge_update` grava
+   * o nulo na chave em vez de removê-la, e quem lê trata os dois como ausência.
+   * Ver `agent-client/sugerir_retorno.ts`.
+   */
+  retorno_sugerido?: {
+    /** Quando sairia, em ISO UTC. */
+    em: string;
+    /** O trecho da mensagem que foi lido, para o aviso poder se explicar. */
+    lido: string;
+    criado: string;
+  } | null;
   /*
   test_run?: {
     reference_conversation: {

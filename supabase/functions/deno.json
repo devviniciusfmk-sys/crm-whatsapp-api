@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "check": "deno check agent-client/index.ts && deno test --allow-all agent-client/",
+    "check": "deno check agent-client/index.ts && deno test --allow-all agent-client/ _shared/",
     "evals": "deno run --allow-all --env-file=../../.env.evals agent-client/evals/run.ts",
     "deploy": "deno run --allow-all ../../scripts/subir.ts"
   },
