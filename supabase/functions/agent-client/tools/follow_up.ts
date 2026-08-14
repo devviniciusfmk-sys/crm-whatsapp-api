@@ -49,6 +49,48 @@ const JANELA_MS = 24 * 60 * 60 * 1000;
 const NOME_DO_MODELO_DE_RETORNO = "retorno_solicitado";
 
 /**
+ * Quantas variáveis o corpo aprovado pede.
+ *
+ * Pelo MAIOR índice e não pela contagem: um corpo que repete `{{1}}` tem duas
+ * ocorrências e uma variável só, e mandar dois parâmetros é recusa na hora do
+ * envio.
+ */
+export function quantasVariaveis(corpo: string): number {
+  const indices = [...corpo.matchAll(/\{\{(\d+)\}\}/g)].map((m) =>
+    Number(m[1])
+  );
+
+  return indices.length ? Math.max(...indices) : 0;
+}
+
+/**
+ * Os valores na ordem do contrato, cortados no tamanho do modelo APROVADO.
+ *
+ * O catálogo da tela e o que está aprovado na conta da Meta podem estar em
+ * versões diferentes: o corpo mudou aqui em 2026/08/14 — de uma variável (o
+ * nome) para três (nome, dia, hora) — para deixar de ser lido como promoção, e
+ * quem aprovou a versão antiga continua com ela lá até reenviar.
+ *
+ * Mandar três parâmetros para um modelo de um é `132000` na hora do envio, dias
+ * depois, sem ninguém por perto. Contar o que o corpo REAL pede custa uma linha
+ * e faz os dois funcionarem.
+ */
+export function valoresDoRetorno(
+  corpo: string,
+  dados: { nome: string; data: string; hora: string },
+): string[] {
+  return [dados.nome, dados.data, dados.hora].slice(0, quantasVariaveis(corpo));
+}
+
+/** O corpo com os valores no lugar, para a bolha do painel. */
+export function preencherCorpo(corpo: string, valores: string[]): string {
+  return valores.reduce(
+    (texto, valor, i) => texto.replaceAll(`{{${i + 1}}}`, valor),
+    corpo,
+  );
+}
+
+/**
  * O modelo aprovado, ou nulo quando a loja ainda não tem um.
  *
  * Lê direto da Meta, e NÃO chamando `whatsapp-management/templates`: aquele
@@ -238,17 +280,29 @@ async function followUpImplementation(
         };
       }
 
-      // O nome de quem recebe, e o número quando não há nome: o modelo pede
-      // uma variável e mandar vazio é recusa da Meta na hora do envio.
+      // O nome de quem recebe, e o número quando não há nome: variável vazia é
+      // recusa da Meta na hora do envio.
       const paraQuem = context.conversation.name ||
         context.conversation.contact_address || "";
+
+      // "YYYY-MM-DD HH:mm" no fuso da loja, partido em dia e hora. O dia sai
+      // como a pessoa lê — 14/08/2026 —, que é o formato dos exemplos que
+      // foram aprovados.
+      const local = utcToLocal(quando, timeZone);
+      const [ano, mes, dia] = local.slice(0, 10).split("-");
+
+      const valores = valoresDoRetorno(modelo.body, {
+        nome: paraQuem,
+        data: `${dia}/${mes}/${ano}`,
+        hora: local.slice(11, 16),
+      });
 
       return await gravar({
         supabaseClient,
         context,
         quando,
         timeZone,
-        // O modelo carrega o nome de quem recebe; o texto que a assistente
+        // O modelo carrega os dados de quem recebe; o texto que a assistente
         // escreveu não cabe num modelo aprovado, cujo corpo é fixo.
         conteudo: {
           version: "1",
@@ -259,10 +313,13 @@ async function followUpImplementation(
             language: { code: modelo.language },
             components: [{
               type: "body",
-              parameters: [{ type: "text", text: paraQuem }],
+              parameters: valores.map((valor) => ({
+                type: "text",
+                text: valor,
+              })),
             }],
           },
-          text: modelo.body.replaceAll("{{1}}", paraQuem),
+          text: preencherCorpo(modelo.body, valores),
           follow_up: true,
         },
       });
