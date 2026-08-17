@@ -539,8 +539,16 @@ Deno.serve(async (req) => {
    * saudação já foi dada — o custo de mandar duas seria trocar um defeito por
    * outro. - 2026/08/06
    */
+  /**
+   * O interruptor da tela vale mais do que o texto escrito.
+   *
+   * `_off` ausente é LIGADA — escolhido assim para que nenhuma loja que já tem
+   * frase escrita parasse de mandar por causa desta linha. Ver
+   * `OrganizationExtra`. - 2026/08/18
+   */
   if (
     org.extra.welcome_message &&
+    !org.extra.welcome_message_off &&
     !assistenteVaiResponder &&
     messages.every((m) => m.direction !== "outgoing")
   ) {
@@ -595,7 +603,12 @@ Deno.serve(async (req) => {
       const sentRecently = conv.extra.away_sent &&
         +new Date(conv.extra.away_sent) > +new Date() - AWAY_MESSAGE_WINDOW;
 
-      if (org.extra.away_message && !sentRecently && !assistenteVaiResponder) {
+      if (
+        org.extra.away_message &&
+        !org.extra.away_message_off &&
+        !sentRecently &&
+        !assistenteVaiResponder
+      ) {
         const outgoing: MessageInsert = {
           organization_id: conv.organization_id,
           conversation_id: conv.id,
@@ -1623,8 +1636,10 @@ Deno.serve(async (req) => {
     // `?.` mesmo com `extra` sendo `not null` no banco: este bloco existe para
     // o caminho em que tudo já deu errado, e é o último lugar do sistema onde
     // vale confiar numa garantia de esquema.
-    const fraseDoPiso = (org.extra as OrganizationExtra | null)?.silence_message
-      ?.trim();
+    const fraseDoPiso = (org.extra as OrganizationExtra | null)
+      ?.silence_message_off
+      ? undefined
+      : (org.extra as OrganizationExtra | null)?.silence_message?.trim();
 
     if (fraseDoPiso) {
       const { data: ultimas } = await client

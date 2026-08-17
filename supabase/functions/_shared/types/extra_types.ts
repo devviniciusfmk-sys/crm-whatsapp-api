@@ -165,6 +165,25 @@ export type OrganizationExtra = {
    */
   silence_message?: string;
   /**
+   * Os interruptores das mensagens automáticas.
+   *
+   * `_off` e não `_on` porque a AUSÊNCIA tem de significar ligada: toda loja
+   * que já tem frase escrita continua mandando, sem migração e sem ninguém
+   * precisar entrar na tela para reativar o que nunca desativou.
+   *
+   * Existem porque desligar era apagar a frase, e quem apagava perdia o que
+   * tinha escrito. A frase guardada e o envio desligado são coisas diferentes,
+   * e até 2026/08/18 o produto só sabia representar uma.
+   *
+   * `handoff_timeout_message_off` é lido em SQL, na função do prazo de
+   * transferência — o texto dele nunca chegou a este arquivo, e o interruptor
+   * fica aqui para os quatro serem lidos no mesmo lugar.
+   */
+  welcome_message_off?: boolean;
+  away_message_off?: boolean;
+  handoff_timeout_message_off?: boolean;
+  silence_message_off?: boolean;
+  /**
    * Whether the agent also stays quiet outside opening hours.
    *
    * Both answers are legitimate and they are not the same product: a shop that

@@ -1,9 +1,18 @@
--- O prazo da transferência: quem espera demais volta para o assistente.
+-- Um interruptor para a mensagem de espera, sem apagar o texto.
 --
--- Nasceu como migração à mão em 2026/08/07 e nunca entrou no esquema
--- declarativo — então o primeiro `db diff` depois disso quis APAGÁ-LA, por
--- não a encontrar entre os arquivos. Um esquema que não descreve o banco
--- transforma cada migração seguinte numa armadilha. - 2026/08/09
+-- Desligar era apagar a frase, e quem apagava perdia o que tinha escrito. A
+-- barbearia perguntou onde estava o botão de desligar, e a resposta honesta
+-- era que não existia.
+--
+-- `_off` ausente é LIGADA, de propósito: toda loja que já tem frase escrita
+-- continua mandando, sem migração de dados e sem ninguém precisar entrar na
+-- tela para reativar o que nunca desativou.
+--
+-- A nota interna passa a distinguir três casos. "Não escreveram" e
+-- "escreveram e desligaram" levam a caminhos diferentes em Configurações, e
+-- dizer "não há mensagem escrita" a quem tem uma escrita manda a pessoa
+-- reescrever o que já está lá. - 2026/08/18
+
 create or replace function public.escalate_stale_handoffs()
 returns integer
 language plpgsql
