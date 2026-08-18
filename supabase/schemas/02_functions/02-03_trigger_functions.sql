@@ -306,6 +306,7 @@ set search_path = ''
 as $$
 declare
   _existing_address text;
+  _new_contact uuid;
 begin
   -- Validate that external services require either contact_address or group_address
   if new.service <> 'local' and new.contact_address is null and new.group_address is null then
@@ -325,14 +326,37 @@ begin
   limit 1;
 
   if _existing_address is null then
+    /**
+     * A ficha nasce JUNTO com o endereço, e não depois.
+     *
+     * Este gatilho criava o endereço sem `contact_id`, contando com
+     * `create_contact_on_first_address` para dar a ficha na primeira mensagem.
+     * Só que aquela função pula quando o endereço JÁ EXISTE — proteção contra
+     * ficha fantasma a cada `upsert` do webhook — e o endereço já existia,
+     * porque foi este gatilho que o criou. Resultado: endereço com conversa,
+     * com nome de perfil, e ficha nenhuma.
+     *
+     * Quem cai nesse buraco desaparece da tela de Contatos, que lê
+     * `public.contacts`. Encontrado em 2026/08/18 numa base real: o cliente
+     * "Ambern", com dois horários marcados, não existia na lista.
+     *
+     * Criando a ficha aqui, `create_contact_on_first_address` vê o
+     * `contact_id` preenchido e sai na primeira linha — não há ficha dupla.
+     */
+    insert into public.contacts (organization_id)
+    values (new.organization_id)
+    returning id into _new_contact;
+
     insert into public.contacts_addresses (
       organization_id,
       address,
-      service
+      service,
+      contact_id
     ) values (
       new.organization_id,
       new.contact_address,
-      new.service
+      new.service,
+      _new_contact
     );
   end if;
 
