@@ -359,3 +359,153 @@ begin
 end;
 $$;
 
+
+-- Emitir a fatura do mês de uma loja. Devolve o id, ou null quando não há o
+-- que cobrar (sem plano, ou plano de graça — fatura de zero é trabalho para
+-- quem for conferir). Idempotente: o mês tem uma fatura só, e esta função roda
+-- por cron e por mão.
+create function billing.emitir_fatura(
+  _organization_id uuid,
+  _quando date default current_date
+) returns uuid
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _plano billing.plans%rowtype;
+  _inicio timestamptz := date_trunc('month', _quando)::timestamptz;
+  _fim timestamptz := (date_trunc('month', _quando) + interval '1 month')::timestamptz;
+  _fatura uuid;
+begin
+  select p.* into _plano
+  from billing.subscriptions s
+  join billing.plans p on p.id = s.plan_id
+  where s.organization_id = _organization_id;
+
+  if not found or coalesce(_plano.price, 0) <= 0 then
+    return null;
+  end if;
+
+  select i.id into _fatura
+  from billing.invoices i
+  where i.organization_id = _organization_id
+    and i.period_start = _inicio
+    and i.status <> 'void';
+
+  if found then
+    return _fatura;
+  end if;
+
+  insert into billing.invoices (
+    organization_id, period_start, period_end, status, subtotal
+  )
+  values (_organization_id, _inicio, _fim, 'issued', _plano.price)
+  returning id into _fatura;
+
+  insert into billing.invoices_items (
+    invoice_id, type, plan_id, quantity, unit_price, amount
+  )
+  values (_fatura, 'plan', _plano.id, 1, _plano.price, _plano.price);
+
+  return _fatura;
+end;
+$$;
+
+-- Todas as lojas com plano pago. Chamada pelo cron todo dia 1.
+create function billing.emitir_faturas_do_mes(
+  _quando date default current_date
+) returns int
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _loja record;
+  _quantas int := 0;
+begin
+  for _loja in
+    select s.organization_id
+    from billing.subscriptions s
+    join billing.plans p on p.id = s.plan_id
+    where coalesce(p.price, 0) > 0
+  loop
+    if billing.emitir_fatura(_loja.organization_id, _quando) is not null then
+      _quantas := _quantas + 1;
+    end if;
+  end loop;
+
+  return _quantas;
+end;
+$$;
+
+-- Registrar um pagamento e quitar quando o somado alcança o total.
+--
+-- O Pix manual e os três gateways entram todos por aqui: o adaptador de cada
+-- um só traduz o formato do postback, e o miolo é este.
+--
+-- Quita pelo SOMADO e não pelo pagamento que chega — um Pix quebrado em dois é
+-- caso real, e quitar no primeiro seria dar por paga uma fatura pela metade.
+--
+-- Reenvio do mesmo postback devolve o pagamento que já existe. Sem isto o
+-- `unique` estouraria, o gateway leria o erro como "não recebido", e reenviaria
+-- para sempre.
+create function billing.registrar_pagamento(
+  _invoice_id uuid,
+  _amount numeric,
+  _method text,
+  _external_id text default null,
+  _account_id uuid default null
+) returns uuid
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _fatura billing.invoices%rowtype;
+  _pago numeric;
+  _pagamento uuid;
+begin
+  select * into strict _fatura
+  from billing.invoices i
+  where i.id = _invoice_id;
+
+  if _external_id is not null then
+    select p.id into _pagamento
+    from billing.payments p
+    where p.method = _method
+      and p.external_id = _external_id;
+
+    if found then
+      return _pagamento;
+    end if;
+  end if;
+
+  insert into billing.payments (
+    invoice_id, organization_id, account_id, amount, method, status, external_id
+  )
+  values (
+    _invoice_id,
+    _fatura.organization_id,
+    _account_id,
+    _amount,
+    _method,
+    'succeeded',
+    _external_id
+  )
+  returning id into _pagamento;
+
+  select coalesce(sum(p.amount), 0) into _pago
+  from billing.payments p
+  where p.invoice_id = _invoice_id
+    and p.status = 'succeeded';
+
+  if _pago >= _fatura.subtotal then
+    update billing.invoices
+    set status = 'paid'
+    where id = _invoice_id;
+  end if;
+
+  return _pagamento;
+end;
+$$;

@@ -49,3 +49,11 @@ before update
 on billing.payments
 for each row
 execute function public.moddatetime('updated_at');
+
+-- Um postback reenviado é o caso comum, não o raro: todo gateway reenvia
+-- quando não recebe 200 rápido o bastante. Sem esta trava o segundo envio vira
+-- um segundo pagamento, e o cliente aparece tendo pagado duas vezes — que é o
+-- erro que ninguém perdoa.
+create unique index payments_external_id_idx
+on billing.payments (method, external_id)
+where external_id is not null;
