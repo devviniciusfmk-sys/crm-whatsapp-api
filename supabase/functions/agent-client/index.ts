@@ -599,6 +599,13 @@ Deno.serve(async (req) => {
     log.info("Sequência por palavra", sequencia.name, passos.length, "passo(s)");
 
     for (const passo of passos) {
+      // A pausa curta é esperada AQUI, na função: agendar trinta segundos daria
+      // "algum momento no próximo minuto", porque a varredura roda de minuto em
+      // minuto. Ver ESPERA_NO_ENVIO.
+      if (passo.dormir) {
+        await new Promise((pronto) => setTimeout(pronto, passo.dormir * 1000));
+      }
+
       const linha: MessageInsert = {
         organization_id: conv.organization_id,
         conversation_id: conv.id,
@@ -609,7 +616,9 @@ Deno.serve(async (req) => {
         // Ver `donoDoCartaz`: sem isto o gatilho pausa a conversa por 12 horas.
         agent_id: donoDoCartaz?.id ?? null,
         content: passo.content as MessageInsert["content"],
-        timestamp: passo.quando.toISOString(),
+        // Só quando agenda. Sem carimbo, o banco põe a hora da inserção — que
+        // depois de uma espera é a hora certa. Ver passosComHora.
+        ...(passo.quando ? { timestamp: passo.quando.toISOString() } : {}),
       };
 
       await client.from("messages").insert(linha).throwOnError();

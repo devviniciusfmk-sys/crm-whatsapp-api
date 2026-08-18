@@ -62,8 +62,9 @@ Deno.test("a pausa vira hora futura, acumulada", () => {
   const passos = passosComHora(PRECOS, CATALOGO, agora);
 
   assertEquals(passos.length, 2);
-  assertEquals(passos[0].quando.toISOString(), "2026-08-18T12:00:00.000Z");
-  assertEquals(passos[1].quando.toISOString(), "2026-08-18T12:01:00.000Z");
+  // Sem carimbo: quem não espera nada é carimbado pelo banco na inserção.
+  assertEquals(passos[0].quando, null);
+  assertEquals(passos[1].quando?.toISOString(), "2026-08-18T12:01:00.000Z");
 });
 
 Deno.test("passo que aponta para algo apagado é pulado", () => {
@@ -74,4 +75,30 @@ Deno.test("passo que aponta para algo apagado é pulado", () => {
 
 Deno.test("normalizar tira acento e espaço sobrando", () => {
   assertEquals(normalizar("  Quanto   CUSTA?  "), "quanto custa?");
+});
+
+Deno.test("pausa curta vira espera de quem manda, e não hora futura", () => {
+  const agora = new Date("2026-08-18T12:00:00Z");
+
+  const curta = {
+    ...PRECOS,
+    steps: [
+      { kind: "text" as const, name: "Tabela" },
+      { kind: "text" as const, name: "Tabela", esperar: 30 },
+    ],
+  };
+
+  const passos = passosComHora(curta, CATALOGO, agora);
+
+  assertEquals(passos[1].dormir, 30);
+  // Sem carimbo: quem espera é quem manda, e a hora certa é a da inserção.
+  assertEquals(passos[1].quando, null);
+});
+
+Deno.test("pausa longa vira hora futura, e ninguém dorme", () => {
+  const agora = new Date("2026-08-18T12:00:00Z");
+  const passos = passosComHora(PRECOS, CATALOGO, agora);
+
+  assertEquals(passos[1].dormir, 0);
+  assertEquals(passos[1].quando?.toISOString(), "2026-08-18T12:01:00.000Z");
 });

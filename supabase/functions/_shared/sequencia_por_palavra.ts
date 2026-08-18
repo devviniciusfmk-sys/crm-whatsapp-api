@@ -21,9 +21,9 @@ import type { OrganizationExtra } from "./types/extra_types.ts";
  * ## O que ela NÃO faz
  *
  * Não decide se a sequência deve sair — só diz qual casou. Quem decide é
- * `agent-client`, com as duas travas que a tela promete: uma vez por conversa,
- * e só quando o assistente não vai responder. Um gatilho que dispara enquanto
- * o assistente também responde manda a loja falar duas vezes ao mesmo tempo.
+ * `agent-client`, com a trava que a tela promete: uma vez por conversa. E lá
+ * a sequência tem precedência sobre o assistente, porque ela É a resposta
+ * daquele turno: casou a palavra, o modelo nem é chamado.
  *
  * - 2026/08/18
  */
@@ -70,12 +70,24 @@ export function sequenciaPara(
 }
 
 /**
- * As mensagens de uma sequência, já com a hora de cada uma.
+ * Abaixo disto, quem manda ESPERA; daqui para cima, agenda.
  *
- * A pausa de cada passo conta a partir do anterior, então a hora do passo três
- * é a soma das pausas até ele. Passo sem pausa sai agora.
+ * Mesmo número da tela (`ESPERA_NO_ENVIO` em `utils/prontos.ts`). A varredura
+ * que entrega hora futura roda de minuto em minuto, então trinta segundos
+ * agendados viraria "algum momento no próximo minuto".
  *
- * Devolve o conteúdo e o carimbo; quem insere é quem chamou, que é onde estão
+ * Divergir dos dois lados seria a tela prometer trinta segundos e o gatilho
+ * por palavra entregar num minuto — o mesmo campo, dois comportamentos.
+ */
+export const ESPERA_NO_ENVIO = 60;
+
+/**
+ * As mensagens de uma sequência, cada uma com a hora e quanto dormir antes.
+ *
+ * Pausa curta volta em `dormir`, para quem chamou esperar de verdade; pausa
+ * longa entra no carimbo de `quando` e é a varredura que entrega.
+ *
+ * Devolve o conteúdo e nada mais: quem insere é quem chamou, que é onde estão
  * os dados da conversa.
  */
 export function passosComHora(
@@ -92,14 +104,37 @@ export function passosComHora(
   },
   agora = new Date(),
 ) {
-  const saida: { content: Record<string, unknown>; quando: Date }[] = [];
+  const saida: {
+    content: Record<string, unknown>;
+    /** Nulo quando não se agenda: aí quem carimba é o banco, na inserção. */
+    quando: Date | null;
+    /** Segundos que quem manda deve esperar ANTES de gravar este passo. */
+    dormir: number;
+  }[] = [];
 
   let atraso = 0;
 
   for (const passo of sequencia.steps ?? []) {
-    atraso += passo.esperar ?? 0;
+    const pausa = passo.esperar ?? 0;
 
-    const quando = new Date(agora.getTime() + atraso * 1000);
+    // A curta vira espera de quem manda (o campo `esperar` volta junto, para
+    // quem chamou saber quanto dormir); a longa entra no carimbo.
+    if (pausa >= ESPERA_NO_ENVIO) atraso += pausa;
+
+    /**
+     * Sem carimbo quando ninguém agenda: o banco carimba na inserção.
+     *
+     * A primeira versão devolvia `agora` para todos, e o passo de quinze
+     * segundos entrava com a hora de quinze segundos ATRÁS — quem dormiu foi a
+     * função, mas o carimbo era o do começo. Medido em 2026/08/18: o teste viu
+     * diferença de zero segundos entre dois passos que saíram com quinze de
+     * intervalo.
+     *
+     * A hora de uma mensagem é quando ela sai. Deixar o banco decidir é a
+     * única forma de isso continuar verdade depois de uma espera.
+     */
+    const quando = atraso ? new Date(agora.getTime() + atraso * 1000) : null;
+    const dormir = pausa < ESPERA_NO_ENVIO ? pausa : 0;
 
     if (passo.kind === "text") {
       const frase = catalogo.frases.find((f) => f.name === passo.name);
@@ -117,6 +152,7 @@ export function passosComHora(
           text: frase.text,
         },
         quando,
+        dormir,
       });
 
       continue;
@@ -139,6 +175,7 @@ export function passosComHora(
         },
       },
       quando,
+      dormir,
     });
   }
 
