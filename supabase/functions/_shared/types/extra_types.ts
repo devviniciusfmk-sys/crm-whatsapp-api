@@ -290,7 +290,37 @@ export type OrganizationExtra = {
      * continuar dizendo o que foi cobrado naquele dia. Ausente é serviço sem
      * preço cadastrado, e o compromisso nasce sem valor.
      */
-    services?: { name: string; minutes: number; price?: number }[];
+    services?: {
+      name: string;
+      minutes: number;
+      price?: number;
+      /**
+       * As palavras que fazem este serviço ser cobrado sozinho.
+       *
+       * O cliente escreve "quanto é o corte?" e recebe o Pix com o preço deste
+       * item — que sai daqui, e não de um texto escrito à parte: mudou o preço
+       * no catálogo, mudou na cobrança, sem um segundo lugar para esquecer.
+       *
+       * Ausente é o normal — cobrar sozinho é escolha de cada serviço.
+       */
+      gatilhos?: string[];
+    }[];
+  };
+
+  /**
+   * A chave Pix da loja, para cobrar dentro da conversa.
+   *
+   * Só a chave: o padrão do BR Code também exige nome e cidade de quem recebe,
+   * mas o nome é o da organização e a cidade sai do endereço — ou, na falta
+   * dele, de um valor genérico, porque ninguém confere o conteúdo desse campo.
+   *
+   * O dinheiro cai direto na conta da loja, sem passar por aqui. Por isso não
+   * existe confirmação de pagamento: quem olha o extrato é uma pessoa.
+   */
+  pix?: {
+    key?: string;
+    /** Só quando o endereço do negócio não tem cidade. Ver `utils/pix.ts`. */
+    city?: string;
   };
 };
 

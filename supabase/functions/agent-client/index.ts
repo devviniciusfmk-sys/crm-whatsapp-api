@@ -20,6 +20,10 @@ import {
   passosComHora,
   sequenciaPara,
 } from "../_shared/sequencia_por_palavra.ts";
+import {
+  mensagensDaCobranca,
+  servicoPara,
+} from "../_shared/cobranca_por_palavra.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "./protocols/context.ts";
 import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
@@ -669,6 +673,87 @@ Deno.serve(async (req) => {
       // para responder o que já foi respondido.
       return new Response(
         JSON.stringify({ sequencia: sequencia.name, passos: passos.length }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+  }
+
+  /**
+   * # A cobrança que dispara por palavra
+   *
+   * "Quanto é o corte?" e sai o Pix de R$ 45. O preço vem do catálogo de
+   * serviços — o mesmo que a agenda usa para marcar —, então mudar o preço num
+   * lugar muda nos dois. As palavras que disparam moram em cada serviço.
+   *
+   * ## Depois da sequência, e antes do assistente
+   *
+   * Depois da sequência porque ela é a configuração mais específica: quem
+   * montou um funil para "preço" quis o funil, e não uma cobrança seca. Antes
+   * do assistente pelo mesmo motivo que a sequência: casou a palavra, a
+   * resposta daquele turno É a cobrança, e chamar o modelo depois seria
+   * responder duas vezes — uma delas com um preço escrito à mão que pode
+   * divergir do catálogo.
+   *
+   * ## Uma vez por serviço, por conversa
+   *
+   * Mesma trava da sequência, e com a mesma limitação conhecida: o cliente que
+   * voltar daqui a um mês e perguntar do mesmo corte não recebe de novo. É
+   * troca deliberada — receber duas cobranças iguais na mesma conversa parece
+   * cobrança dobrada, que assusta mais do que a ausência incomoda. Perguntar
+   * de outro serviço dispara normalmente.
+   *
+   * Sem chave Pix cadastrada, `mensagensDaCobranca` devolve nada e o
+   * assistente segue: ele responde o preço em palavras, como já fazia. Mandar
+   * "o Pix é" sem o Pix seria pior que não mandar. - 2026/08/18
+   */
+  const jaCobradas: string[] =
+    (conv.extra as { cobrancas_disparadas?: string[] } | null)
+      ?.cobrancas_disparadas ?? [];
+
+  const servico = servicoPara(
+    textoDoCliente,
+    org.extra.appointments?.services,
+  );
+
+  if (servico && !jaCobradas.includes(servico.name)) {
+    const textos = mensagensDaCobranca(
+      servico,
+      org,
+      conv.id.replaceAll("-", "").slice(0, 12),
+    );
+
+    if (textos) {
+      for (const texto of textos) {
+        const outgoing: MessageInsert = {
+          organization_id: conv.organization_id,
+          conversation_id: conv.id,
+          service: conv.service,
+          organization_address: conv.organization_address,
+          contact_address: conv.contact_address,
+          direction: "outgoing",
+          agent_id: donoDoCartaz?.id ?? null,
+          content: { version: "1", type: "text", kind: "text", text: texto },
+        };
+
+        // Em série: a segunda mensagem é o código, e ela tem de chegar DEPOIS
+        // do aviso. Em paralelo o código chegaria primeiro em metade das vezes.
+        await client.from("messages").insert(outgoing).throwOnError();
+      }
+
+      // Marcado só depois de gravar, como na sequência: marcar antes e falhar
+      // no meio deixaria a conversa achando que cobrou o que não cobrou.
+      await client
+        .from("conversations")
+        .update({
+          extra: { cobrancas_disparadas: [...jaCobradas, servico.name] },
+        })
+        .eq("id", conv.id)
+        .throwOnError();
+
+      log.info("Cobrança por palavra", { servico: servico.name });
+
+      return new Response(
+        JSON.stringify({ cobranca: servico.name, preco: servico.price }),
         { headers: { "content-type": "application/json" } },
       );
     }
