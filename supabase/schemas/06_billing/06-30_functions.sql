@@ -260,7 +260,9 @@ $$;
 
 -- Trigger: initialize subscription on organization insert.
 -- Assigns the lowest-level active tier and default plan (if any).
--- No tiers = no billing.
+-- Sem faixa no catálogo a loja nasce sem assinatura, e as telas de cotas e uso
+-- ficam vazias para sempre: o gatilho só roda no cadastro. Avisa no log, que é
+-- o único lugar onde isso pode aparecer antes de alguém reclamar. - 2026/08/18
 create function billing.initialize_subscription() returns trigger
 language plpgsql
 security definer
@@ -277,6 +279,7 @@ begin
   limit 1;
 
   if not found then
+    raise warning 'billing: a loja % nasceu sem assinatura porque o catálogo não tem faixa ativa', new.id;
     return new;
   end if;
 
