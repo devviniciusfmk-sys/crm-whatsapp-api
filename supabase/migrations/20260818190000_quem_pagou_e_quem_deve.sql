@@ -1,39 +1,20 @@
--- O que se precisa saber de um contato sem abrir a ficha dele.
+-- Quem pagou, e quem ficou devendo.
 --
--- A tela de Contatos era uma lista de telefones sem nome, em ordem de chegada.
--- Com anúncio rodando isso vira uma pilha: em 2026/08/18 a barbearia tinha 200
--- linhas, 189 sem nome e nenhuma etiqueta, e a pergunta "quem destes agendou"
--- não tinha resposta em lugar nenhum da tela.
+-- A forma de pagamento já era gravada em cada atendimento (dinheiro, pix,
+-- cartão, fiado, cortesia) e nenhuma tela lia. Ela distingue o que a soma de
+-- dinheiro não distingue: cortesia é de graça e fiado é atendimento feito com
+-- dinheiro que não entrou. Somados como pagamento, a lista chamaria de bom
+-- pagador quem nunca pagou — e é ao contrário que a barbearia usa isso.
 --
--- As respostas já existiam, espalhadas: a conversa diz se respondeu, o
--- compromisso diz se agendou, e a PRIMEIRA mensagem de quem veio de anúncio
--- carrega qual anúncio foi. Esta visão junta as três num lugar só, para a lista
--- poder filtrar sem que o navegador leia a base inteira.
+-- "Quem me deve" não existia em lugar nenhum do produto, e é a pergunta que se
+-- faz no fim do mês numa barbearia de bairro.
 --
--- ## Por que uma visão, e não colunas no contato
---
--- Tudo aqui é derivado de fatos que já estão gravados. Como coluna, cada um
--- precisaria de um gatilho para se manter em dia, e o dia em que um gatilho
--- falhar a tela passa a mentir sobre quem agendou — que é pior do que não
--- mostrar. Derivado, não tem como sair de sincronia.
---
--- ## Coluna nova entra no FIM, ou a migração tem de derrubar a visão
---
--- `create or replace view` não sabe inserir coluna no meio: ele compara
--- posição por posição e lê "campo novo na terceira vaga" como "renomearam a
--- terceira coluna". Foi o que aconteceu em 2026/08/18 ao pôr
--- `primeira_mensagem` antes de `ultima_mensagem` — erro 42P16, e a migração
--- não subiu.
---
--- Aqui a ordem é a que se lê melhor; quem mexer paga o preço na migração, com
--- um `drop view` antes do `create`. Derrubar é seguro enquanto nada no banco
--- depender dela: quem consulta é a tela, por HTTP.
---
--- ## `security_invoker`
---
--- Sem isto a visão roda com os privilégios de quem a criou e a RLS das tabelas
--- de baixo é ignorada: uma barbearia veria os contatos de outra. É o tipo de
--- falha que não aparece em teste nenhum feito com um cliente só.
+-- Derruba antes de criar: "create or replace view" não sabe inserir coluna no
+-- meio e lê isso como renomear a coluna daquela posição (42P16).
+-- - 2026/08/18
+
+drop view if exists public.contact_overview;
+
 create or replace view public.contact_overview
 with (security_invoker = on) as
 with enderecos as (
@@ -74,15 +55,11 @@ compromissos as (
     count(*) filter (where a.status = 'no_show') as faltas,
     max(a.starts_at) as ultimo_horario,
     /**
-     * Quanto esta pessoa já CONSUMIU — não necessariamente quanto pagou.
+     * Quanto esta pessoa já deixou na casa.
      *
      * Só `done`. Marcado ainda não aconteceu, cancelado não aconteceu e falta
-     * não consumiu — somar qualquer um deles faria a lista dizer que o cliente
+     * não pagou — somar qualquer um deles faria a lista dizer que o cliente
      * que nunca apareceu é o melhor da casa.
-     *
-     * O que saiu daqui e não entrou no caixa está em `fiado`, logo abaixo: a
-     * tela mostra os dois lado a lado ("R$ 90 · Deve R$ 45") porque um sem o
-     * outro descreve o cliente errado.
      *
      * Do compromisso e não do catálogo, porque preço muda: o corte de 45 hoje
      * custa 55 em outubro, e o histórico tem de continuar dizendo o que foi

@@ -97,8 +97,25 @@ on public.appointments
 for each row
 execute function public.moddatetime('updated_at');
 
+-- Com a guarda, como em `contacts`, `conversations` e mais quatro — mas aqui
+-- ela quase nunca dispara, e está por consistência.
+--
+-- A migração que a trouxe (20260818200000) dizia que ela permitiria limpar o
+-- `extra` mandando nulo. Não permite: esta coluna é NOT NULL, e nulo nunca
+-- chega ao gatilho. Medido antes de acreditar, e a promessa era minha.
+--
+-- ## Como se desfaz um lançamento errado, então
+--
+-- Mandando `{"payment_method": null}`. A mesclagem grava a chave com valor
+-- nulo — ela não some do JSON —, e `->>` devolve NULL, que é o que todo leitor
+-- do produto entende por "sem pagamento": a visão de contatos, o caixa e a
+-- fidelidade. "Lancei pix e era fiado" é a coisa mais comum que acontece num
+-- caixa de barbearia, e este é o caminho. - 2026/08/18
 create trigger set_extra
 before update
 on public.appointments
 for each row
+when (
+  new.extra is not null
+)
 execute function public.merge_update('extra');
