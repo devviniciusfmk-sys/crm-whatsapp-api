@@ -84,6 +84,36 @@ const AWAY_MESSAGE_WINDOW = 12 * 60 * 60 * 1000; // 12 hours
  * Custou uma investigação inteira descobrir que era o modelo escolhido, e
  * quem só tem a tela na frente não teria como chegar lá. - 2026/08/02
  */
+/**
+ * As duas recusas da cobrança, ditas para quem tem uma tesoura na mão.
+ *
+ * `check_limit` estoura com "Insufficient balance for ai_credits" e "Usage
+ * limit reached for messages". São frases de banco de dados, em inglês, e quem
+ * as lê é o dono da barbearia — na nota interna dentro da conversa, no momento
+ * exato em que o cliente ficou sem resposta.
+ *
+ * A frase vem na frente e o texto técnico continua embaixo: ela diz ao dono o
+ * que houve e o que fazer; ele me diz, semanas depois, em que etapa quebrou.
+ *
+ * Português porque é o idioma de quem opera hoje, como no aviso por push. Sai
+ * daqui para o idioma da organização quando houver o segundo país.
+ * - 2026/08/18
+ */
+function oQueACobrancaQuerDizer(cru: string): string | null {
+  if (cru.includes("Insufficient balance for ai_credits")) {
+    return "O crédito de inteligência artificial acabou. O assistente não vai" +
+      " responder até a recarga — as mensagens dos clientes continuam" +
+      " chegando normalmente, e ficam esperando alguém da equipe.";
+  }
+
+  if (cru.includes("Usage limit reached for messages")) {
+    return "A cota de mensagens do plano acabou neste mês. Os envios estão" +
+      " sendo recusados até a virada do mês ou a troca de plano.";
+  }
+
+  return null;
+}
+
 function describeError(error: unknown): string {
   const base = error instanceof Error ? error.message : String(error);
 
@@ -1536,7 +1566,11 @@ Deno.serve(async (req) => {
             version: "1" as const,
             type: "text",
             kind: "text",
-            text: describeError(error) + ` (etapa: ${step})`,
+            text: ((cru) => {
+              const emPortugues = oQueACobrancaQuerDizer(cru);
+
+              return emPortugues ? `${emPortugues}\n\n${cru}` : cru;
+            })(describeError(error) + ` (etapa: ${step})`),
           },
         },
       ];
