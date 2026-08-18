@@ -16,6 +16,10 @@ import {
   type WebhookPayload,
 } from "../_shared/supabase.ts";
 import { ProtocolFactory } from "./protocols/index.ts";
+import {
+  passosComHora,
+  sequenciaPara,
+} from "../_shared/sequencia_por_palavra.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "./protocols/context.ts";
 import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
@@ -539,6 +543,98 @@ Deno.serve(async (req) => {
    * saudação já foi dada — o custo de mandar duas seria trocar um defeito por
    * outro. - 2026/08/06
    */
+  /**
+   * # A sequência que a palavra do cliente dispara
+   *
+   * A barbearia monta a sequência na biblioteca e diz quais palavras a chamam.
+   * "quanto custa o corte?" faz sair o áudio dos preços e a foto da tabela,
+   * com a pausa que ela escolheu entre um e outro.
+   *
+   * ## Ela tem precedência sobre o assistente
+   *
+   * A primeira versão cedia: só disparava quando o assistente não ia
+   * responder. O efeito era o recurso nunca funcionar, porque loja com
+   * assistente ativo é o caso normal — e o dono concluiria que está quebrado.
+   *
+   * A sequência é uma resposta que ELE escreveu à mão para uma pergunta que
+   * sabe que se repete. Casou a palavra, ela é a resposta daquele turno e o
+   * modelo nem é chamado: não há como se atropelarem, e a chamada é
+   * economizada.
+   *
+   * ## Uma vez por conversa
+   *
+   * Sem isso, quem escreve "preço" três vezes recebe a mesma sequência três
+   * vezes — e a segunda já não é atendimento, é disparo. O que saiu fica
+   * marcado no `extra` da conversa.
+   *
+   * ## A pausa vira hora futura
+   *
+   * O passo sem pausa sai agora; o com pausa é gravado com carimbo no futuro e
+   * entregue pela varredura de minuto em minuto. É o mesmo caminho que a tela
+   * usa quando quem dispara é uma pessoa. - 2026/08/18
+   */
+  const jaDisparadas: string[] =
+    (conv.extra as { sequencias_disparadas?: string[] } | null)
+      ?.sequencias_disparadas ?? [];
+
+  const textoDoCliente = messages
+    .filter((m) => m.direction === "incoming")
+    .map((m) => (m.content as { text?: string } | null)?.text ?? "")
+    .at(-1) ?? "";
+
+  const sequencia = sequenciaPara(textoDoCliente, org.extra.quick_combos);
+
+  if (sequencia && !jaDisparadas.includes(sequencia.name)) {
+    const passos = passosComHora(sequencia, {
+      frases: org.extra.quick_messages ?? [],
+      midias: (org.extra.quick_media ?? []) as {
+        uri: string;
+        name: string;
+        mime_type: string;
+        size: number;
+        kind: string;
+      }[],
+    });
+
+    log.info("Sequência por palavra", sequencia.name, passos.length, "passo(s)");
+
+    for (const passo of passos) {
+      const linha: MessageInsert = {
+        organization_id: conv.organization_id,
+        conversation_id: conv.id,
+        service: conv.service,
+        organization_address: conv.organization_address,
+        contact_address: conv.contact_address,
+        direction: "outgoing",
+        // Ver `donoDoCartaz`: sem isto o gatilho pausa a conversa por 12 horas.
+        agent_id: donoDoCartaz?.id ?? null,
+        content: passo.content as MessageInsert["content"],
+        timestamp: passo.quando.toISOString(),
+      };
+
+      await client.from("messages").insert(linha).throwOnError();
+    }
+
+    // Marcada só DEPOIS de gravar: marcar antes e falhar no meio deixaria a
+    // conversa achando que já mandou o que não mandou, e sem segunda chance.
+    if (passos.length) {
+      await client
+        .from("conversations")
+        .update({
+          extra: { sequencias_disparadas: [...jaDisparadas, sequencia.name] },
+        })
+        .eq("id", conv.id)
+        .throwOnError();
+
+      // A sequência FOI a resposta deste turno. Seguir daqui chamaria o modelo
+      // para responder o que já foi respondido.
+      return new Response(
+        JSON.stringify({ sequencia: sequencia.name, passos: passos.length }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+  }
+
   /**
    * O interruptor da tela vale mais do que o texto escrito.
    *

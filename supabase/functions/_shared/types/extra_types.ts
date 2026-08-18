@@ -179,6 +179,43 @@ export type OrganizationExtra = {
    * transferência — o texto dele nunca chegou a este arquivo, e o interruptor
    * fica aqui para os quatro serem lidos no mesmo lugar.
    */
+  /**
+   * A biblioteca da loja: frases, mídia e sequências prontas.
+   *
+   * Nasceu como coisa só da tela — a barbearia guarda uma vez e manda com um
+   * toque — e chegou aqui quando a sequência passou a poder disparar sozinha
+   * pela palavra do cliente. Quem dispara nesse caso é o servidor.
+   *
+   * O que a API NÃO conhece é `quick_pins`: aquilo é a ordem da fileira de
+   * botões do chat, e aqui não se desenha fileira nenhuma. - 2026/08/18
+   */
+  quick_messages?: { name: string; text: string }[];
+  quick_media?: {
+    name: string;
+    uri: string;
+    mime_type: string;
+    size: number;
+    kind: "image" | "audio" | "video" | "document";
+    description?: string;
+    folder?: string;
+    tags?: string[];
+  }[];
+  quick_combos?: {
+    name: string;
+    /** Segundos a esperar antes de cada passo, contados do anterior. */
+    steps: (
+      | { kind: "text"; name: string; esperar?: number }
+      | { kind: "media"; uri: string; esperar?: number }
+    )[];
+    /**
+     * As palavras que disparam a sequência quando o cliente escreve.
+     *
+     * Já separadas — a vírgula é da tela. Comparadas sem acento e sem
+     * maiúscula, contra a mensagem inteira. Ver
+     * `_shared/sequencia_por_palavra.ts`.
+     */
+    gatilhos?: string[];
+  }[];
   welcome_message_off?: boolean;
   away_message_off?: boolean;
   handoff_timeout_message_off?: boolean;
