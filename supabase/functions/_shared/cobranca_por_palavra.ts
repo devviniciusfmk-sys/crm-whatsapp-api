@@ -112,13 +112,26 @@ export function mensagensDaCobranca(
 
   if (!codigo) return null;
 
+  /* Quem recebe e em qual banco, em linhas separadas e com ícone.
+   *
+   * "De quem é isso?" e "de qual banco?" são as duas perguntas que atrasam um
+   * pagamento — e aqui não há ninguém do outro lado para respondê-las, que é
+   * justamente o ponto da cobrança automática. */
+  const assinatura = [
+    loja.extra?.pix?.titular ? `👤 Titular: ${loja.extra.pix.titular}` : null,
+    loja.extra?.pix?.banco ? `🏦 Banco: ${loja.extra.pix.banco}` : null,
+  ].filter(Boolean).join("\n");
+
   /* O mesmo texto do botão da tela, palavra por palavra. Duas formas de cobrar
    * com caras diferentes é o cliente perguntando qual é a certa — e o asterisco
    * é negrito no WhatsApp, com a linha em branco separando o que se lê num
    * relance do que é preciso fazer. */
   return [
-    `*${servico.name}* · ${emReais(valor)}\n\n` +
-    `Copie o código abaixo e cole no aplicativo do banco — já vem com o valor.`,
+    [
+      `*${servico.name}* · ${emReais(valor)}`,
+      assinatura,
+      "Copie o código abaixo e cole no aplicativo do banco — já vem com o valor.",
+    ].filter(Boolean).join("\n\n"),
     codigo,
   ];
 }

@@ -145,3 +145,26 @@ Deno.test("não confunde conversa normal com código", () => {
     assertEquals(pareceCodigoPix(frase), false, frase);
   }
 });
+
+Deno.test("titular e banco entram com ícone, em linhas separadas", () => {
+  const comDono = {
+    name: "Barbearia",
+    extra: {
+      pix: { key: "ze@barbearia.com", titular: "José da Silva", banco: "Stone" },
+    },
+  };
+
+  const msgs = mensagensDaCobranca(CATALOGO[0], comDono)!;
+
+  assertEquals(msgs[0].includes("👤 Titular: José da Silva"), true);
+  assertEquals(msgs[0].includes("🏦 Banco: Stone"), true);
+  // O código segue sozinho na segunda: a assinatura é da PRIMEIRA mensagem.
+  assertEquals(msgs[1].startsWith("0002"), true);
+});
+
+Deno.test("sem titular cadastrado, nada de linha vazia", () => {
+  const msgs = mensagensDaCobranca(CATALOGO[0], LOJA)!;
+
+  assertEquals(msgs[0].includes("Titular"), false);
+  assertEquals(msgs[0].includes("\n\n\n"), false);
+});

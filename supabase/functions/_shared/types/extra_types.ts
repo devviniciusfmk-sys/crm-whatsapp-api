@@ -319,6 +319,15 @@ export type OrganizationExtra = {
    */
   pix?: {
     key?: string;
+    /**
+     * De quem é a conta, como está no banco, e em qual banco.
+     *
+     * "De quem é isso?" e "de qual banco?" são as duas perguntas que atrasam
+     * um pagamento, e na cobrança automática não há ninguém do outro lado para
+     * respondê-las.
+     */
+    titular?: string;
+    banco?: string;
     /** Só quando o endereço do negócio não tem cidade. Ver `utils/pix.ts`. */
     city?: string;
   };
