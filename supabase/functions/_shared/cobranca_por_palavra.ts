@@ -1,5 +1,6 @@
 import type { OrganizationExtra } from "./types/extra_types.ts";
 import { normalizar } from "./sequencia_por_palavra.ts";
+import { cobrancaDaLoja } from "./pix.ts";
 
 /**
  * # A cobrança que dispara por palavra
@@ -9,12 +10,24 @@ import { normalizar } from "./sequencia_por_palavra.ts";
  * catálogo, mudou na cobrança; não existe um segundo lugar para esquecer de
  * atualizar.
  *
+ * ## Vai o CÓDIGO, e não a chave
+ *
+ * O WhatsApp reconhece um BR Code válido dentro de uma mensagem de texto e
+ * desenha "⧉ Copiar código Pix" embaixo dela, sozinho — sem modelo, sem
+ * aprovação, sem custo. A chave solta não ganha botão nenhum: um e-mail vira
+ * um link, e link não se copia com um toque.
+ *
+ * Chegamos a trocar o código pela chave em 2026/08/19 e o botão sumiu da
+ * conversa. Voltou. Quem achar os 120 caracteres feios: são eles que fazem o
+ * botão existir.
+ *
  * ## Duas mensagens, sempre
  *
- * A primeira avisa o valor, a segunda leva a CHAVE sozinha. Quem paga toca
- * "copiar" na bolha e o WhatsApp copia a bolha inteira: chave com frase colada
- * em cima vira um texto que o banco não reconhece. É a mesma regra do botão da
- * tela, e por isso as duas montam as mensagens aqui.
+ * A primeira avisa o valor, a segunda leva o código SOZINHO. Quem paga toca
+ * "copiar" na bolha e o WhatsApp copia a bolha inteira: código com frase
+ * colada em cima vira um texto que o banco recusa, e a pessoa não tem como
+ * saber por quê. É a mesma regra do botão da tela, e por isso as duas montam
+ * as mensagens aqui.
  *
  * ## O que ela NÃO decide
  *
@@ -77,18 +90,31 @@ export function emReais(valor: number) {
  */
 export function mensagensDaCobranca(
   servico: Servico,
+  /* `name`, e não `nome`: é a forma da linha que vem do banco, e é ela que os
+   * chamadores têm na mão. Traduzir aqui custou uma medição inteira — passei
+   * `org` inteiro, o campo `nome` chegou vazio, o código não se montou, e a
+   * cobrança simplesmente não saiu enquanto o assistente respondia no lugar
+   * dela. Campo opcional não avisa quando falta. - 2026/08/18 */
   loja: { name?: string; extra?: OrganizationExtra | null },
+  txid?: string,
 ): string[] | null {
-  const chave = loja.extra?.pix?.key?.trim();
+  const valor = Number(servico.price);
 
-  if (!chave) return null;
+  const codigo = cobrancaDaLoja(
+    {
+      nome: loja.name,
+      chave: loja.extra?.pix?.key,
+      cidade: loja.extra?.business_address?.city || loja.extra?.pix?.city,
+    },
+    valor,
+    txid,
+  );
 
-  /* O asterisco é negrito no WhatsApp. O valor em destaque e a chave sozinha
-   * na bolha seguinte — o mesmo que o botão da tela manda, porque duas formas
-   * de cobrar com caras diferentes é o cliente perguntando qual é a certa. */
+  if (!codigo) return null;
+
   return [
-    `*${servico.name}* · ${emReais(Number(servico.price))}\n\n` +
-    `Pague por Pix na chave abaixo.`,
-    chave,
+    `${servico.name}: ${emReais(valor)}. Copie o código abaixo e cole no` +
+    ` aplicativo do banco para pagar por Pix.`,
+    codigo,
   ];
 }
