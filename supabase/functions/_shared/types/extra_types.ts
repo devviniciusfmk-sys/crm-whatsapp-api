@@ -65,7 +65,12 @@ export type BusinessHours = (
  * discordarem. O tipo mora aqui para o dia em que algo do agente precisar
  * perguntar. - 2026/08/10
  */
-export type ModuleName = "agenda";
+export type ModuleName =
+  | "agenda"
+  | "comissao"
+  | "caixa"
+  | "fidelidade"
+  | "cobranca";
 
 export type OrganizationExtra = {
   response_delay_seconds?: number;
