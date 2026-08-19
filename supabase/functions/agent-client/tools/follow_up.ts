@@ -295,9 +295,10 @@ async function followUpImplementation(
         return {
           scheduled_for: null,
           replaced_earlier: false,
-          refused: `WhatsApp only lets us write freely for 24 hours after their last message, and that time is past it — the message would be refused when it went out, days later, with nobody watching. The last moment that still works is ${
-            utcToLocal(new Date(fecha), timeZone)
-          }. Offer to write back before then, or ask them to send you a message when they are free — do NOT promise to contact them at the time they asked for.`,
+          refused:
+            `WhatsApp only lets us write freely for 24 hours after their last message, and that time is past it — the message would be refused when it went out, days later, with nobody watching. The last moment that still works is ${
+              utcToLocal(new Date(fecha), timeZone)
+            }. Offer to write back before then, or ask them to send you a message when they are free — do NOT promise to contact them at the time they asked for.`,
         };
       }
 

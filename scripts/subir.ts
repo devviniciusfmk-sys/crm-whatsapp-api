@@ -27,7 +27,10 @@ const args = Deno.args.filter((a) => a !== "--sem-portao");
 const semPortao = Deno.args.includes("--sem-portao");
 const funcao = args[0] ?? "agent-client";
 
-const raiz = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const raiz = new URL("..", import.meta.url).pathname.replace(
+  /^\/([A-Za-z]:)/,
+  "$1",
+);
 
 async function rodar(cmd: string, argumentos: string[], cwd: string) {
   const processo = new Deno.Command(cmd, {

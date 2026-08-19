@@ -181,7 +181,9 @@ export async function convidarDaFila(
     // "Qualquer dia" aceita este; um dia marcado só aceita o próprio.
     if (pedido.desired_date && pedido.desired_date !== dia) return false;
 
-    if (pedido.desired_period && pedido.desired_period !== periodo) return false;
+    if (pedido.desired_period && pedido.desired_period !== periodo) {
+      return false;
+    }
 
     // Quem pediu uma pessoa só quer a vaga dela. Quem não pediu aceita
     // qualquer uma, inclusive esta.
@@ -215,8 +217,9 @@ export async function convidarDaFila(
     saturday: "sábado",
   };
 
-  const nomeDoDia = DIAS_EM_PORTUGUES[weekdayOf(vaga.startsAt, vaga.timeZone)] ??
-    "";
+  const nomeDoDia =
+    DIAS_EM_PORTUGUES[weekdayOf(vaga.startsAt, vaga.timeZone)] ??
+      "";
 
   const quando = `${nomeDoDia} ${dia.slice(8)}/${dia.slice(5, 7)} às ${hora}`;
 

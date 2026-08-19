@@ -1,4 +1,5 @@
 import type { OrganizationExtra } from "./types/extra_types.ts";
+import type { FilePart, OutgoingMessage } from "./types/message_types.ts";
 
 /**
  * # A sequência que dispara por palavra
@@ -99,13 +100,17 @@ export function passosComHora(
       name: string;
       mime_type: string;
       size: number;
-      kind: string;
+      kind: FilePart["kind"];
     }[];
   },
   agora = new Date(),
 ) {
+  // `OutgoingMessage` e não objeto solto: esta função monta o que vai ao
+  // cliente, e dizer isso deixa o compilador conferir cada passo montado aqui.
+  // Enquanto era `Record<string, unknown>`, quem inseria precisava de um cast —
+  // e o cast estava largo demais, o que só apareceu na CI. - 2026/08/19
   const saida: {
-    content: Record<string, unknown>;
+    content: OutgoingMessage;
     /** Nulo quando não se agenda: aí quem carimba é o banco, na inserção. */
     quando: Date | null;
     /** Segundos que quem manda deve esperar ANTES de gravar este passo. */

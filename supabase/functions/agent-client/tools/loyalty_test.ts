@@ -45,11 +45,19 @@ Deno.test("duas cortesias: vale a última", () => {
 });
 
 Deno.test("no alvo, chegou", () => {
-  assertEquals(posicaoNoCartao(10, 10), { noCartao: 10, alvo: 10, chegou: true });
+  assertEquals(posicaoNoCartao(10, 10), {
+    noCartao: 10,
+    alvo: 10,
+    chegou: true,
+  });
 });
 
 Deno.test("no meio do cartão, não chegou", () => {
-  assertEquals(posicaoNoCartao(7, 10), { noCartao: 7, alvo: 10, chegou: false });
+  assertEquals(posicaoNoCartao(7, 10), {
+    noCartao: 7,
+    alvo: 10,
+    chegou: false,
+  });
 });
 
 Deno.test("passar do alvo continua valendo, e não trunca", () => {
@@ -63,7 +71,11 @@ Deno.test("passar do alvo continua valendo, e não trunca", () => {
 });
 
 Deno.test("quem nunca veio está em zero, e não chegou a nada", () => {
-  assertEquals(posicaoNoCartao(0, 10), { noCartao: 0, alvo: 10, chegou: false });
+  assertEquals(posicaoNoCartao(0, 10), {
+    noCartao: 0,
+    alvo: 10,
+    chegou: false,
+  });
 });
 
 Deno.test("sem cartão configurado não há posição", () => {

@@ -478,32 +478,53 @@ const COM_ALMOCO: BusinessHours = Array.from(
 ) as BusinessHours;
 
 Deno.test("dentro do almoço a casa está fechada", () => {
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 12:30"), 30), false);
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 12:00"), 30), false);
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 12:30"), 30),
+    false,
+  );
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 12:00"), 30),
+    false,
+  );
 });
 
 Deno.test("o almoço tem fim aberto: 13:00 já é atendimento", () => {
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 13:00"), 30), true);
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 13:00"), 30),
+    true,
+  );
 });
 
 Deno.test("encostar no começo do almoço ainda cabe", () => {
   // 11:30-12:00 termina no instante em que a loja para. Recusar seria perder o
   // último horário da manhã por um minuto que não existe.
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:30"), 30), true);
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:30"), 30),
+    true,
+  );
 });
 
 Deno.test("terminar dentro do almoço não cabe", () => {
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:45"), 30), false);
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:45"), 30),
+    false,
+  );
 });
 
 Deno.test("um serviço longo não ATRAVESSA o almoço", () => {
   // As duas pontas abertas e a hora do meio fechada: é o caso que passava
   // quando só o começo e o fim eram conferidos.
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:30"), 120), false);
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 11:30"), 120),
+    false,
+  );
 });
 
 Deno.test("o mesmo serviço longo cabe fora do almoço", () => {
-  assertEquals(fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 13:00"), 120), true);
+  assertEquals(
+    fitsOpeningHours(COM_ALMOCO, SP, at("2026-08-12 13:00"), 120),
+    true,
+  );
 });
 
 Deno.test("os horários livres pulam o almoço", () => {

@@ -13,7 +13,9 @@ import { podeIrAoCliente } from "./base.ts";
 Deno.test("a resposta que foi jogada fora passa", () => {
   // As três medidas em 2026/08/10, palavra por palavra.
   assertEquals(
-    podeIrAoCliente("Um momento, estou transferindo sua conversa para um colega."),
+    podeIrAoCliente(
+      "Um momento, estou transferindo sua conversa para um colega.",
+    ),
     true,
   );
   assertEquals(
@@ -23,7 +25,9 @@ Deno.test("a resposta que foi jogada fora passa", () => {
     true,
   );
   assertEquals(
-    podeIrAoCliente("Vou chamar um colega para te ajudar. Por favor, aguarde um momento."),
+    podeIrAoCliente(
+      "Vou chamar um colega para te ajudar. Por favor, aguarde um momento.",
+    ),
     true,
   );
 });
@@ -61,7 +65,9 @@ Deno.test("vazio não vai a lugar nenhum", () => {
 Deno.test("uma palavra parecida no meio de uma frase de verdade não barra", () => {
   // "análise" com acento é português de gente, e não o canal do modelo.
   assertEquals(
-    podeIrAoCliente("Fizemos a análise do seu cabelo e recomendamos hidratação."),
+    podeIrAoCliente(
+      "Fizemos a análise do seu cabelo e recomendamos hidratação.",
+    ),
     true,
   );
 });

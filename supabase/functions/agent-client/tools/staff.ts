@@ -141,7 +141,8 @@ async function scheduleImplementation(
       date: null,
       weekday: null,
       appointments: [],
-      refused: `The date could not be read. Use 'YYYY-MM-DD'. (today is ${hoje})`,
+      refused:
+        `The date could not be read. Use 'YYYY-MM-DD'. (today is ${hoje})`,
     };
   }
 
@@ -219,7 +220,9 @@ const EarningsOutputSchema = z.object({
   ),
   month: z.string().nullable(),
   appointments: z.number().describe("How many were actually attended."),
-  produced: z.number().describe("What those appointments billed, in the shop's currency."),
+  produced: z.number().describe(
+    "What those appointments billed, in the shop's currency.",
+  ),
   commissionable: z.number().describe(
     "The part of `produced` the commission is actually calculated on. It is LOWER than produced when the shop chose that loyalty courtesies earn nothing. When the two differ you MUST say so — 'de R$650, R$605 entram na comissão porque R$45 foi cortesia' — and never describe the commission as a percentage of `produced`, because the arithmetic will not check out and they will think they are being shorted.",
   ),
@@ -306,10 +309,9 @@ async function earningsImplementation(
    * barbeiro vai comparar os dois, e o dia em que discordarem ele para de
    * acreditar nos dois.
    */
-  const pagaCortesia =
-    (context.organization.extra as
-      | { loyalty?: { pays_commission?: boolean } }
-      | null)?.loyalty?.pays_commission ?? true;
+  const pagaCortesia = (context.organization.extra as
+    | { loyalty?: { pays_commission?: boolean } }
+    | null)?.loyalty?.pays_commission ?? true;
 
   const produced = linhas.reduce(
     (soma, row) => soma + ((row.price as number | null) ?? 0),
