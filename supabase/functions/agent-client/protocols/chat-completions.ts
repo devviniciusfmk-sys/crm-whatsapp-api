@@ -1824,8 +1824,7 @@ export class ChatCompletionsHandler
           (response.reroutes
             ? `, depois de ${response.reroutes} troca(s) de fornecedor`
             : "") +
-          (response.fellBack ? " e do modelo reserva" : "")
-        }`,
+          (response.fellBack ? " e do modelo reserva" : "")}`,
         response.usage,
       ),
     };

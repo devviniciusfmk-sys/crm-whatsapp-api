@@ -88,7 +88,9 @@ const LoyaltyOutputSchema = z.object({
   every: z.number().nullable().describe(
     "How many attended appointments earn the reward. Null means this shop has no loyalty card — then say so plainly and do not invent one.",
   ),
-  reward: z.string().nullable().describe("What they get, in the owner's words."),
+  reward: z.string().nullable().describe(
+    "What they get, in the owner's words.",
+  ),
   attended: z.number().describe("How many they have ever attended here."),
   on_card: z.number().describe("How far along the CURRENT card they are."),
   remaining: z.number().describe(

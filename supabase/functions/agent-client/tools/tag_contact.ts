@@ -91,10 +91,12 @@ async function implementation(
   const next = input.remove
     ? tags.filter((item) => item !== tag)
     : tags.includes(tag)
-      ? tags
-      : [...tags, tag];
+    ? tags
+    : [...tags, tag];
 
-  if (next.length === tags.length && next.every((item, i) => item === tags[i])) {
+  if (
+    next.length === tags.length && next.every((item, i) => item === tags[i])
+  ) {
     return { tags, refused: null };
   }
 

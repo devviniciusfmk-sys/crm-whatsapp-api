@@ -1607,7 +1607,9 @@ async function bookImplementation(
       return refuse(
         `Everyone who takes that service is busy then${
           conflito
-            ? ` — the clash starts at ${utcToLocal(conflito, timeZone).slice(11)}`
+            ? ` — the clash starts at ${
+              utcToLocal(conflito, timeZone).slice(11)
+            }`
             : ""
         }.`,
       );
@@ -1958,7 +1960,9 @@ async function rescheduleImplementation(
     if (!novoDono) {
       return refuse(
         `Nobody called "${input.professional}" works here. Who does: ${
-          equipe.map((pessoa) => pessoa.name).join(", ")
+          equipe.map((pessoa) =>
+            pessoa.name
+          ).join(", ")
         }.`,
       );
     }
@@ -2007,7 +2011,12 @@ async function rescheduleImplementation(
     (appointment.professional_id as string | null);
 
   const marcados = equipe.length
-    ? (await agendaOcupada(supabaseClient, context.organization.id, to, minutes))
+    ? (await agendaOcupada(
+      supabaseClient,
+      context.organization.id,
+      to,
+      minutes,
+    ))
       .filter((m) => m.professional_id === donoFinal)
     : null;
 

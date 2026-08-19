@@ -21,7 +21,9 @@ const CATALOGO = {
     name: "Tabela",
     mime_type: "image/png",
     size: 10,
-    kind: "image",
+    // `as const` para o tipo ser "image" e não string: o catálogo pede um
+    // dos MediaTypes. - 2026/08/19
+    kind: "image" as const,
   }],
 };
 

@@ -5,6 +5,7 @@ import {
   type ContactRow,
   createUnsecureClient,
   type DataPart,
+  type FilePart,
   type InternalMessage,
   type LocalMCPToolConfig,
   type MessageInsert,
@@ -524,10 +525,9 @@ Deno.serve(async (req) => {
   // lá embaixo, junto das outras que interrompem a resposta.
   const aiAgents = agents.filter((agent) => agent.ai) as AgentRowWithExtra[];
 
-  const assistenteVaiResponder =
-    aiAgents.some((a) =>
-      conv.service === "local" || a.extra?.mode !== "inactive"
-    ) &&
+  const assistenteVaiResponder = aiAgents.some((a) =>
+    conv.service === "local" || a.extra?.mode !== "inactive"
+  ) &&
     !(fechadoAgora && org.extra.pause_agent_when_closed);
 
   /**
@@ -626,11 +626,14 @@ Deno.serve(async (req) => {
         name: string;
         mime_type: string;
         size: number;
-        kind: string;
+        kind: FilePart["kind"];
       }[],
     });
 
-    log.info("Sequência por palavra", sequencia.name, passos.length, "passo(s)");
+    log.info("Sequência por palavra", {
+      sequencia: sequencia.name,
+      passos: passos.length,
+    });
 
     for (const passo of passos) {
       // A pausa curta é esperada AQUI, na função: agendar trinta segundos daria
@@ -649,7 +652,7 @@ Deno.serve(async (req) => {
         direction: "outgoing",
         // Ver `donoDoCartaz`: sem isto o gatilho pausa a conversa por 12 horas.
         agent_id: donoDoCartaz?.id ?? null,
-        content: passo.content as MessageInsert["content"],
+        content: passo.content,
         // Só quando agenda. Sem carimbo, o banco põe a hora da inserção — que
         // depois de uma espera é a hora certa. Ver passosComHora.
         ...(passo.quando ? { timestamp: passo.quando.toISOString() } : {}),
@@ -1861,7 +1864,7 @@ Deno.serve(async (req) => {
     // o caminho em que tudo já deu errado, e é o último lugar do sistema onde
     // vale confiar numa garantia de esquema.
     const fraseDoPiso = (org.extra as OrganizationExtra | null)
-      ?.silence_message_off
+        ?.silence_message_off
       ? undefined
       : (org.extra as OrganizationExtra | null)?.silence_message?.trim();
 
