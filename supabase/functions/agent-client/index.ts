@@ -716,14 +716,15 @@ Deno.serve(async (req) => {
   );
 
   if (servico && !jaCobradas.includes(servico.name)) {
-    const textos = mensagensDaCobranca(
-      servico,
-      org,
-      conv.id.replaceAll("-", "").slice(0, 12),
-    );
+    const textos = mensagensDaCobranca(servico, org);
 
     if (textos) {
-      for (const texto of textos) {
+      for (const [i, texto] of textos.entries()) {
+        /* Um respiro entre as duas, como no botão da tela: sair no mesmo
+         * instante denuncia a máquina, e quem lê duas bolhas simultâneas não
+         * repara que a segunda é a que ele precisa copiar. - 2026/08/19 */
+        if (i) await new Promise((r) => setTimeout(r, 1500));
+
         const outgoing: MessageInsert = {
           organization_id: conv.organization_id,
           conversation_id: conv.id,

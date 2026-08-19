@@ -61,29 +61,25 @@ Deno.test("valor sai em reais, com vírgula", () => {
   assertEquals(emReais(7.5), "R$ 7,50");
 });
 
-Deno.test("a cobrança vai em DUAS mensagens, o código sozinho", () => {
-  const msgs = mensagensDaCobranca(CATALOGO[0], LOJA, "abc123")!;
+Deno.test("a cobrança vai em DUAS mensagens, a chave sozinha", () => {
+  const msgs = mensagensDaCobranca(CATALOGO[0], LOJA)!;
 
   assertEquals(msgs.length, 2);
   assertEquals(msgs[0].includes("R$ 45,00"), true);
-  /* A segunda é SÓ o código: quem paga toca "copiar" na bolha e o WhatsApp
-   * copia a bolha inteira, então qualquer frase junto faz o banco recusar.
-   *
-   * "Sem espaço" seria a checagem óbvia e está ERRADA — o nome de quem recebe
-   * mora dentro do código, e "Barbearia do Ze" tem espaços. A propriedade de
-   * verdade é que a mensagem COMECE no payload e TERMINE no CRC, sem nada
-   * antes nem depois. */
-  assertEquals(msgs[1].startsWith("0002"), true);
-  assertEquals(/^\d{4}.+6304[0-9A-F]{4}$/.test(msgs[1]), true);
-  assertEquals(msgs[1].includes("\n"), false);
-  assertEquals(msgs[1].includes("R$"), false);
+  /* A segunda é SÓ a chave: quem paga toca "copiar" na bolha e o WhatsApp
+   * copia a bolha inteira, então qualquer frase junto faz o banco não
+   * reconhecer o que foi colado. Nada antes, nada depois, nem quebra de
+   * linha. */
+  assertEquals(msgs[1], "ze@barbearia.com");
 });
 
-Deno.test("o código leva o valor e o identificador", () => {
-  const msgs = mensagensDaCobranca(CATALOGO[0], LOJA, "abc123")!;
+Deno.test("o serviço e o valor ficam na primeira, em negrito", () => {
+  const msgs = mensagensDaCobranca(CATALOGO[0], LOJA)!;
 
-  assertEquals(msgs[1].includes("540545.00"), true);
-  assertEquals(msgs[1].includes("abc123"), true);
+  // Asterisco é negrito no WhatsApp. Sem o nome do serviço, quem recebe a
+  // cobrança horas depois não sabe do que ela é.
+  assertEquals(msgs[0].startsWith("*Corte*"), true);
+  assertEquals(msgs[0].includes("R$ 45,00"), true);
 });
 
 Deno.test("sem chave cadastrada, não manda nada", () => {
@@ -92,15 +88,15 @@ Deno.test("sem chave cadastrada, não manda nada", () => {
   assertEquals(mensagensDaCobranca(CATALOGO[0], semChave), null);
 });
 
-Deno.test("sem cidade no endereço, o código ainda se monta", () => {
-  const semEndereco = {
+Deno.test("chave com espaço sobrando sai limpa", () => {
+  // Um espaço colado na chave é invisível na tela de configuração e faz o
+  // banco recusar. Aparar é a única defesa possível daqui.
+  const comEspaco = {
     name: "Barbearia",
-    extra: { pix: { key: "ze@barbearia.com" } },
+    extra: { pix: { key: "  ze@barbearia.com  " } },
   };
 
-  const msgs = mensagensDaCobranca(CATALOGO[0], semEndereco)!;
-
-  assertEquals(msgs[1].includes("BRASIL"), true);
+  assertEquals(mensagensDaCobranca(CATALOGO[0], comEspaco)![1], "ze@barbearia.com");
 });
 
 Deno.test("o primeiro do catálogo vence, e não o mais longo", () => {
