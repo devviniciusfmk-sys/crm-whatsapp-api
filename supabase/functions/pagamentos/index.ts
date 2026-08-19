@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ADAPTADORES } from "./provedores.ts";
+import { confirmacaoDePagamento } from "../_shared/confirmacao_de_pagamento.ts";
 
 /**
  * # A porta dos pagamentos
@@ -101,15 +102,33 @@ Deno.serve(async (req) => {
     });
   }
 
-  const { data, error } = await client.schema("billing").rpc(
-    "registrar_pagamento",
-    {
-      _invoice_id: aviso.fatura,
+  /**
+   * Dois destinos, e a referência diz qual.
+   *
+   * `cob:` é uma cobrança da loja para um cliente dela — o corte de cabelo, o
+   * plano. `fat:` (ou uma referência sem prefixo, que é o formato antigo) é a
+   * fatura da mensalidade que a loja paga.
+   *
+   * São dois dinheiros com dois donos e duas tabelas, e o postback chega pela
+   * mesma porta. Adivinhar pelo formato do id seria adivinhar sobre dinheiro:
+   * os dois são uuid, e errar manda o pagamento do cliente para a fatura da
+   * loja. Quem cria a cobrança no gateway é quem escreve o prefixo. - 2026/08/19
+   */
+  const deCliente = aviso.fatura.startsWith("cob:");
+  const alvo = aviso.fatura.replace(/^(cob|fat):/, "");
+
+  const { data, error } = deCliente
+    ? await client.rpc("quitar_cobranca", {
+      _cobranca: alvo,
+      _metodo: qual,
+      _external_id: aviso.transacao,
+    })
+    : await client.schema("billing").rpc("registrar_pagamento", {
+      _invoice_id: alvo,
       _amount: aviso.valor,
       _method: qual,
       _external_id: aviso.transacao,
-    },
-  );
+    });
 
   if (error) {
     /* Fatura inexistente é o caso comum e não merece 500: acontece quando a
@@ -125,8 +144,71 @@ Deno.serve(async (req) => {
     });
   }
 
+  /**
+   * A confirmação sai sozinha, e é o ponto de tudo isto.
+   *
+   * Quem paga fica sem saber se chegou: o extrato dele diz que saiu, nada diz
+   * que a loja viu. Aqui não há ninguém para responder "recebi" — é justamente
+   * o que a automação promete.
+   *
+   * Só para cobrança de cliente. A fatura da mensalidade é da LOJA, não tem
+   * conversa do outro lado, e mandar "pagamento confirmado" para o WhatsApp
+   * dela seria o sistema conversando consigo mesmo.
+   */
+  if (deCliente && data) {
+    const cobranca = data as unknown as {
+      conversation_id: string;
+      organization_id: string;
+      contact_address: string;
+      itens?: { nome: string; valor: number }[];
+      valor: number;
+      vence_em?: string | null;
+    };
+
+    try {
+      const { data: conv } = await client
+        .from("conversations")
+        .select("id, name, service, organization_address, contact_address")
+        .eq("id", cobranca.conversation_id)
+        .single();
+
+      const { data: org } = await client
+        .from("organizations")
+        .select("name")
+        .eq("id", cobranca.organization_id)
+        .single();
+
+      if (conv) {
+        await client.from("messages").insert({
+          conversation_id: conv.id,
+          organization_id: cobranca.organization_id,
+          organization_address: conv.organization_address,
+          service: conv.service,
+          contact_address: conv.contact_address,
+          direction: "outgoing",
+          content: {
+            version: "1",
+            type: "text",
+            kind: "text",
+            text: confirmacaoDePagamento(
+              cobranca,
+              org?.name ?? undefined,
+              conv.name?.split(" ")[0] ?? undefined,
+            ),
+          },
+        });
+      }
+    } catch (erro) {
+      /* Avisar que falha não desfaz o pagamento: o dinheiro entrou e a
+       * cobrança está quitada, que é o fato. O cliente sem confirmação volta a
+       * perguntar "recebeu?" — chato, e muito melhor que uma cobrança que o
+       * gateway pagou e o sistema não registrou. */
+      console.error(`[pagamentos] pago, mas sem avisar o cliente`, erro);
+    }
+  }
+
   console.info(
-    `[pagamentos] ${qual}: fatura ${aviso.fatura} recebeu R$ ${aviso.valor}`,
+    `[pagamentos] ${qual}: ${deCliente ? "cobrança" : "fatura"} ${alvo} recebeu R$ ${aviso.valor}`,
   );
 
   return new Response(JSON.stringify({ pagamento: data }), {

@@ -110,3 +110,10 @@ entrypoint = "./functions/avisar/index.ts"
 verify_jwt = false
 import_map = "./functions/deno.json"
 entrypoint = "./functions/encaixe/index.ts"
+
+# O gateway é externo e não tem JWT do Supabase para mandar. Quem autentica o
+# postback é o adaptador, com o segredo combinado — ver `pagamentos/provedores`.
+[functions.pagamentos]
+verify_jwt = false
+import_map = "./functions/deno.json"
+entrypoint = "./functions/pagamentos/index.ts"
