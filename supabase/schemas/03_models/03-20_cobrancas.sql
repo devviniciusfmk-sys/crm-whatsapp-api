@@ -40,6 +40,16 @@ create table public.cobrancas (
   -- O id da transação no gateway, quando veio de um. É a trava contra o mesmo
   -- postback ser processado duas vezes.
   external_id text,
+  -- Por quantos dias vale o que foi pago. Nulo em servico que nao vence.
+  --
+  -- Copiado do catalogo, e nao lido de la na hora de exibir: a validade do
+  -- plano pode mudar amanha, e a assinatura vendida ontem continua valendo o
+  -- que valia. Mesma razao de os itens serem copia.
+  validade_dias integer,
+  -- A data do pagamento mais a validade. Calculado no PAGAMENTO e nao no
+  -- envio: o plano comeca a valer quando o dinheiro entra, e entre uma coisa
+  -- e outra pode passar uma semana.
+  vence_em timestamp with time zone,
   paga_em timestamp with time zone,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null

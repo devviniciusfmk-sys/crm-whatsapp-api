@@ -304,6 +304,13 @@ export type OrganizationExtra = {
        * Ausente é o normal — cobrar sozinho é escolha de cada serviço.
        */
       gatilhos?: string[];
+      /**
+       * Por quantos dias vale, quando o servico e um plano.
+       *
+       * Um corte de cabelo nao vence; uma assinatura, sim. Vazio e o normal —
+       * a maioria dos negocios nao vende nada com prazo.
+       */
+      validade_dias?: number;
     }[];
   };
 
