@@ -24,6 +24,7 @@ import {
   mensagensDaCobranca,
   servicoPara,
 } from "../_shared/cobranca_por_palavra.ts";
+import { pareceCodigoPix } from "../_shared/pix.ts";
 import { DEFAULT_TIMEZONE, isOpenAt } from "./protocols/context.ts";
 import { callTool, initMCP, type MCPServer } from "./tools/mcp.ts";
 import { Toolbox } from "./tools/index.ts";
@@ -1665,6 +1666,60 @@ Deno.serve(async (req) => {
 
     if (response.messages?.length) {
       log.info("Agent response", response.messages.at(-1)?.content);
+
+      /**
+       * O modelo não escreve código de Pix. Nunca.
+       *
+       * Em 2026/08/19 a assistente viu uma cobrança no histórico da conversa,
+       * tentou IMITÁ-LA e estourou o limite de saída no meio do código. O que
+       * saiu foi um pedaço — mas o que ela estava construindo era um BR Code
+       * inventado, dígito por dígito.
+       *
+       * Um código inventado tem a mesma cara de um verdadeiro e manda dinheiro
+       * para lugar nenhum, ou para a conta de outra pessoa. Não é um erro que
+       * o cliente consiga perceber antes de pagar.
+       *
+       * Instrução no prompt não basta: ela pede que o modelo obedeça, e o caso
+       * em que ele não obedece é justamente este. Então a mensagem é BARRADA —
+       * não limpa, barrada: "copie o código abaixo" sem o código é pior que
+       * silêncio, porque o cliente fica procurando o que não existe.
+       *
+       * A cobrança de verdade não passa por aqui: é montada por
+       * `cobranca_por_palavra` e gravada direto, antes desta etapa.
+       */
+      const inventadas = response.messages.filter((m) =>
+        m.direction === "outgoing" &&
+        pareceCodigoPix((m.content as { text?: string } | null)?.text ?? "")
+      );
+
+      if (inventadas.length) {
+        log.error(
+          "O modelo tentou escrever um código de Pix",
+          new Error("pix_inventado"),
+        );
+
+        response.messages = [
+          ...response.messages.filter((m) => !inventadas.includes(m)),
+          {
+            organization_id,
+            service: conv.service,
+            organization_address: conv.organization_address,
+            contact_address: conv.contact_address,
+            direction: "internal" as const,
+            agent_id: agent.id,
+            content: {
+              version: "1" as const,
+              type: "text" as const,
+              kind: "text" as const,
+              text:
+                "O assistente tentou escrever um código de Pix e a mensagem" +
+                " foi barrada. Código de pagamento só sai do sistema, nunca do" +
+                " modelo — um inventado tem a mesma cara e manda o dinheiro" +
+                " para o lugar errado. Cobre pelo botão do rodapé.",
+            },
+          },
+        ];
+      }
 
       const output_messages = response.messages.map((message, index) => ({
         ...message,

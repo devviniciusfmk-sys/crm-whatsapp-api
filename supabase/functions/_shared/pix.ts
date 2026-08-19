@@ -29,6 +29,25 @@
  * de forma mas esta função continua servindo de base. - 2026/08/18
  */
 
+/**
+ * Se um texto carrega algo com cara de código Pix.
+ *
+ * Serve para BARRAR: o assistente não pode escrever código de pagamento, e um
+ * inventado por ele tem a mesma cara de um verdadeiro. Ver `agent-client`.
+ *
+ * Procura o identificador do arranjo (`br.gov.bcb.pix`), que todo BR Code
+ * carrega e que nenhuma frase de atendimento contém por acaso. Frouxo de
+ * propósito quanto a maiúsculas e ao resto do payload: um código PELA METADE
+ * — que foi o caso do modelo que estourou o limite no meio — também tem de ser
+ * barrado.
+ *
+ * Divergência consciente do espelho da tela: esta função só existe aqui,
+ * porque só aqui há um modelo escrevendo texto. - 2026/08/19
+ */
+export function pareceCodigoPix(texto: string): boolean {
+  return /br\.gov\.bcb\.pix/i.test(texto);
+}
+
 /** CRC-16/CCITT-FALSE: polinômio 0x1021, início 0xFFFF, sem reflexão. */
 export function crc16(texto: string): string {
   let crc = 0xffff;

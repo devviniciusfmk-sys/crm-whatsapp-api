@@ -112,9 +112,13 @@ export function mensagensDaCobranca(
 
   if (!codigo) return null;
 
+  /* O mesmo texto do botão da tela, palavra por palavra. Duas formas de cobrar
+   * com caras diferentes é o cliente perguntando qual é a certa — e o asterisco
+   * é negrito no WhatsApp, com a linha em branco separando o que se lê num
+   * relance do que é preciso fazer. */
   return [
-    `${servico.name}: ${emReais(valor)}. Copie o código abaixo e cole no` +
-    ` aplicativo do banco para pagar por Pix.`,
+    `*${servico.name}* · ${emReais(valor)}\n\n` +
+    `Copie o código abaixo e cole no aplicativo do banco — já vem com o valor.`,
     codigo,
   ];
 }

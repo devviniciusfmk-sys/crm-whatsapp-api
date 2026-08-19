@@ -4,6 +4,7 @@ import {
   mensagensDaCobranca,
   servicoPara,
 } from "./cobranca_por_palavra.ts";
+import { pareceCodigoPix } from "./pix.ts";
 
 const CATALOGO = [
   { name: "Corte", minutes: 30, price: 45, gatilhos: ["corte", "cabelo"] },
@@ -112,4 +113,35 @@ Deno.test("o primeiro do catálogo vence, e não o mais longo", () => {
   ];
 
   assertEquals(servicoPara("quero corte", ambiguo)?.name, "Corte");
+});
+
+/* --- a trava do código inventado ----------------------------------------- */
+
+Deno.test("reconhece um código de Pix inteiro", () => {
+  const msgs = mensagensDaCobranca(CATALOGO[0], LOJA, "abc123")!;
+
+  assertEquals(pareceCodigoPix(msgs[1]), true);
+});
+
+Deno.test("reconhece um código PELA METADE", () => {
+  // Foi o caso real: o modelo estourou o limite no meio do código. Metade de
+  // um Pix inventado é tão perigosa quanto o inteiro — o cliente cola e o
+  // banco recusa, ou pior, aceita outra coisa.
+  assertEquals(
+    pareceCodigoPix("00020126460014br.gov.bcb.pix0124planosau"),
+    true,
+  );
+});
+
+Deno.test("não confunde conversa normal com código", () => {
+  for (
+    const frase of [
+      "Corte: R$ 45,00. Pode pagar por Pix quando quiser.",
+      "Minha chave Pix é planosaurora@outlook.com",
+      "Aceitamos pix, cartão e dinheiro",
+      "",
+    ]
+  ) {
+    assertEquals(pareceCodigoPix(frase), false, frase);
+  }
 });
