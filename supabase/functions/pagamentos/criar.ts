@@ -92,6 +92,67 @@ export class ErroDoGateway extends Error {
 
 const BASE = "https://app.amplopay.com/api/v1";
 
+/** O que a credencial é e o que ela pode. */
+export type Credencial = {
+  nome: string;
+  /** Vazio com `todas` verdadeiro significa acesso total, e não nenhum. */
+  permissoes: string[];
+  todas: boolean;
+  expiraEm: string | null;
+  /** `false` quando falta a permissão de criar transações. */
+  podeCobrar: boolean;
+};
+
+/**
+ * Confere as chaves sem cobrar ninguém.
+ *
+ * ## Por que não basta "deu certo" ou "deu errado"
+ *
+ * A resposta traz o que a credencial PODE fazer, e é aí que mora o problema
+ * real: uma chave válida sem `PRODUCER_TRANSACTIONS` autentica normalmente e
+ * falha só na hora de criar a cobrança — com um cliente esperando do outro
+ * lado. Um teste que respondesse apenas "conectou" aprovaria essa chave.
+ *
+ * `grantAllPermissions` com a lista vazia quer dizer acesso TOTAL, e não
+ * nenhum. Ler a lista sem olhar essa bandeira reprovaria justamente a
+ * credencial mais poderosa.
+ */
+export async function testarAmploPay(
+  credenciais: Credenciais,
+  buscar: typeof fetch = fetch,
+): Promise<Credencial> {
+  const resposta = await buscar(`${BASE}/gateway/producer/credentials`, {
+    headers: {
+      "x-public-key": credenciais.publica,
+      "x-secret-key": credenciais.secreta,
+    },
+  });
+
+  const dados = await resposta.json().catch(() => ({}));
+
+  if (!resposta.ok) {
+    throw new ErroDoGateway(
+      "amplopay",
+      String(dados?.errorCode ?? resposta.status),
+      String(dados?.message ?? `o gateway respondeu ${resposta.status}`),
+    );
+  }
+
+  const permissoes: string[] = Array.isArray(dados?.permissions)
+    ? dados.permissions.map(String)
+    : [];
+
+  const todas = dados?.grantAllPermissions === true;
+
+  return {
+    nome: String(dados?.name ?? ""),
+    permissoes,
+    todas,
+    expiraEm: dados?.expiresAt ?? null,
+    podeCobrar: todas || permissoes.includes("PRODUCER_TRANSACTIONS"),
+  };
+}
+
 /**
  * Telefone como a AmploPay espera.
  *

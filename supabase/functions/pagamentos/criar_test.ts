@@ -1,5 +1,10 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert";
-import { criarPixAmploPay, ErroDoGateway, telefoneBR } from "./criar.ts";
+import {
+  criarPixAmploPay,
+  ErroDoGateway,
+  telefoneBR,
+  testarAmploPay,
+} from "./criar.ts";
 
 /**
  * A criação da cobrança testada sem tocar no gateway.
@@ -28,10 +33,13 @@ const PAGADOR = {
 function fetchDeMentira(resposta: unknown, status = 201) {
   const gravado: { url?: string; headers?: Headers; corpo?: any } = {};
 
-  const buscar = ((url: string, init: RequestInit) => {
+  const buscar = ((url: string, init: RequestInit = {}) => {
     gravado.url = url;
     gravado.headers = new Headers(init.headers);
-    gravado.corpo = JSON.parse(String(init.body));
+    /* Sem corpo é o caso do GET que confere a credencial. A primeira versão
+     * fazia `JSON.parse(String(undefined))` e estourava — quatro testes
+     * falhando por causa do arreio, não do código testado. */
+    gravado.corpo = init.body ? JSON.parse(String(init.body)) : undefined;
 
     return Promise.resolve(
       new Response(JSON.stringify(resposta), {
@@ -246,4 +254,67 @@ Deno.test("status de criação não é status de pagamento", async () => {
     ErroDoGateway,
     "recusada",
   );
+});
+
+/* --- testar credenciais -------------------------------------------------- */
+
+Deno.test("credencial com permissão de transações pode cobrar", async () => {
+  const { buscar, gravado } = fetchDeMentira({
+    name: "Credencial de produção",
+    permissions: ["PRODUCER_TRANSACTIONS", "PRODUCER_DATA"],
+    grantAllPermissions: false,
+    expiresAt: null,
+  }, 200);
+
+  const c = await testarAmploPay(CREDENCIAIS, buscar);
+
+  assertEquals(gravado.url, "https://app.amplopay.com/api/v1/gateway/producer/credentials");
+  assertEquals(gravado.headers?.get("x-secret-key"), "sec");
+  assertEquals(c.nome, "Credencial de produção");
+  assertEquals(c.podeCobrar, true);
+});
+
+Deno.test("acesso total é lista vazia com a bandeira ligada", async () => {
+  /* `grantAllPermissions` verdadeiro com `permissions: []` quer dizer acesso
+   * TOTAL, e não nenhum. Ler só a lista reprovaria a credencial mais poderosa
+   * que existe — e a loja trocaria uma chave que estava certa. */
+  const { buscar } = fetchDeMentira({
+    name: "Tudo",
+    permissions: [],
+    grantAllPermissions: true,
+  }, 200);
+
+  const c = await testarAmploPay(CREDENCIAIS, buscar);
+
+  assertEquals(c.todas, true);
+  assertEquals(c.podeCobrar, true);
+});
+
+Deno.test("credencial válida mas sem permissão de cobrar", async () => {
+  /* O caso que um teste de "conectou?" aprovaria: a chave autentica, e falha
+   * só na hora de criar a cobrança — com um cliente esperando do outro lado. */
+  const { buscar } = fetchDeMentira({
+    name: "Só leitura",
+    permissions: ["PRODUCER_DATA"],
+    grantAllPermissions: false,
+  }, 200);
+
+  const c = await testarAmploPay(CREDENCIAIS, buscar);
+
+  assertEquals(c.podeCobrar, false);
+});
+
+Deno.test("chave errada vira erro com o código do gateway", async () => {
+  const { buscar } = fetchDeMentira({
+    statusCode: 401,
+    errorCode: "GATEWAY_NO_CREDENTIALS",
+    message: "Credenciais não fornecidas",
+  }, 401);
+
+  const erro = await assertRejects(
+    () => testarAmploPay(CREDENCIAIS, buscar),
+    ErroDoGateway,
+  );
+
+  assertEquals(erro.codigo, "GATEWAY_NO_CREDENTIALS");
 });

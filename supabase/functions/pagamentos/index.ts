@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ADAPTADORES } from "./provedores.ts";
 import { criarCobranca, lerCheckout, lerSituacao } from "./checkout.ts";
+import { ErroDoGateway, testarAmploPay } from "./criar.ts";
 import { confirmacaoDePagamento } from "../_shared/confirmacao_de_pagamento.ts";
 
 /**
@@ -93,6 +94,89 @@ Deno.serve(async (req) => {
       `${url.origin}${url.pathname.replace(/\/[^/]*$/, "")}`,
       corsHeaders,
     );
+  }
+
+  /**
+   * "Testar integração": as chaves funcionam?
+   *
+   * Esta é a única rota daqui que exige LOGIN, e a razão é simples: as três do
+   * checkout são para o cliente da loja, e esta é para o dono dela. Ela lê o
+   * segredo guardado e fala com o gateway usando o dinheiro dele.
+   *
+   * A permissão não é conferida com uma regra nova. O cliente é montado com o
+   * token de quem chamou e tenta LER a linha de credencial: se a política de
+   * RLS deixar — e ela só deixa admin da organização —, é admin. Inventar aqui
+   * uma segunda definição de "quem pode" seria dois lugares decidindo o mesmo,
+   * e um dia eles discordariam. - 2026/08/20
+   */
+  if (qual === "testar") {
+    const { org } = await req.json().catch(() => ({}));
+
+    if (!org) {
+      return new Response(JSON.stringify({ erro: "faltou a organização" }), {
+        status: 400,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    const comoUsuario = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        global: {
+          headers: { Authorization: req.headers.get("Authorization") ?? "" },
+        },
+      },
+    );
+
+    const { data: permitido } = await comoUsuario
+      .from("gateway_credenciais")
+      .select("organization_id")
+      .eq("organization_id", org)
+      .maybeSingle();
+
+    if (!permitido) {
+      return new Response(JSON.stringify({ erro: "sem permissão" }), {
+        status: 403,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    const { data: credencial } = await client
+      .from("gateway_credenciais")
+      .select("provedor, chave_publica, chave_secreta")
+      .eq("organization_id", org)
+      .maybeSingle();
+
+    if (!credencial) {
+      return new Response(JSON.stringify({ erro: "nenhuma chave cadastrada" }), {
+        status: 404,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    try {
+      const conferida = await testarAmploPay({
+        publica: credencial.chave_publica ?? "",
+        secreta: credencial.chave_secreta,
+      });
+
+      return new Response(JSON.stringify({ ok: true, ...conferida }), {
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    } catch (erro) {
+      /* 200 com `ok: false`, e não um código de erro: quem falhou foi o
+       * gateway, não este pedido. A tela precisa da MENSAGEM para mostrar, e um
+       * 4xx faria o cliente de consultas tratar como falha de rede e esconder
+       * justamente o que a pessoa precisa ler. */
+      const detalhe = erro instanceof ErroDoGateway
+        ? { codigo: erro.codigo, mensagem: erro.message }
+        : { mensagem: String(erro) };
+
+      return new Response(JSON.stringify({ ok: false, ...detalhe }), {
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
   }
 
   if (qual === "situacao") {
