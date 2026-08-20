@@ -1,39 +1,13 @@
--- O que se precisa saber de um contato sem abrir a ficha dele.
+-- A visão do contato passa a enxergar COBRANÇA.
 --
--- A tela de Contatos era uma lista de telefones sem nome, em ordem de chegada.
--- Com anúncio rodando isso vira uma pilha: em 2026/08/18 a barbearia tinha 200
--- linhas, 189 sem nome e nenhuma etiqueta, e a pergunta "quem destes agendou"
--- não tinha resposta em lugar nenhum da tela.
+-- Ela só conhecia compromisso: `pagou` significava "pagou um atendimento".
+-- Numa loja que vende plano e não marca hora, isso torna todo mundo "não
+-- pagou" — inclusive quem paga religiosamente todo mês.
 --
--- As respostas já existiam, espalhadas: a conversa diz se respondeu, o
--- compromisso diz se agendou, e a PRIMEIRA mensagem de quem veio de anúncio
--- carrega qual anúncio foi. Esta visão junta as três num lugar só, para a lista
--- poder filtrar sem que o navegador leia a base inteira.
---
--- ## Por que uma visão, e não colunas no contato
---
--- Tudo aqui é derivado de fatos que já estão gravados. Como coluna, cada um
--- precisaria de um gatilho para se manter em dia, e o dia em que um gatilho
--- falhar a tela passa a mentir sobre quem agendou — que é pior do que não
--- mostrar. Derivado, não tem como sair de sincronia.
---
--- ## Coluna nova entra no FIM, ou a migração tem de derrubar a visão
---
--- `create or replace view` não sabe inserir coluna no meio: ele compara
--- posição por posição e lê "campo novo na terceira vaga" como "renomearam a
--- terceira coluna". Foi o que aconteceu em 2026/08/18 ao pôr
--- `primeira_mensagem` antes de `ultima_mensagem` — erro 42P16, e a migração
--- não subiu.
---
--- Aqui a ordem é a que se lê melhor; quem mexer paga o preço na migração, com
--- um `drop view` antes do `create`. Derrubar é seguro enquanto nada no banco
--- depender dela: quem consulta é a tela, por HTTP.
---
--- ## `security_invoker`
---
--- Sem isto a visão roda com os privilégios de quem a criou e a RLS das tabelas
--- de baixo é ignorada: uma barbearia veria os contatos de outra. É o tipo de
--- falha que não aparece em teste nenhum feito com um cliente só.
+-- Colunas novas vão no FIM: `create or replace view` compara posição por
+-- posição, e campo no meio é lido como renomeação (42P16). Ver o cabeçalho
+-- da própria visão, que já pagou esse preço em 2026/08/18. - 2026/08/20
+
 create or replace view public.contact_overview
 with (security_invoker = on) as
 with enderecos as (
