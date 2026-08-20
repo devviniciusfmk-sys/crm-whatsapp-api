@@ -20,14 +20,14 @@
  * ## O que NÃO mora aqui
  *
  * Decidir se quita, se é repetido, se o valor bate. Isso é do banco, em
- * `billing.registrar_pagamento`, que já trata postback reenviado devolvendo o
- * mesmo pagamento em vez de criar o segundo. Adaptador que decide vira quatro
- * lugares decidindo a mesma coisa de quatro jeitos. - 2026/08/19
+ * `billing.registrar_pagamento` e `public.quitar_cobranca`, que já tratam
+ * postback reenviado. Adaptador que decide vira quatro lugares decidindo a
+ * mesma coisa de quatro jeitos. - 2026/08/19
  */
 
 /** O que qualquer gateway precisa dizer, traduzido para o nosso vocabulário. */
 export type Aviso = {
-  /** A fatura que está sendo paga: a referência que mandamos na criação. */
+  /** A cobrança que está sendo paga: a referência que mandamos na criação. */
   fatura: string;
   /** O identificador da transação no gateway. É a trava contra repetido. */
   transacao: string;
@@ -45,7 +45,7 @@ export type Adaptador = {
   /**
    * Confere que o postback veio mesmo do gateway.
    *
-   * Sem isto, qualquer um que descubra a URL marca faturas como pagas — e a
+   * Sem isto, qualquer um que descubra a URL marca cobranças como pagas — e a
    * URL de webhook não é segredo: ela vai no painel do gateway, em prints, em
    * conversa de suporte. Cada provedor assina do seu jeito; o adaptador sabe
    * qual é o dele.
@@ -59,78 +59,132 @@ export type Adaptador = {
   ler: (corpo: unknown) => Aviso | null;
 };
 
-/** Um número que veio como "97,50", "97.50" ou 9750 (centavos). */
-function comoNumero(valor: unknown, emCentavos = false): number {
-  if (typeof valor === "number") return emCentavos ? valor / 100 : valor;
+/** Um número que veio como "97,50", "97.50" ou 97.5. */
+function comoNumero(valor: unknown): number {
+  if (typeof valor === "number") return valor;
 
-  const limpo = String(valor ?? "").replace(/[^\d,.-]/g, "").replace(",", ".");
-  const n = Number(limpo);
+  const n = Number(String(valor ?? "").replace(/[^\d,.-]/g, "").replace(",", "."));
 
-  if (!Number.isFinite(n)) return 0;
-
-  return emCentavos ? n / 100 : n;
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
- * O adaptador da AmploPay.
+ * Os cinco eventos que a AmploPay dispara. Não há um sexto — a documentação
+ * lista o conjunto inteiro, e evento fora desta lista cai em "pendente", que é
+ * a resposta segura: não fecha nada.
+ */
+const POR_EVENTO: Record<string, Aviso["situacao"]> = {
+  TRANSACTION_CREATED: "pendente",
+  TRANSACTION_PAID: "pago",
+  TRANSACTION_CANCELED: "recusado",
+  TRANSACTION_REFUNDED: "estornado",
+  TRANSACTION_CHARGED_BACK: "estornado",
+};
+
+/** E os cinco status, para quando o aviso vier sem `event`. */
+const POR_STATUS: Record<string, Aviso["situacao"]> = {
+  PENDING: "pendente",
+  COMPLETED: "pago",
+  FAILED: "recusado",
+  REFUNDED: "estornado",
+  CHARGED_BACK: "estornado",
+};
+
+/**
+ * # AmploPay
  *
- * A documentação deles é privada — `docs.amplopay.com.br` não existe e
- * `app.amplopay.com` responde 403 —, então os nomes de campo abaixo são os do
- * formato mais comum entre gateways brasileiros, com alternativas aceitas. Não
- * são um palpite escondido: `ler` devolve `null` quando não encontra o que
- * precisa, e um postback real que não casar aparece no log em vez de virar
- * pagamento errado.
+ * Lido da documentação deles em 2026/08/19 (`app.amplopay.com/docs`), que é
+ * pública mas só abre com identificação de navegador — `curl` comum leva 403.
  *
- * Para fechar isto de vez basta UM postback de venda aprovada, copiado do
- * painel. Cinco minutos de trabalho depois disso. - 2026/08/19
+ *   base   https://app.amplopay.com/api/v1
+ *   auth   headers `x-public-key` e `x-secret-key`
+ *   criar  POST /gateway/pix/receive
+ *
+ * ## Três coisas que eu tinha chutado errado antes de ler
+ *
+ * 1. O valor é em REAIS, e não em centavos. O palpite de centavos cobraria
+ *    cem vezes menos — R$ 0,97 no lugar de R$ 97,00.
+ * 2. A autenticidade do postback vem num campo `token` DO CORPO, e não num
+ *    cabeçalho de assinatura. Procurar só no cabeçalho recusaria todo aviso
+ *    legítimo.
+ * 3. A referência que mandamos na criação chama-se `identifier`, e não
+ *    `external_reference`. Sem o nome certo, nenhum pagamento acharia a
+ *    cobrança dele.
+ *
+ * ## A referência muda de nome no caminho
+ *
+ * Mandamos `identifier` na criação e ele volta chamado `clientIdentifier` —
+ * na consulta de transação e no postback. Não é um apelido nosso: é o nome
+ * documentado do campo na resposta. Ler `identifier` na volta acha nada, e uma
+ * cobrança sem referência é uma cobrança que nunca fecha sozinha.
  */
 export const amplopay: Adaptador = {
   nome: "amplopay",
 
-  confere: (req, _corpo, segredo) => {
-    // Enquanto o esquema de assinatura deles não for conhecido, a defesa é um
-    // segredo combinado no cabeçalho. É o mínimo que impede alguém que
-    // descobriu a URL de marcar faturas como pagas.
-    const enviado = req.headers.get("x-webhook-secret") ??
+  confere: (req, corpo, segredo) => {
+    if (!segredo) return false;
+
+    /* O token do corpo é o jeito deles. O cabeçalho fica aceito também porque
+     * é o que a maioria dos gateways faz — e porque é assim que o nosso teste
+     * de ponta a ponta chama, sem precisar de um corpo válido para provar que
+     * a recusa funciona. */
+    let doCorpo: unknown;
+
+    try {
+      doCorpo = (JSON.parse(corpo) as { token?: unknown })?.token;
+    } catch {
+      doCorpo = undefined;
+    }
+
+    const doCabecalho = req.headers.get("x-webhook-secret") ??
       req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
       new URL(req.url).searchParams.get("token");
 
-    return !!segredo && enviado === segredo;
+    return doCorpo === segredo || doCabecalho === segredo;
   },
 
   ler: (corpo) => {
     const c = corpo as Record<string, unknown>;
-    const dados = (c?.data ?? c?.transaction ?? c) as Record<string, unknown>;
+    const t = (c?.transaction ?? {}) as Record<string, unknown>;
 
+    /* `clientIdentifier` é como o `identifier` que mandamos na criação volta.
+     * Os outros nomes ficam como rede, caso um evento chegue por outra rota. */
     const fatura = String(
-      dados?.external_reference ?? dados?.reference ?? dados?.reference_id ??
-        dados?.external_id ?? "",
+      t.clientIdentifier ?? c.clientIdentifier ?? t.identifier ?? c.identifier ??
+        "",
     );
 
-    const transacao = String(dados?.id ?? dados?.transaction_id ?? "");
+    const transacao = String(
+      t.id ?? t.transactionId ?? c.transactionId ?? c.id ?? "",
+    );
 
     if (!fatura || !transacao) return null;
 
-    const bruto = String(dados?.status ?? c?.status ?? "").toLowerCase();
+    /**
+     * O EVENTO manda, e o status é a segunda opinião.
+     *
+     * As duas listas são fechadas e documentadas, então são tabelas e não
+     * expressões regulares. `/cancel/` solto casaria com
+     * "cancellation_requested", que ainda não cancelou nada.
+     *
+     * `TRANSACTION_CREATED` é o que mais engana: chega no instante em que a
+     * cobrança nasce, antes de qualquer pagamento. Tratá-lo como pago quitaria
+     * toda cobrança no momento em que fosse criada.
+     */
+    const evento = String(c.event ?? "").toUpperCase();
+    const bruto = String(t.status ?? c.status ?? "").toUpperCase();
 
-    const situacao: Aviso["situacao"] = /paid|approved|aprovad|pago|success/
-        .test(bruto)
-      ? "pago"
-      : /refund|estorn|charge_?back/.test(bruto)
-      ? "estornado"
-      : /refus|denied|cancel|fail|recusad/.test(bruto)
-      ? "recusado"
-      : "pendente";
+    const situacao = POR_EVENTO[evento] ?? POR_STATUS[bruto] ?? "pendente";
 
-    /* Centavos quando o campo se chama `amount` — é a convenção da maioria —,
-     * e reais quando vem `value`. Errar aqui é cobrar cem vezes mais ou cem
-     * vezes menos, então o registro guarda o valor e o confronto com o total
-     * da fatura acontece no banco. */
-    const valor = dados?.amount !== undefined
-      ? comoNumero(dados.amount, true)
-      : comoNumero(dados?.value ?? dados?.valor);
-
-    return { fatura, transacao, valor, situacao };
+    return {
+      fatura,
+      transacao,
+      /* Em reais, e `amount` é o que a loja recebe. `chargeAmount` é o que o
+       * cliente pagou, e os dois diferem quando há taxa de parcelamento — mas
+       * quem quita a fatura é o que entrou. */
+      valor: comoNumero(t.amount ?? c.amount),
+      situacao,
+    };
   },
 };
 

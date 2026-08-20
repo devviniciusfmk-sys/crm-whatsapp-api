@@ -2,16 +2,26 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ADAPTADORES } from "./provedores.ts";
+import { criarCobranca, lerCheckout, lerSituacao } from "./checkout.ts";
 import { confirmacaoDePagamento } from "../_shared/confirmacao_de_pagamento.ts";
 
 /**
  * # A porta dos pagamentos
  *
- * O gateway avisa aqui que uma fatura foi paga, e este arquivo faz três coisas
- * e mais nada: confere que o aviso é legítimo, traduz para o nosso vocabulário
- * e chama `billing.registrar_pagamento`.
+ * Duas famílias de rota, olhando para lados opostos do mesmo dinheiro.
  *
- *   POST /pagamentos/amplopay
+ *   GET  /pagamentos/checkout?org=…       o que a loja vende
+ *   POST /pagamentos/cobrar               o cliente pede um Pix
+ *   GET  /pagamentos/situacao?cobranca=…  já pagou?
+ *   POST /pagamentos/amplopay             o gateway avisa que pagou
+ *
+ * As três primeiras são o cliente da loja, sem login, num navegador. A última é
+ * o gateway. Moram juntas porque compartilham o essencial — as credenciais e a
+ * tabela de cobranças — e separá-las seria duas funções lendo o mesmo segredo.
+ *
+ * O postback é o que este cabeçalho descreve daqui para baixo: confere que o
+ * aviso é legítimo, traduz para o nosso vocabulário e chama quem registra. O
+ * checkout está em `checkout.ts`, com as suas próprias regras.
  *
  * ## Isolado de propósito
  *
@@ -53,6 +63,46 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const qual = url.pathname.split("/").filter(Boolean).at(-1) ?? "";
+
+  /**
+   * O checkout entra ANTES da tabela de adaptadores.
+   *
+   * As duas famílias de rota moram na mesma função porque compartilham o
+   * essencial — as credenciais do gateway e a tabela de cobranças — e separá-las
+   * significaria duas funções lendo o mesmo segredo. Mas elas olham para lados
+   * opostos: aqui é o cliente da loja pedindo um Pix; abaixo é o gateway
+   * avisando que ele foi pago.
+   *
+   * A diferença que importa: estas não conferem assinatura, porque não há o que
+   * conferir — quem chama é um navegador anônimo. O que as protege é não
+   * aceitar valor de fora e não devolver nada que já não esteja no cardápio.
+   */
+  if (qual === "checkout") {
+    return await lerCheckout(client, url.searchParams.get("org") ?? "", corsHeaders);
+  }
+
+  if (qual === "cobrar") {
+    const corpo = await req.json().catch(() => ({}));
+
+    return await criarCobranca(
+      client,
+      corpo,
+      // De onde o gateway deve avisar de volta: esta mesma função, rota do
+      // adaptador. Montado a partir da requisição para não haver uma URL de
+      // produção escrita à mão que fica errada no ambiente de teste.
+      `${url.origin}${url.pathname.replace(/\/[^/]*$/, "")}`,
+      corsHeaders,
+    );
+  }
+
+  if (qual === "situacao") {
+    return await lerSituacao(
+      client,
+      url.searchParams.get("cobranca") ?? "",
+      corsHeaders,
+    );
+  }
+
   const adaptador = ADAPTADORES[qual];
 
   if (!adaptador) {
