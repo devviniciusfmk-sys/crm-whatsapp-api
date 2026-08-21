@@ -599,6 +599,16 @@ export type ToolConfig =
 
 export type HumanAgentExtra = {
   role: DatabaseGenerated["public"]["Enums"]["role"];
+  /**
+   * Quanto por cento das vendas deste atendente viram comissão.
+   *
+   * Só a interface usa, e é o mesmo desenho de
+   * `ProfessionalExtra.commission_percent` que a agenda já usa: porcentagem por
+   * pessoa, com o módulo `comissao` ligando ou desligando. No agente HUMANO e
+   * não no de IA — robô não ganha comissão. Está no tipo para o espelho não
+   * divergir. - 2026/08/21
+   */
+  commission_percent?: number | null;
   invitation?: {
     organization_name: string;
     email: string;
