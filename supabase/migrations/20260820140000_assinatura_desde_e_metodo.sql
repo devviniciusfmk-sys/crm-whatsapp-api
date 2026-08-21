@@ -1,39 +1,12 @@
--- O que se precisa saber de um contato sem abrir a ficha dele.
+-- Quando contratou, como paga e de quantos em quantos dias renova.
 --
--- A tela de Contatos era uma lista de telefones sem nome, em ordem de chegada.
--- Com anúncio rodando isso vira uma pilha: em 2026/08/18 a barbearia tinha 200
--- linhas, 189 sem nome e nenhuma etiqueta, e a pergunta "quem destes agendou"
--- não tinha resposta em lugar nenhum da tela.
+-- A ficha do assinante dizia "venceu em 05/08" e mais nada sobre o contrato:
+-- nem desde quando a pessoa assina, nem se o dinheiro entra sozinho pelo link
+-- ou se alguém tem de ir atrás. As duas mudam o que se faz com um atraso.
 --
--- As respostas já existiam, espalhadas: a conversa diz se respondeu, o
--- compromisso diz se agendou, e a PRIMEIRA mensagem de quem veio de anúncio
--- carrega qual anúncio foi. Esta visão junta as três num lugar só, para a lista
--- poder filtrar sem que o navegador leia a base inteira.
---
--- ## Por que uma visão, e não colunas no contato
---
--- Tudo aqui é derivado de fatos que já estão gravados. Como coluna, cada um
--- precisaria de um gatilho para se manter em dia, e o dia em que um gatilho
--- falhar a tela passa a mentir sobre quem agendou — que é pior do que não
--- mostrar. Derivado, não tem como sair de sincronia.
---
--- ## Coluna nova entra no FIM, ou a migração tem de derrubar a visão
---
--- `create or replace view` não sabe inserir coluna no meio: ele compara
--- posição por posição e lê "campo novo na terceira vaga" como "renomearam a
--- terceira coluna". Foi o que aconteceu em 2026/08/18 ao pôr
--- `primeira_mensagem` antes de `ultima_mensagem` — erro 42P16, e a migração
--- não subiu.
---
--- Aqui a ordem é a que se lê melhor; quem mexer paga o preço na migração, com
--- um `drop view` antes do `create`. Derrubar é seguro enquanto nada no banco
--- depender dela: quem consulta é a tela, por HTTP.
---
--- ## `security_invoker`
---
--- Sem isto a visão roda com os privilégios de quem a criou e a RLS das tabelas
--- de baixo é ignorada: uma barbearia veria os contatos de outra. É o tipo de
--- falha que não aparece em teste nenhum feito com um cliente só.
+-- Tudo já estava em `cobrancas` (`paga_em`, `metodo`, `validade_dias`); só não
+-- subia até a visão. Três colunas no FIM, que é o que `create or replace view`
+-- aceita sem 42P16.
 create or replace view public.contact_overview
 with (security_invoker = on) as
 with enderecos as (
