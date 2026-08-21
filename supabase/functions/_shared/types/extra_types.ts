@@ -394,6 +394,14 @@ export type OrganizationAddressExtra =
   | InstagramOrganizationAddressExtra;
 
 export type ConversationExtra = {
+  /**
+   * Quem respondeu primeiro, e quando. Escrito pelo gatilho marcar_dono.
+   *
+   * Só a interface lê: é ela que mostra "com Vinícius" na lista para ninguém
+   * responder o cliente do outro. O assistente nunca vira dono — o gatilho
+   * filtra por agents.ai. Ver 02-06_dono_da_conversa.sql. - 2026/08/21
+   */
+  dono?: { agente: string; em: string };
   memory?: Memory;
   paused?: string;
   archived?: string;

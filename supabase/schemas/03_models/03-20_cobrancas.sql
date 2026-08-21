@@ -51,6 +51,25 @@ create table public.cobrancas (
   -- e outra pode passar uma semana.
   vence_em timestamp with time zone,
   paga_em timestamp with time zone,
+  /**
+   * De quem é esta venda.
+   *
+   * Existe para a comissão ter de quem contar: numa loja com atendentes, "a
+   * loja faturou R$ 3.400" não responde quanto cada um trouxe, e é essa a
+   * pergunta do fim do mês.
+   *
+   * Gravado no momento da cobrança, e não lido do dono da conversa na hora do
+   * relatório: o dono pode mudar, o atendente pode sair, a conversa pode ser
+   * apagada — e a venda de agosto tem de continuar sendo de quem a fez. É a
+   * mesma regra pela qual `itens` é cópia e não referência ao catálogo.
+   *
+   * `on delete set null` e não `cascade`: demitir um atendente não pode apagar
+   * o faturamento dele do caixa da loja. A venda continua, sem dono.
+   *
+   * Nulo é o normal do que já existia e do que entra por webhook de gateway:
+   * ninguém atendeu, o cliente pagou sozinho pelo link.
+   */
+  agent_id uuid,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
 );
@@ -70,6 +89,12 @@ add constraint cobrancas_conversation_id_fkey
 foreign key (conversation_id)
 references public.conversations(id)
 on delete cascade;
+
+alter table only public.cobrancas
+add constraint cobrancas_agent_id_fkey
+foreign key (agent_id)
+references public.agents(id)
+on delete set null;
 
 alter table only public.cobrancas
 add constraint cobrancas_status_check
