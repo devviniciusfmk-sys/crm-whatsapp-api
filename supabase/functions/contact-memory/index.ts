@@ -23,12 +23,18 @@ import type { MessageRow } from "../_shared/types/database_types.ts";
  * `contacts_needing_memory`, que só devolve conversa parada há meia hora, com
  * novidade desde o último resumo e com mais de três mensagens.
  *
- * **Limite conhecido:** só resume para agentes com endereço e chave próprios
- * (`extra.api_url` + `extra.api_key`). Quem usa a chave da plataforma passa
+ * **Limite conhecido:** só resume para lojas com endereço e chave próprios
+ * (`extra.api_url` mais a chave no cofre). Quem usa a chave da plataforma passa
  * pela contabilidade de créditos, que mora dentro do protocolo do agente e
  * está entrelaçada com a chamada do modelo. Duplicar aquilo aqui seria copiar
  * a parte do sistema que cobra — e uma segunda cópia de cobrança é a que
  * diverge. Fica para quando a resolução de credencial for extraída.
+ *
+ * **Não depende do assistente estar ligado.** Resumir não é atender, e quem
+ * desliga o robô não está pedindo para esquecer quem são os clientes. O
+ * modelo do resumo é escolhido à parte em `extra.memory_model` — o trabalho
+ * é pequeno e há gratuitos que dão conta, então o preço nunca precisa ser o
+ * motivo de desligar isto. - 2026/08/21
  *
  * Nada aqui inventa: o texto é o que as mensagens dizem, e a ficha é editável
  * e apagável na tela por quem atende. - 2026/08/04
@@ -65,6 +71,7 @@ type AgentRow = { id: string; extra: AIAgentExtra | null };
 
 async function summarise(
   agent: AIAgentExtra,
+  apiKey: string,
   transcript: string,
 ): Promise<string | null> {
   const baseURL = String(agent.api_url).replace("/chat/completions", "");
@@ -72,11 +79,15 @@ async function summarise(
   const response = await fetch(`${baseURL}/chat/completions`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${agent.api_key}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: agent.model,
+      /* `memory_model` primeiro: resumir não precisa do modelo que atende.
+       * Sessenta mensagens viradas em cinco linhas, sem ninguém esperando, é
+       * trabalho de modelo pequeno — e há gratuitos que dão conta. Ausente,
+       * segue no de sempre, e quem nunca mexer não nota diferença. */
+      model: agent.memory_model ?? agent.model,
       messages: [
         { role: "system", content: PROMPT },
         { role: "user", content: transcript },
@@ -131,22 +142,82 @@ Deno.serve(async (req) => {
   let written = 0;
   let skipped = 0;
 
+  /**
+   * A chave do provedor: o COFRE primeiro, o campo antigo do agente depois.
+   *
+   * Em 2026/08/05 a chave saiu de `agents.extra.api_key` para o Vault, por
+   * organização — a coluna jsonb era legível por qualquer atendente, e quem foi
+   * contratado para responder mensagens tinha acesso ao crédito de IA da conta.
+   * A migração ESVAZIOU o campo antigo.
+   *
+   * Este arquivo não foi junto. Ele continuou exigindo `extra.api_key`, que a
+   * partir daquele dia era sempre vazio — então a memória do contato ficou
+   * morta para todas as lojas, sem erro em lugar nenhum: a fila devolvia
+   * contatos, o laço pulava cada um por "sem agente com credencial", e o cron
+   * seguia rodando de vinte em vinte minutos escrevendo nada. Descoberto em
+   * 2026/08/21 por uma base com 159 contatos e zero resumos.
+   *
+   * É a mesma resolução que `chat-completions.ts` faz. Duas cópias da mesma
+   * regra é o que produziu este defeito; ficam duas ainda, mas agora iguais e
+   * uma apontando para a outra. - 2026/08/21
+   */
+  const chaves = new Map<string, string | null>();
+
+  const chaveDaOrganizacao = async (organizationId: string) => {
+    if (chaves.has(organizationId)) return chaves.get(organizationId)!;
+
+    const { data } = await client.rpc("get_model_api_key", {
+      p_organization_id: organizationId,
+    });
+
+    const doCofre = (data as string | null) || null;
+
+    chaves.set(organizationId, doCofre);
+
+    return doCofre;
+  };
+
   for (const row of due ?? []) {
     const { data: agents } = await client
       .from("agents")
       .select("id, extra")
       .eq("organization_id", row.organization_id);
 
-    // O primeiro agente ativo com credencial própria. Ver o limite conhecido
-    // no topo do arquivo.
+    /**
+     * O primeiro agente com credencial própria — ATIVO OU NÃO.
+     *
+     * Antes exigia `mode !== "inactive"`, e isso amarrava duas coisas que não
+     * têm relação: resumir não é atender. Quem desliga o assistente está
+     * dizendo "não responda pelos meus clientes", e não "esqueça quem eles
+     * são" — mas o efeito era o segundo, e em silêncio: a loja abria a ficha,
+     * via o campo vazio e concluía que o resumo não funcionava.
+     *
+     * Foi o que aconteceu na Rakan SUP: chave da OpenRouter cadastrada, cron
+     * rodando de vinte em vinte minutos desde agosto, e 159 contatos sem uma
+     * linha de resumo — porque o agente com a chave estava em `inactive`.
+     * Ligá-lo para ganhar o resumo teria ligado o robô para os clientes junto,
+     * que é o oposto do que a loja escolheu. - 2026/08/21
+     *
+     * O que continua valendo: sem chave própria, nada acontece. Ver o limite
+     * conhecido no topo do arquivo.
+     */
     const agent = (agents as AgentRow[] ?? [])
       .map((a) => a.extra)
       .find((extra): extra is AIAgentExtra =>
-        !!extra?.api_url && !!extra?.api_key && !!extra?.model &&
-        extra.mode !== "inactive"
+        !!extra?.api_url && !!(extra?.memory_model ?? extra?.model)
       );
 
     if (!agent) {
+      skipped++;
+      continue;
+    }
+
+    /* O campo antigo como segunda opção, e não como única: quem gravou a chave
+     * antes da migração e nunca mais mexeu continua com ela ali. */
+    const apiKey = await chaveDaOrganizacao(row.organization_id) ??
+      agent.api_key;
+
+    if (!apiKey) {
       skipped++;
       continue;
     }
@@ -179,7 +250,7 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const summary = await summarise(agent, transcript);
+    const summary = await summarise(agent, apiKey, transcript);
 
     // `summary_at` é gravado mesmo quando não houve o que resumir. Sem isso, uma
     // conversa sem conteúdo voltaria à fila a cada rodada, para sempre, gastando

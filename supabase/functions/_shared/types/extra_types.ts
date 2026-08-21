@@ -596,6 +596,18 @@ export type AIAgentExtra = {
   api_key?: string;
   model?: string;
   /**
+   * O modelo que resume o contato, quando não deve ser o mesmo que atende.
+   *
+   * As duas tarefas não têm o mesmo preço nem a mesma exigência: atender é ao
+   * vivo, com ferramentas e cliente esperando; resumir é sessenta mensagens
+   * viradas em cinco linhas, de vinte em vinte minutos, sem ninguém olhando.
+   * Pagar o modelo grande pela segunda é gastar onde não se ganha — e obrigar
+   * a isso faz a loja DESLIGAR o resumo em vez de baratear.
+   *
+   * Ausente, vale `model`. Quem nunca mexer não perde nada. - 2026/08/21
+   */
+  memory_model?: string;
+  /**
    * Preferência de provedor, repassada verbatim quando o intermediário é a
    * OpenRouter: `order`, `only`, `ignore`, `sort`, `allow_fallbacks`.
    *
