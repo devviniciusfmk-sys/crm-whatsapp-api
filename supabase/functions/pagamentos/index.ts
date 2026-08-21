@@ -291,6 +291,7 @@ Deno.serve(async (req) => {
    */
   if (deCliente && data) {
     const cobranca = data as unknown as {
+      id: string;
       conversation_id: string;
       organization_id: string;
       contact_address: string;
@@ -313,7 +314,7 @@ Deno.serve(async (req) => {
         .single();
 
       if (conv) {
-        await client.from("messages").insert({
+        const { error: falhou } = await client.from("messages").insert({
           conversation_id: conv.id,
           organization_id: cobranca.organization_id,
           organization_address: conv.organization_address,
@@ -331,6 +332,24 @@ Deno.serve(async (req) => {
             ),
           },
         });
+
+        if (falhou) throw falhou;
+
+        /**
+         * A marca do recibo, DEPOIS de a mensagem existir.
+         *
+         * Ela é a resposta para "quem pagou e não foi avisado?", e a tela de
+         * pagamentos reenvia o que estiver sem marca. Carimbada antes do
+         * insert, um envio perdido ficaria marcado como entregue — e o
+         * cliente sem confirmação nunca mais apareceria em lista nenhuma.
+         *
+         * Falhar aqui é o caso bom: o pior que acontece é o cliente receber
+         * a confirmação duas vezes, e não zero. - 2026/08/21
+         */
+        await client
+          .from("cobrancas")
+          .update({ recibo_em: new Date().toISOString() })
+          .eq("id", cobranca.id);
       }
     } catch (erro) {
       /* Avisar que falha não desfaz o pagamento: o dinheiro entrou e a

@@ -52,6 +52,25 @@ create table public.cobrancas (
   vence_em timestamp with time zone,
   paga_em timestamp with time zone,
   /**
+   * Quando o cliente foi avisado de que o pagamento entrou.
+   *
+   * ## Existe porque avisar FALHA em silêncio
+   *
+   * A confirmação sai de três lugares — o postback do gateway, o botão
+   * "Confirmar" das cobranças abertas e o registro na mão — e nos três ela é
+   * a última coisa a acontecer, de propósito: se o envio falhar, o pagamento
+   * continua quitado. O dinheiro entrou, e esse é o fato.
+   *
+   * O preço disso é que o envio perdido não deixa rastro nenhum. O caixa
+   * fecha certo, a cobrança aparece paga, e o cliente é o único que sabe que
+   * ficou sem resposta — ele volta perguntando "recebeu?", que é exatamente
+   * o que a confirmação existia para evitar.
+   *
+   * Com a marca, a pergunta "quem pagou e não foi avisado?" tem resposta, e
+   * a tela consegue reenviar. Nulo em pagamento antigo e em cobrança aberta.
+   */
+  recibo_em timestamp with time zone,
+  /**
    * De quem é esta venda.
    *
    * Existe para a comissão ter de quem contar: numa loja com atendentes, "a
