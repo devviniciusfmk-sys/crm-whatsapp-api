@@ -1,52 +1,137 @@
--- Quitar uma cobrança, e a regra do vencimento num lugar só.
+-- Uma linha por vez que o dinheiro entrou.
 --
--- A conta do "até quando vale" vivia no TypeScript da tela. Com o gateway
--- avisando por webhook, o servidor precisaria da mesma conta — e duas
--- implementações da mesma regra é como uma delas dá 18/09 e a outra 23/09 para
--- o mesmo cliente. Desce para o banco, que é onde as duas pontas chegam.
+-- `valor_pago` diz QUANTO já entrou de uma cobrança; ele não diz quando, e
+-- é o quando que o fechamento do mês precisa. Com metade hoje e metade
+-- sexta, um campo de data só faria os dois pedaços contarem juntos no dia em
+-- que a conta fechou — e num virar de mês isso paga comissão sobre dinheiro
+-- do mês passado, além de fechar o caixa de hoje sem o dinheiro de hoje.
+--
+-- Quem insere são as duas funções abaixo, e só elas. `quitar_cobranca` lança
+-- o que FALTAVA, e não o valor cheio: quem deu entrada de R$ 50 numa conta de
+-- R$ 100 está trazendo R$ 50.
 
-/**
- * Até quando vale o que está sendo pago nesta cobrança.
- *
- * Conta do PAGAMENTO e não do envio: o plano começa a valer quando o dinheiro
- * entra, e entre a cobrança e o pagamento pode passar uma semana.
- *
- * E quando o cliente RENOVA antes de vencer, conta do vencimento que ele já
- * tem. Quem paga faltando cinco dias perderia esses cinco, que já comprou.
- *
- * A própria cobrança fica FORA da busca do que ainda vale — senão, ao ser
- * quitada, ela se veria e somaria em cima de si mesma.
- */
-create or replace function public.vencimento_da_cobranca(
-  _cobranca uuid,
-  _quando timestamptz default now()
-) returns timestamptz
-language plpgsql
-stable
-security definer
-set search_path to ''
-as $$
-declare
-  _c public.cobrancas%rowtype;
-  _comeca timestamptz;
-begin
-  select * into _c from public.cobrancas where id = _cobranca;
+-- Cada vez que dinheiro entrou.
+--
+-- ## Por que uma tabela, e não mais uma coluna
+--
+-- "Metade hoje, metade sexta" é uma cobrança e DOIS recebimentos, e a
+-- diferença aparece na hora de somar o mês: com um só campo de data, os R$ 50
+-- de hoje e os R$ 50 de sexta contam juntos no dia em que a conta fechou. Se
+-- os dois caírem em meses diferentes, o fechamento do mês paga comissão sobre
+-- dinheiro que entrou no mês passado — e o caixa de hoje fecha sem o dinheiro
+-- que entrou hoje.
+--
+-- Uma linha por movimento resolve isso porque é o que de fato aconteceu: dois
+-- movimentos, duas datas, dois métodos.
+--
+-- ## Ninguém escreve aqui direto
+--
+-- Só `quitar_cobranca` e `receber_parcial` inserem, e as duas mantêm
+-- `cobrancas.valor_pago` em dia junto. Duas portas para o mesmo dinheiro
+-- seriam dois totais discordando.
+create table if not exists public.cobranca_recebimentos (
+  id uuid default gen_random_uuid() not null,
+  cobranca_id uuid not null,
+  -- Repetida da cobrança: o caixa pergunta por organização, e sem ela toda
+  -- soma do mês precisaria de uma junção.
+  organization_id uuid not null,
+  valor numeric not null,
+  -- dinheiro | pix | cartao | transferencia | <gateway>
+  metodo text,
+  -- Em qual conta caiu. Ver `cobrancas.conta`.
+  conta text,
+  nota text,
+  -- Quem recebeu. É o que a comissão soma no fim do mês, e por movimento:
+  -- a entrada pode ser de um atendente e o resto de outro.
+  agent_id uuid,
+  recebido_em timestamp with time zone default now() not null,
+  created_at timestamp with time zone default now() not null
+);
 
-  if not found or _c.validade_dias is null then
-    return null;
-  end if;
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_pkey;
 
-  select max(o.vence_em) into _comeca
-  from public.cobrancas o
-  where o.contact_address = _c.contact_address
-    and o.organization_id = _c.organization_id
-    and o.status = 'paga'
-    and o.id <> _c.id
-    and o.vence_em > _quando;
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_pkey primary key (id);
 
-  return coalesce(_comeca, _quando) + (_c.validade_dias || ' days')::interval;
-end;
-$$;
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_cobranca_id_fkey;
+
+-- `cascade`: recebimento sem cobrança não diz de que era.
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_cobranca_id_fkey
+foreign key (cobranca_id) references public.cobrancas(id) on delete cascade;
+
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_organization_id_fkey;
+
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_organization_id_fkey
+foreign key (organization_id) references public.organizations(id)
+on delete cascade;
+
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_agent_id_fkey;
+
+-- Demitir um atendente não apaga o faturamento dele do caixa da loja.
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_agent_id_fkey
+foreign key (agent_id) references public.agents(id) on delete set null;
+
+-- A pergunta do fechamento: o que entrou nesta loja neste mês.
+create index if not exists cobranca_recebimentos_mes_idx
+on public.cobranca_recebimentos (organization_id, recebido_em);
+
+create index if not exists cobranca_recebimentos_cobranca_idx
+on public.cobranca_recebimentos (cobranca_id);
+
+alter table public.cobranca_recebimentos enable row level security;
+
+drop policy if exists cobranca_recebimentos_da_organizacao
+on public.cobranca_recebimentos;
+
+-- Quem enxerga a cobrança enxerga os recebimentos dela. A regra de quem
+-- pertence a qual organização já está resolvida uma vez, em `cobrancas`;
+-- repeti-la aqui seria a segunda definição de quem pode ver dinheiro.
+create policy cobranca_recebimentos_da_organizacao
+on public.cobranca_recebimentos
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.cobrancas c
+    where c.id = cobranca_recebimentos.cobranca_id
+  )
+)
+with check (
+  exists (
+    select 1 from public.cobrancas c
+    where c.id = cobranca_recebimentos.cobranca_id
+  )
+);
+
+-- O que já estava pago vira um recebimento com a data do pagamento. Sem
+-- isto, o caixa e a comissão do mês corrente ficariam vazios no dia da
+-- migração — a loja abriria o fechamento e veria zero.
+insert into public.cobranca_recebimentos (
+  cobranca_id, organization_id, valor, metodo, conta, agent_id, recebido_em
+)
+select c.id, c.organization_id, c.valor, c.metodo, c.conta, c.agent_id,
+       coalesce(c.paga_em, c.updated_at)
+from public.cobrancas c
+where c.status = 'paga'
+  and not exists (
+    select 1 from public.cobranca_recebimentos r where r.cobranca_id = c.id
+  );
+
+-- As duas funções ganham `_agente`, e as versões antigas TÊM de sair: um
+-- `create or replace` com outra assinatura cria uma sobrecarga, e quem
+-- chamasse com os argumentos de antes continuaria caindo no corpo velho —
+-- que não lança recebimento nenhum.
+drop function if exists public.quitar_cobranca(uuid, text, text);
+drop function if exists public.receber_parcial(
+  uuid, numeric, text, text, text, timestamptz
+);
 
 /**
  * Marca a cobrança como paga e devolve a linha — ou NADA, se já estava paga.
@@ -118,10 +203,6 @@ $$;
 
 grant execute on function public.quitar_cobranca(uuid, text, text, uuid)
 to anon, authenticated, service_role;
-
-grant execute on function public.vencimento_da_cobranca(uuid, timestamptz)
-to anon, authenticated, service_role;
-
 
 /**
  * Recebe uma PARTE do que foi combinado — ou o resto dela.

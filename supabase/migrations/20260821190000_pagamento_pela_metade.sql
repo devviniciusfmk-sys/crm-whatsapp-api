@@ -1,39 +1,47 @@
--- O que se precisa saber de um contato sem abrir a ficha dele.
+-- Metade hoje, metade sexta.
 --
--- A tela de Contatos era uma lista de telefones sem nome, em ordem de chegada.
--- Com anúncio rodando isso vira uma pilha: em 2026/08/18 a barbearia tinha 200
--- linhas, 189 sem nome e nenhuma etiqueta, e a pergunta "quem destes agendou"
--- não tinha resposta em lugar nenhum da tela.
+-- O sistema só sabia dizer "aberta" ou "paga". Quem recebia metade tinha
+-- duas saídas ruins: marcar como paga — e perder os R$ 50 que faltam, que
+-- ninguém mais vai cobrar — ou deixar aberta, e o caixa do dia fechar sem o
+-- dinheiro que entrou.
 --
--- As respostas já existiam, espalhadas: a conversa diz se respondeu, o
--- compromisso diz se agendou, e a PRIMEIRA mensagem de quem veio de anúncio
--- carrega qual anúncio foi. Esta visão junta as três num lugar só, para a lista
--- poder filtrar sem que o navegador leia a base inteira.
---
--- ## Por que uma visão, e não colunas no contato
---
--- Tudo aqui é derivado de fatos que já estão gravados. Como coluna, cada um
--- precisaria de um gatilho para se manter em dia, e o dia em que um gatilho
--- falhar a tela passa a mentir sobre quem agendou — que é pior do que não
--- mostrar. Derivado, não tem como sair de sincronia.
---
--- ## Coluna nova entra no FIM, ou a migração tem de derrubar a visão
---
--- `create or replace view` não sabe inserir coluna no meio: ele compara
--- posição por posição e lê "campo novo na terceira vaga" como "renomearam a
--- terceira coluna". Foi o que aconteceu em 2026/08/18 ao pôr
--- `primeira_mensagem` antes de `ultima_mensagem` — erro 42P16, e a migração
--- não subiu.
---
--- Aqui a ordem é a que se lê melhor; quem mexer paga o preço na migração, com
--- um `drop view` antes do `create`. Derrubar é seguro enquanto nada no banco
--- depender dela: quem consulta é a tela, por HTTP.
---
--- ## `security_invoker`
---
--- Sem isto a visão roda com os privilégios de quem a criou e a RLS das tabelas
--- de baixo é ignorada: uma barbearia veria os contatos de outra. É o tipo de
--- falha que não aparece em teste nenhum feito com um cliente só.
+-- `valor_pago` passa a ser o que responde "quanto a loja recebeu", e o que
+-- já existia é preenchido com o próprio `valor`: nada muda para quem nunca
+-- dividiu um pagamento.
+alter table public.cobrancas
+add column if not exists valor_pago numeric not null default 0,
+add column if not exists combinado_para timestamp with time zone;
+
+update public.cobrancas
+set valor_pago = valor
+where status = 'paga' and valor_pago = 0;
+
+comment on column public.cobrancas.valor_pago is
+  'Quanto já entrou. É por ele que se soma dinheiro recebido, não por valor.';
+
+comment on column public.cobrancas.combinado_para is
+  'O dia combinado para o resto. Compromisso, não vencimento.';
+
+alter table public.cobrancas
+drop constraint if exists cobrancas_status_check;
+
+alter table public.cobrancas
+add constraint cobrancas_status_check
+check (status in ('aberta', 'parcial', 'paga', 'cancelada'));
+
+-- Parcial conta como aberta: metade paga é metade devendo.
+drop index if exists public.cobrancas_abertas_idx;
+
+create index cobrancas_abertas_idx
+on public.cobrancas (organization_id, status)
+where status in ('aberta', 'parcial');
+
+-- A agenda da loja precisa achar o combinado do dia.
+create index if not exists cobrancas_combinado_idx
+on public.cobrancas (organization_id, combinado_para)
+where combinado_para is not null;
+
+-- A visão passa a somar o que ENTROU e a contar o parcial como devendo.
 create or replace view public.contact_overview
 with (security_invoker = on) as
 with enderecos as (
@@ -330,5 +338,58 @@ left join compromissos p on p.contact_id = c.id
 left join cobrado b on b.contact_id = c.id
 left join origem o on o.contact_id = c.id;
 
-comment on view public.contact_overview is
-  'Contatos com o que a tela precisa para filtrar: origem do anúncio, se agendou, se ficou sem resposta, e se é assinante.';
+create or replace function public.receber_parcial(
+  _cobranca uuid,
+  _valor numeric,
+  _metodo text default null,
+  _conta text default null,
+  _nota text default null,
+  _combinado_para timestamptz default null
+) returns public.cobrancas
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _c public.cobrancas%rowtype;
+begin
+  if _valor is null or _valor <= 0 then
+    raise exception 'valor recebido tem de ser maior que zero';
+  end if;
+
+  update public.cobrancas
+  set valor_pago = coalesce(valor_pago, 0) + _valor,
+      metodo = coalesce(_metodo, metodo),
+      conta = coalesce(_conta, conta),
+      nota = case
+        when _nota is null then nota
+        when nota is null or nota = '' then _nota
+        else nota || ' · ' || _nota
+      end,
+      combinado_para = _combinado_para,
+      status = 'parcial'
+  where id = _cobranca
+    and status in ('aberta', 'parcial')
+  returning * into _c;
+
+  -- Cobrança que não existe, ou já paga, ou cancelada. Nulo em vez de erro,
+  -- pela mesma razão de `quitar_cobranca`: quem chama duas vezes é a rede.
+  if _c.id is null then
+    return null;
+  end if;
+
+  if _c.valor_pago >= _c.valor then
+    -- Completou. O combinado deixa de existir junto com a dívida: uma data
+    -- de cobrar quem já pagou é alguém sendo incomodado à toa.
+    update public.cobrancas set combinado_para = null where id = _cobranca;
+
+    return public.quitar_cobranca(_cobranca, _metodo);
+  end if;
+
+  return _c;
+end;
+$$;
+
+grant execute on function public.receber_parcial(
+  uuid, numeric, text, text, text, timestamptz
+) to anon, authenticated, service_role;

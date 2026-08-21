@@ -34,6 +34,40 @@ create table public.cobrancas (
    */
   itens jsonb not null default '[]'::jsonb,
   valor numeric not null,
+  /**
+   * Quanto JÁ entrou desta cobrança.
+   *
+   * ## Metade hoje, metade sexta
+   *
+   * O balcão faz isso o tempo todo, e até aqui o sistema só sabia dizer
+   * "aberta" ou "paga". Quem recebia metade tinha duas saídas ruins: marcar
+   * como paga — e perder os R$ 50 que faltam, que ninguém mais vai cobrar —
+   * ou deixar aberta, e o caixa do dia fechar sem o dinheiro que entrou.
+   *
+   * ## É ELE que responde "quanto a loja recebeu"
+   *
+   * `valor` é o combinado; `valor_pago` é o que entrou. Toda soma de
+   * dinheiro — caixa, comissão, LTV do cliente — conta por este, e as
+   * antigas foram preenchidas com o próprio `valor` para que nada mude para
+   * quem nunca dividiu um pagamento.
+   *
+   * Quem decide se completou é `receber_parcial`, no banco. Comparar aqui e
+   * na tela seria duas opiniões sobre a mesma dívida.
+   */
+  valor_pago numeric not null default 0,
+  /**
+   * O dia combinado para o resto.
+   *
+   * Não é vencimento: ninguém perde acesso por ele, e nada acontece sozinho
+   * quando chega. É um COMPROMISSO — "ele disse que traz sexta" — e existe
+   * para aparecer na agenda da loja naquele dia, ao lado de quem vence.
+   *
+   * Sem isso o combinado mora na cabeça de quem atendeu, e quem atendeu
+   * está de folga na sexta. Nulo quando não se combinou nada.
+   */
+  combinado_para timestamp with time zone,
+  -- aberta | parcial | paga | cancelada. `parcial` é dinheiro que entrou
+  -- sem fechar a conta — ver `valor_pago`.
   status text not null default 'aberta',
   -- pix | amplopay | kirvano | kiwify | dinheiro | cartao
   metodo text,
@@ -142,7 +176,7 @@ on delete set null;
 
 alter table only public.cobrancas
 add constraint cobrancas_status_check
-check (status in ('aberta', 'paga', 'cancelada'));
+check (status in ('aberta', 'parcial', 'paga', 'cancelada'));
 
 -- Um postback reenviado não vira segunda cobrança paga. Mesma trava que
 -- `billing.payments` tem, pelo mesmo motivo.
@@ -153,13 +187,114 @@ where external_id is not null;
 create index cobrancas_conversation_id_idx
 on public.cobrancas (conversation_id);
 
--- A pergunta que a tela faz o tempo todo: o que esta loja tem em aberto.
+-- A pergunta que a tela faz o tempo todo: o que esta loja tem a receber.
+-- `parcial` entra junto: metade paga é metade devendo.
 create index cobrancas_abertas_idx
 on public.cobrancas (organization_id, status)
-where status = 'aberta';
+where status in ('aberta', 'parcial');
 
 create trigger set_updated_at
 before update
 on public.cobrancas
 for each row
 execute function public.moddatetime('updated_at');
+
+-- Cada vez que dinheiro entrou.
+--
+-- ## Por que uma tabela, e não mais uma coluna
+--
+-- "Metade hoje, metade sexta" é uma cobrança e DOIS recebimentos, e a
+-- diferença aparece na hora de somar o mês: com um só campo de data, os R$ 50
+-- de hoje e os R$ 50 de sexta contam juntos no dia em que a conta fechou. Se
+-- os dois caírem em meses diferentes, o fechamento do mês paga comissão sobre
+-- dinheiro que entrou no mês passado — e o caixa de hoje fecha sem o dinheiro
+-- que entrou hoje.
+--
+-- Uma linha por movimento resolve isso porque é o que de fato aconteceu: dois
+-- movimentos, duas datas, dois métodos.
+--
+-- ## Ninguém escreve aqui direto
+--
+-- Só `quitar_cobranca` e `receber_parcial` inserem, e as duas mantêm
+-- `cobrancas.valor_pago` em dia junto. Duas portas para o mesmo dinheiro
+-- seriam dois totais discordando.
+create table if not exists public.cobranca_recebimentos (
+  id uuid default gen_random_uuid() not null,
+  cobranca_id uuid not null,
+  -- Repetida da cobrança: o caixa pergunta por organização, e sem ela toda
+  -- soma do mês precisaria de uma junção.
+  organization_id uuid not null,
+  valor numeric not null,
+  -- dinheiro | pix | cartao | transferencia | <gateway>
+  metodo text,
+  -- Em qual conta caiu. Ver `cobrancas.conta`.
+  conta text,
+  nota text,
+  -- Quem recebeu. É o que a comissão soma no fim do mês, e por movimento:
+  -- a entrada pode ser de um atendente e o resto de outro.
+  agent_id uuid,
+  recebido_em timestamp with time zone default now() not null,
+  created_at timestamp with time zone default now() not null
+);
+
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_pkey;
+
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_pkey primary key (id);
+
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_cobranca_id_fkey;
+
+-- `cascade`: recebimento sem cobrança não diz de que era.
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_cobranca_id_fkey
+foreign key (cobranca_id) references public.cobrancas(id) on delete cascade;
+
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_organization_id_fkey;
+
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_organization_id_fkey
+foreign key (organization_id) references public.organizations(id)
+on delete cascade;
+
+alter table only public.cobranca_recebimentos
+drop constraint if exists cobranca_recebimentos_agent_id_fkey;
+
+-- Demitir um atendente não apaga o faturamento dele do caixa da loja.
+alter table only public.cobranca_recebimentos
+add constraint cobranca_recebimentos_agent_id_fkey
+foreign key (agent_id) references public.agents(id) on delete set null;
+
+-- A pergunta do fechamento: o que entrou nesta loja neste mês.
+create index if not exists cobranca_recebimentos_mes_idx
+on public.cobranca_recebimentos (organization_id, recebido_em);
+
+create index if not exists cobranca_recebimentos_cobranca_idx
+on public.cobranca_recebimentos (cobranca_id);
+
+alter table public.cobranca_recebimentos enable row level security;
+
+drop policy if exists cobranca_recebimentos_da_organizacao
+on public.cobranca_recebimentos;
+
+-- Quem enxerga a cobrança enxerga os recebimentos dela. A regra de quem
+-- pertence a qual organização já está resolvida uma vez, em `cobrancas`;
+-- repeti-la aqui seria a segunda definição de quem pode ver dinheiro.
+create policy cobranca_recebimentos_da_organizacao
+on public.cobranca_recebimentos
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.cobrancas c
+    where c.id = cobranca_recebimentos.cobranca_id
+  )
+)
+with check (
+  exists (
+    select 1 from public.cobrancas c
+    where c.id = cobranca_recebimentos.cobranca_id
+  )
+);
