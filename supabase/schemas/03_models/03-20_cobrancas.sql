@@ -70,6 +70,31 @@ create table public.cobrancas (
    * ninguém atendeu, o cliente pagou sozinho pelo link.
    */
   agent_id uuid,
+  /**
+   * Onde o dinheiro entrou, quando quem anotou sabe dizer.
+   *
+   * `metodo` responde "pix"; uma loja com três chaves precisa saber em QUAL
+   * — é o que separa conferir um extrato de conferir três. Guarda o rótulo
+   * que a loja deu à chave ("Stone", "Nubank"), e não a chave: o rótulo é o
+   * que a pessoa lê, e a chave pode ser trocada sem que o pagamento de ontem
+   * deixe de ter entrado onde entrou.
+   *
+   * Nulo é o normal: dinheiro no balcão não tem conta, e o que vem por
+   * gateway já se identifica pelo `metodo`.
+   */
+  conta text,
+  /**
+   * O que quem anotou quis deixar escrito.
+   *
+   * "Pagou metade agora e metade na sexta", "veio pelo irmão", "desconto
+   * porque indicou dois". Nada disso cabe em `itens` nem em `metodo`, e sem
+   * lugar para escrever a pessoa escreve na conversa — onde some para cima em
+   * dois dias e não aparece em relatório nenhum.
+   *
+   * Livre de propósito. Um campo estruturado obrigaria a adivinhar quais são
+   * os casos, e os casos são o balcão.
+   */
+  nota text,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
 );
