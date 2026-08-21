@@ -220,6 +220,15 @@ export type OrganizationExtra = {
      * `_shared/sequencia_por_palavra.ts`.
      */
     gatilhos?: string[];
+    /**
+     * Marca esta sequência como a de cobrar renovação.
+     *
+     * Só a interface usa: é ela que oferece "mandar a sequência X" ao cobrar
+     * quem venceu, e sem a marca ela listava as quatro sequências da loja —
+     * três delas sem nada a ver com cobrança. Nada aqui no servidor lê este
+     * campo; está no tipo para o espelho não divergir. - 2026/08/21
+     */
+    renovacao?: boolean;
   }[];
   welcome_message_off?: boolean;
   away_message_off?: boolean;
