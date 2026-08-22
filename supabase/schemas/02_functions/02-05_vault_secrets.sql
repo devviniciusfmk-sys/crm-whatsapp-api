@@ -323,3 +323,139 @@ $$;
 
 revoke execute on function public.set_voz_api_key(uuid, text) from public, anon;
 grant execute on function public.set_voz_api_key(uuid, text) to authenticated;
+
+-- ## O token do painel de IPTV
+--
+-- A especificação que originou o módulo guardava o token numa coluna de
+-- texto da própria tabela de servidores. Aqui isso é o erro que o token da
+-- Meta já cometeu uma vez: a política de RLS deixa qualquer MEMBRO da
+-- organização ler aquelas linhas, e o gatilho de webhook manda a linha
+-- inteira para fora. Token nessas condições é público para a equipe.
+--
+-- Aqui ele é keyado pelo id do servidor, como o da Meta é pelo endereço.
+-- - 2026/08/22
+create function public.iptv_token_secret_name(p_servidor_id uuid)
+returns text
+language sql
+immutable
+set search_path to ''
+as $$
+  select 'iptv_token:' || p_servidor_id::text;
+$$;
+
+revoke execute on function public.iptv_token_secret_name(uuid)
+from public, anon, authenticated;
+
+-- Só o service_role: quem lê é a função de borda que fala com o painel.
+create function public.get_iptv_token(p_servidor_id uuid)
+returns text
+language sql
+stable
+security definer
+set search_path to ''
+as $$
+  select s.decrypted_secret
+  from vault.decrypted_secrets s
+  where s.name = public.iptv_token_secret_name(p_servidor_id);
+$$;
+
+revoke execute on function public.get_iptv_token(uuid)
+from public, anon, authenticated;
+
+grant execute on function public.get_iptv_token(uuid) to service_role;
+
+-- A tela só pergunta se existe. Nunca o valor.
+create function public.has_iptv_token(p_servidor_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path to ''
+as $$
+  select exists (
+    select 1
+    from vault.secrets v
+    join public.iptv_servidores s on s.id = p_servidor_id
+    where v.name = public.iptv_token_secret_name(p_servidor_id)
+      and s.organization_id in (select public.get_authorized_orgs('member'))
+  );
+$$;
+
+revoke execute on function public.has_iptv_token(uuid) from public, anon;
+grant execute on function public.has_iptv_token(uuid) to authenticated;
+
+create function public.set_iptv_token(
+  p_servidor_id uuid,
+  p_token text
+)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _name text := public.iptv_token_secret_name(p_servidor_id);
+  _org uuid;
+  _id uuid;
+begin
+  select organization_id into _org
+  from public.iptv_servidores where id = p_servidor_id;
+
+  if _org is null
+     or _org not in (select public.get_authorized_orgs('admin')) then
+    raise exception 'not authorized to set the iptv token'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  -- Vazio apaga: é como se desconecta um painel sem apagar o histórico de
+  -- quem testou por ele.
+  if nullif(p_token, '') is null then
+    delete from vault.secrets where name = _name;
+    return;
+  end if;
+
+  select id into _id from vault.secrets where name = _name;
+
+  if _id is null then
+    perform vault.create_secret(
+      p_token,
+      _name,
+      'IPTV panel token for server ' || p_servidor_id::text
+    );
+  else
+    perform vault.update_secret(_id, p_token);
+  end if;
+end;
+$$;
+
+revoke execute on function public.set_iptv_token(uuid, text) from public, anon;
+grant execute on function public.set_iptv_token(uuid, text) to authenticated;
+
+-- ## O token vai junto quando o servidor vai
+--
+-- Sem isto, apagar um painel deixa o segredo dele no cofre para sempre.
+-- Ninguém consegue ler — `get_iptv_token` e `has_iptv_token` conferem o
+-- servidor, que já não existe —, mas ele fica lá: um segredo que a tela
+-- prometeu poder remover e que nenhuma tela alcança mais.
+--
+-- Medido na primeira prova do módulo, em 2026/08/22: apaguei o servidor e o
+-- segredo continuou no cofre.
+create function public.apagar_token_do_servidor()
+returns trigger
+language plpgsql
+security definer
+set search_path to ''
+as $$
+begin
+  delete from vault.secrets
+  where name = public.iptv_token_secret_name(old.id);
+
+  return old;
+end;
+$$;
+
+drop trigger if exists apagar_token on public.iptv_servidores;
+
+create trigger apagar_token
+after delete on public.iptv_servidores
+for each row execute function public.apagar_token_do_servidor();
