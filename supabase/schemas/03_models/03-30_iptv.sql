@@ -170,6 +170,17 @@ create table if not exists public.iptv_apps (
   texto text,
   -- Ordem na tela de escolher app. Quem tem quatro apps tem um preferido.
   ordem integer default 0 not null,
+  /**
+   * Os apps que ESTA loja usa de verdade.
+   *
+   * O catálogo se semeia sozinho com tudo que o painel oferece — nove, quinze,
+   * às vezes mais — e quem atende vende dois ou três. Uma estrela resolve as
+   * duas reclamações de uma vez: o favorito sobe, e o resto sai da frente.
+   *
+   * Sem nenhum favorito a lista fica inteira. É como ela nasce, e é o único
+   * estado em que esconder algo seria esconder tudo.
+   */
+  favorito boolean default false not null,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
 );
