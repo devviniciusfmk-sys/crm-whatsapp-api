@@ -4,7 +4,7 @@
   },
   "tasks": {
     "evals": "cd supabase/functions && deno run --allow-net --allow-env --env-file=../../.env.evals agent-client/evals/run.ts",
-    "check": "cd supabase/functions && deno check agent-client/index.ts && deno lint agent-client/ _shared/ && deno test --allow-all agent-client/ _shared/",
+    "check": "cd supabase/functions && deno check agent-client/index.ts && deno lint agent-client/ _shared/ iptv/ && deno test --allow-all agent-client/ _shared/ iptv/",
     "deploy": "deno run --allow-run --allow-read --allow-env scripts/subir.ts"
   }
 }
