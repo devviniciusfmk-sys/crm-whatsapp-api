@@ -30,7 +30,9 @@ create table if not exists public.iptv_servidores (
   -- Gerado do nome, para caber em URL e em chave de configuração.
   slug text not null,
   -- Onde o painel vive. As URLs de bot saem daqui quando não há uma própria.
-  base_url text not null,
+  -- Opcional: o link do pacote é um endereço inteiro, e a raiz está dentro
+  -- dele. Exigir as duas é pedir a mesma informação duas vezes.
+  base_url text,
   -- O painel administrativo, que é outra URL na maioria dos provedores.
   painel_url text,
   /**

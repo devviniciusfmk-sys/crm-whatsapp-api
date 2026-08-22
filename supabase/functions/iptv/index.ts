@@ -131,11 +131,22 @@ Deno.serve(async (req) => {
     agente?: string;
   };
 
-  const { organizacao, conversa, telefone, app } = corpo;
+  const { organizacao, conversa, telefone } = corpo;
 
-  if (!organizacao || !telefone || !app) {
-    return json({ erro: "faltou organização, telefone ou app" }, 400);
+  if (!organizacao || !telefone) {
+    return json({ erro: "faltou organização ou telefone" }, 400);
   }
+
+  /**
+   * Sem app é o caso comum de quem só colou o link.
+   *
+   * O painel devolve uma mensagem que já cita todos os aplicativos dele, e
+   * exigir a escolha de um seria uma pergunta cuja resposta não muda nada.
+   * `padrao` é um nome só para o teste ter um app gravado — o reuso casa por
+   * servidor E app, e sem nenhum valor ali dois pedidos seguidos não se
+   * reconheceriam.
+   */
+  const app = corpo.app?.trim() || "padrao";
 
   /**
    * O pacote: o pedido, ou o primeiro que estiver de pé.
@@ -202,7 +213,22 @@ Deno.serve(async (req) => {
     return json({ erro: "este app está desligado neste pacote" }, 409);
   }
 
-  const fuso = "America/Sao_Paulo";
+  /**
+   * O fuso da loja, e não um fixo.
+   *
+   * Ele decide duas coisas: como a data aparece na mensagem, e como se lê a
+   * hora que o painel manda — que vem local e sem fuso nenhum. Ver `comoIso`
+   * em `painel.ts`.
+   */
+  const { data: orgRow } = await client
+    .from("organizations")
+    .select("extra")
+    .eq("id", organizacao)
+    .maybeSingle();
+
+  const fuso =
+    (orgRow?.extra as { timezone?: string } | null)?.timezone ||
+    "America/Sao_Paulo";
 
   /**
    * # O guarda do reuso
@@ -230,6 +256,9 @@ Deno.serve(async (req) => {
     .order("created_at", { ascending: false })
     .limit(1);
 
+  /* No reuso não há `reply`: ele veio na resposta de uma chamada que não
+   * vamos repetir — é justamente o que o reuso evita. Fica o texto da loja
+   * ou o padrão. */
   const molde = appConfig?.texto?.trim() || TEXTO_PADRAO;
 
   const { data: codigosDoPacote } = await client
@@ -268,25 +297,44 @@ Deno.serve(async (req) => {
     return json({ reusado: true, teste: vivo.id, texto });
   }
 
+  /**
+   * # O token é OPCIONAL para gerar teste
+   *
+   * O robô do painel não pede token: ele é o mesmo endereço que responde no
+   * site do revendedor, aberto a quem tiver o link. Medido contra um servidor
+   * real em 2026/08/22 — uma chamada sem credencial nenhuma devolveu usuário,
+   * senha, DNS e a mensagem inteira.
+   *
+   * A primeira versão exigia o token aqui e recusava com 409. Isso obrigava a
+   * loja a caçar uma credencial de API para fazer a coisa mais simples que o
+   * módulo faz — e era eu impondo um requisito que o painel não impõe.
+   *
+   * O token continua sendo necessário para o que é do painel administrativo:
+   * confirmar o usuário criado, criar cliente pago e renovar. Sem ele, o que
+   * se perde é a CONFERÊNCIA, e não o teste.
+   */
   const { data: token } = await client.rpc("get_iptv_token", {
     p_servidor_id: servidor.id,
   });
 
-  if (!token) {
-    return json({ erro: "este servidor não tem token configurado" }, 409);
-  }
-
   const painel = {
-    base_url: servidor.base_url,
+    /* Sem endereço cadastrado, a origem sai do próprio link — que é o único
+     * campo que a loja precisa colar. */
+    base_url: servidor.base_url || urlDoRobo(servidor, pacote),
     painel_url: servidor.painel_url,
     painel_user_id: servidor.painel_user_id,
-    token: token as string,
+    token: (token as string | null) ?? "",
   };
 
   let credenciais;
 
   try {
-    credenciais = await pedirTeste(painel, urlDoRobo(servidor, pacote));
+    credenciais = await pedirTeste(
+      painel,
+      urlDoRobo(servidor, pacote),
+      fetch,
+      fuso,
+    );
   } catch (erro) {
     const detalhe = erro instanceof ErroDoPainel
       ? { status: erro.status, mensagem: erro.message }
@@ -317,18 +365,32 @@ Deno.serve(async (req) => {
    * caído. Fica no log, e o registro é gravado do mesmo jeito — perder a
    * credencial que o cliente já pode estar usando é o erro mais caro possível.
    */
-  const confirmado = await procurarPorUsuario(painel, credenciais.username);
+  if (painel.token) {
+    const confirmado = await procurarPorUsuario(painel, credenciais.username);
 
-  if (!confirmado) {
-    console.warn(
-      "[iptv] criado mas não confirmado",
-      servidor.name,
-      credenciais.username,
-    );
+    if (!confirmado) {
+      console.warn(
+        "[iptv] criado mas não confirmado",
+        servidor.name,
+        credenciais.username,
+      );
+    }
   }
 
   const comeca = new Date();
-  const expira = new Date(comeca.getTime() + horas * 3600_000);
+
+  /**
+   * O prazo do PAINEL manda, e a nossa conta é o palpite de reserva.
+   *
+   * Ele devolve `expiresAt`, e é a data que vale: quem conta os dias é ele.
+   * A nossa — começou agora, dura duas horas — dá quase sempre no mesmo
+   * minuto e às vezes não, e a diferença aparece na única hora que importa:
+   * o cliente tentando entrar no fim, com a nossa mensagem dizendo que ainda
+   * dá tempo.
+   */
+  const expira = credenciais.expira_em
+    ? new Date(credenciais.expira_em)
+    : new Date(comeca.getTime() + horas * 3600_000);
 
   const { data: teste, error: erroAoGravar } = await client
     .from("iptv_testes")
@@ -368,21 +430,52 @@ Deno.serve(async (req) => {
     return json({ ok: false, mensagem: erroAoGravar.message });
   }
 
-  const texto = renderizar(molde, {
-    username: credenciais.username,
-    password: credenciais.password,
-    codigo: appConfig?.codigo ?? undefined,
-    dns: credenciais.dns,
-    m3u_url: credenciais.m3u_url,
-    lista_url: credenciais.lista_url,
-    duracao: horas,
-    expira: quando(expira.toISOString(), fuso),
-    plano: credenciais.plano || pacote.name,
-    telas: pacote.telas,
-    nome: corpo.nome,
-    codigos,
-    comprado: false,
-  });
+  /**
+   * # O texto: o da loja, senão o do painel, senão o nosso
+   *
+   * Estes robôs devolvem um `reply` completo — DNS, usuário, senha, lista
+   * M3U e os códigos de TODOS os aplicativos parceiros —, porque é o que eles
+   * mandam no site do revendedor. É por isso que colar o link já resolve:
+   * sem cadastrar app nenhum e sem escrever texto nenhum, a mensagem sai
+   * completa.
+   *
+   * A ordem é essa e não outra. Se a loja escreveu um texto para aquele app,
+   * é porque ela quer o dela — sobrescrevê-la com o do painel seria a tela
+   * de configuração não valendo nada. Sem texto próprio, o do painel é
+   * melhor que o nosso padrão: ele conhece os apps parceiros dele e os
+   * códigos de cada um, e nós não.
+   */
+  const texto = appConfig?.texto?.trim()
+    ? renderizar(appConfig.texto, {
+        username: credenciais.username,
+        password: credenciais.password,
+        codigo: appConfig?.codigo ?? undefined,
+        dns: credenciais.dns,
+        m3u_url: credenciais.m3u_url,
+        lista_url: credenciais.lista_url,
+        duracao: horas,
+        expira: quando(expira.toISOString(), fuso),
+        plano: credenciais.plano || pacote.name,
+        telas: credenciais.telas ?? pacote.telas,
+        nome: corpo.nome,
+        codigos,
+        comprado: false,
+      })
+    : (credenciais.reply?.trim() ||
+      renderizar(TEXTO_PADRAO, {
+        username: credenciais.username,
+        password: credenciais.password,
+        codigo: appConfig?.codigo ?? undefined,
+        dns: credenciais.dns,
+        m3u_url: credenciais.m3u_url,
+        duracao: horas,
+        expira: quando(expira.toISOString(), fuso),
+        plano: credenciais.plano || pacote.name,
+        telas: credenciais.telas ?? pacote.telas,
+        nome: corpo.nome,
+        codigos,
+        comprado: false,
+      }));
 
   const enviou = conversa ? await mandar(conversa, organizacao, texto) : false;
 

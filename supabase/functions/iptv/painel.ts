@@ -56,6 +56,40 @@ export type Credenciais = {
   plano?: string;
   /** O link de pagamento que alguns painéis devolvem junto. */
   pagar_url?: string;
+  /**
+   * Quando o painel diz que expira, em ISO.
+   *
+   * Medido contra um servidor real em 2026/08/22: ele devolve `expiresAt`,
+   * e essa é a data que vale. A nossa conta — começou agora, dura duas
+   * horas — dá quase sempre no mesmo minuto e às vezes não: o relógio dele
+   * é outro, e um teste de duas horas criado às 12:46:51 expira às
+   * 14:46:50, um segundo antes.
+   *
+   * A diferença aparece na única hora que importa: o cliente tentando
+   * entrar no minuto do fim, com a nossa mensagem dizendo que ainda dá
+   * tempo. Quem conta os dias é o painel; nós repetimos o que ele contou.
+   */
+  expira_em?: string;
+  /**
+   * Quantas telas ao mesmo tempo, quando o painel diz.
+   *
+   * Vem como `connections`. Vale mais que o número da nossa configuração:
+   * quem entrega o acesso é ele.
+   */
+  telas?: number;
+  /**
+   * A mensagem que o próprio painel já montou.
+   *
+   * Estes robôs devolvem um `reply` pronto — com DNS, usuário, senha, lista
+   * M3U e os códigos de TODOS os aplicativos parceiros — porque é o que eles
+   * mandam no site do revendedor.
+   *
+   * É a razão de o link sozinho já resolver: sem cadastrar app nenhum, sem
+   * escrever texto nenhum, a loja cola o link e a mensagem sai completa. O
+   * catálogo de apps e os textos próprios continuam existindo para quem quer
+   * mandar do jeito dele — e passam na frente quando existem.
+   */
+  reply?: string;
 };
 
 const semBarra = (url: string) => url.replace(/\/+$/, "");
@@ -71,6 +105,13 @@ const semBarra = (url: string) => url.replace(/\/+$/, "");
 export function lerCredenciais(
   corpo: Record<string, unknown>,
   codigoConfigurado?: string | null,
+  /**
+   * O fuso em que o painel escreve as horas dele.
+   *
+   * É o da loja: estes painéis são brasileiros e mandam hora local sem
+   * dizer o fuso. Ver `comoIso`.
+   */
+  fuso = "America/Sao_Paulo",
 ): Credenciais {
   const texto = (...nomes: string[]): string | undefined => {
     for (const nome of nomes) {
@@ -82,9 +123,62 @@ export function lerCredenciais(
     return undefined;
   };
 
+  /**
+   * "2026-08-22 14:46:50" → ISO, sabendo que aquilo é hora DA LOJA.
+   *
+   * ## Três horas de diferença, e nenhum erro na tela
+   *
+   * O painel manda a hora local dele e não diz o fuso. `new Date("…T14:46")`
+   * usa o fuso de quem interpreta — e quem interpreta é uma função de borda,
+   * que roda em UTC. Um teste que vence às 14:46 em Brasília era gravado
+   * como 14:46 UTC: três horas mais cedo.
+   *
+   * Nada quebrava. A mensagem sai com o texto do próprio painel, então o
+   * cliente lia a hora certa; só o nosso banco ficava adiantado — e com ele
+   * o guarda de reuso, que pararia de reusar um teste ainda vivo, e a
+   * agenda, que mostraria o vencimento na hora errada.
+   *
+   * Achado na primeira chamada a um servidor de verdade, comparando o que
+   * ficou gravado com o que a mensagem dizia. - 2026/08/22
+   */
+  const comoIso = (valor?: string) => {
+    if (!valor) return undefined;
+
+    /* Já veio com fuso — `Z` ou `+03:00`? Então ele sabe o que está dizendo
+     * e não há o que adivinhar. */
+    if (/(Z|[+-]\d{2}:?\d{2})$/.test(valor.trim())) {
+      const pronta = new Date(valor.trim());
+
+      return Number.isNaN(pronta.getTime()) ? undefined : pronta.toISOString();
+    }
+
+    const comoSeUtc = new Date(`${valor.trim().replace(" ", "T")}Z`);
+
+    if (Number.isNaN(comoSeUtc.getTime())) return undefined;
+
+    /* Quanto aquele instante está deslocado no fuso da loja. Calculado para
+     * a data em questão, e não fixo: um `-03:00` escrito à mão erraria em
+     * qualquer país com horário de verão. */
+    const noFuso = new Date(
+      comoSeUtc.toLocaleString("en-US", { timeZone: fuso }),
+    );
+    const emUtc = new Date(
+      comoSeUtc.toLocaleString("en-US", { timeZone: "UTC" }),
+    );
+
+    return new Date(
+      comoSeUtc.getTime() + (emUtc.getTime() - noFuso.getTime()),
+    ).toISOString();
+  };
+
+  const telas = Number(corpo.connections ?? corpo.max_connections);
+
   return {
     username: texto("username", "user", "usuario") ?? "",
     password: texto("password", "pass", "senha") ?? "",
+    expira_em: comoIso(texto("expiresAt", "expires_at", "expira_em")),
+    telas: Number.isFinite(telas) && telas > 0 ? telas : undefined,
+    reply: texto("reply", "mensagem", "message"),
     /* O código vem da NOSSA configuração, e não do painel: ele é do par
      * app+servidor, e o painel não sabe em qual app o cliente vai assistir. */
     codigo: codigoConfigurado?.trim() || undefined,
@@ -115,6 +209,8 @@ export async function pedirTeste(
   painel: Painel,
   urlDoRobo: string,
   buscar: typeof fetch = fetch,
+  /** O fuso da loja, para ler as horas que o painel manda. */
+  fuso = "America/Sao_Paulo",
 ): Promise<Credenciais & { bruto: Record<string, unknown> }> {
   let origem = semBarra(painel.base_url);
 
@@ -156,7 +252,7 @@ export async function pedirTeste(
     throw new ErroDoPainel(resposta.status, `resposta ilegível: ${texto.slice(0, 200)}`);
   }
 
-  return { ...lerCredenciais(corpo), bruto: corpo };
+  return { ...lerCredenciais(corpo, undefined, fuso), bruto: corpo };
 }
 
 /**
