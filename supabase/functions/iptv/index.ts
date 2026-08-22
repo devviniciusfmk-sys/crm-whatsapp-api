@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ErroDoPainel, pedirTeste, procurarPorUsuario } from "./painel.ts";
 import { renderizar, TEXTO_PADRAO } from "./texto.ts";
+import { escolherPacote } from "./pacote.ts";
 import {
   acharApp,
   lerResposta,
@@ -177,9 +178,14 @@ Deno.serve(async (req) => {
 
   const { data: pacotes } = corpo.pacote
     ? await consulta.eq("id", corpo.pacote).limit(1)
-    : await consulta.order("created_at", { ascending: true }).limit(1);
+    /* Vinte, e não um: quem escolhe é `escolherPacote`, e para escolher ele
+     * precisa ver mais de um. Uma loja com mais de vinte planos ativos no
+     * mesmo servidor não existe — e se existir, os vinte mais antigos são os
+     * configurados. */
+    : await consulta.order("created_at", { ascending: true }).limit(20);
 
-  const pacote = pacotes?.[0] as
+  /* O primeiro que TEM COMO gerar, e não o mais antigo. Ver `pacote.ts`. */
+  const pacote = escolherPacote(pacotes as never) as
     | {
       id: string;
       name: string;
