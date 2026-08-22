@@ -110,6 +110,36 @@ create table if not exists public.iptv_pacotes (
   duracao_horas integer,
   -- `teste` ou `pago`. Um pacote de teste não é vendido, e um pago não é dado.
   tipo text default 'teste' not null,
+  /**
+   * O hashid deste plano na Sigma — o `packageId` de criar e de renovar.
+   *
+   * Sem ele não há venda: a API não aceita nome de plano, só o hashid. E ele é
+   * de UM TIPO SÓ: os hashids do painel colidem entre tipos (`ANKWPKDPRq` é um
+   * pacote e também o revendedor "rodnei"), e usar o de pacote onde se espera
+   * o de revendedor não dá erro — acerta a conta de outra pessoa. Por isso o
+   * nome da coluna diz o tipo.
+   */
+  painel_pacote_id text,
+  -- Preço de venda em CENTAVOS, como todo dinheiro neste banco. 1990 = 19,90.
+  preco integer,
+  /**
+   * Centavos por tela ALÉM das que o pacote já inclui.
+   *
+   * Por plano, e não uma regra no código: quantas telas vêm juntas depende do
+   * plano E do servidor. O COMPLETO do piloto traz duas, o UNITV traz uma, e o
+   * próximo servidor trará outro número. Regra fixa erraria no primeiro
+   * servidor novo — e erraria cobrando.
+   */
+  preco_tela_extra integer,
+  /**
+   * Renova no painel quando vencer, sem cobrar de novo. É o vitalício.
+   *
+   * Separa o anual do vitalício, que no painel são o MESMO pacote: não existe
+   * pacote vitalício no catálogo, o mais longo é um ano. Quem for ligar isto
+   * conta antes quanto custa — são 12 créditos por ano, para sempre, contra um
+   * pagamento único.
+   */
+  renova_sozinho boolean default false not null,
   is_active boolean default true not null,
   descricao text,
   created_at timestamp with time zone default now() not null,

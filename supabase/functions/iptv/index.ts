@@ -1,7 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
-import { ErroDoPainel, pedirTeste, procurarPorUsuario } from "./painel.ts";
+import {
+  ErroDoPainel,
+  listarPacotes,
+  pedirTeste,
+  procurarPorUsuario,
+} from "./painel.ts";
 import { renderizar, TEXTO_PADRAO } from "./texto.ts";
 import { escolherPacote } from "./pacote.ts";
 import {
@@ -115,6 +120,67 @@ async function mandar(
   return !error;
 }
 
+/**
+ * # O catálogo de planos do painel, para a tela escolher
+ *
+ * ## Por que a autorização é refeita com o JWT de quem pediu
+ *
+ * Esta função roda com `service_role`, que enxerga tudo. Ler o servidor por
+ * ela e devolver o catálogo entregaria o de qualquer loja a quem soubesse um
+ * id — e ids de servidor circulam na URL da tela.
+ *
+ * Então a existência do servidor é conferida com um cliente montado sobre o
+ * JWT de quem chamou, que passa pela RLS igual à tela. Não achou, não vê. O
+ * `service_role` volta a ser usado só para o cofre, que é onde ele precisa
+ * mesmo estar. - 2026/08/22
+ */
+async function catalogoDoPainel(
+  servidorId: string | null,
+  req: Request,
+): Promise<Response> {
+  if (!servidorId) return json({ erro: "faltou o servidor" }, 400);
+
+  const autorizacao = req.headers.get("authorization") ?? "";
+
+  const comoUsuario = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { authorization: autorizacao } } },
+  );
+
+  const { data: servidor } = await comoUsuario
+    .from("iptv_servidores")
+    .select("id, base_url, painel_url")
+    .eq("id", servidorId)
+    .maybeSingle();
+
+  if (!servidor) return json({ erro: "servidor não encontrado" }, 404);
+
+  const { data: token } = await client.rpc("get_iptv_token", {
+    p_servidor_id: servidor.id,
+  });
+
+  if (!token) {
+    /* 200 com o motivo dentro: não é falha de rede nem erro de quem chamou. É
+     * uma configuração que falta, e a tela precisa dizer QUAL. */
+    return json({ ok: false, mensagem: "este servidor não tem token" });
+  }
+
+  try {
+    const pacotes = await listarPacotes({
+      base_url: servidor.base_url ?? "",
+      painel_url: servidor.painel_url,
+      token: token as string,
+    });
+
+    return json({ ok: true, pacotes });
+  } catch (erro) {
+    const status = erro instanceof ErroDoPainel ? erro.status : 0;
+
+    return json({ ok: false, mensagem: (erro as Error).message, status });
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -122,6 +188,20 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const qual = url.pathname.split("/").filter(Boolean).at(-1) ?? "";
+
+  /**
+   * # O catálogo do painel, para a tela escolher em vez de digitar
+   *
+   * `packageId` é um hashid — `o231qzL4qz`, `BV4D3rLaqZ`. Ninguém digita isso
+   * certo, e digitar errado não dá erro: os hashids colidem entre tipos, então
+   * um dedo trocado acerta outro pacote, ou um revendedor. Ver `painel.ts`.
+   *
+   * Então a tela lista e a pessoa escolhe. Só de leitura, e só para quem já
+   * pode ver a configuração do servidor. - 2026/08/22
+   */
+  if (qual === "pacotes") {
+    return await catalogoDoPainel(url.searchParams.get("servidor"), req);
+  }
 
   if (qual !== "teste") {
     return json({ erro: `rota desconhecida: ${qual}` }, 404);
@@ -163,6 +243,13 @@ Deno.serve(async (req) => {
    * O `join` traz o servidor junto porque as duas coisas são conferidas na
    * mesma linha — e porque um pacote ativo dentro de um servidor desligado é
    * um caso que existe e não pode passar.
+   *
+   * ## `tipo = 'teste'`, e isso passou a importar hoje
+   *
+   * Até 2026/08/22 a loja só tinha planos de teste, e o filtro seria enfeite.
+   * Com os planos de VENDA cadastrados ele vira a guarda: sem ele, um plano
+   * pago que tivesse link de robô entraria no sorteio, e alguém que só pediu
+   * um teste receberia — de graça — o acesso que custa 12 créditos.
    */
   const consulta = client
     .from("iptv_pacotes")
@@ -173,6 +260,7 @@ Deno.serve(async (req) => {
         "trial_horas, organization_id)",
     )
     .eq("is_active", true)
+    .eq("tipo", "teste")
     .eq("servidor.is_active", true)
     .eq("servidor.organization_id", organizacao);
 
