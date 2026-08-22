@@ -38,6 +38,15 @@ import {
  * que o cliente já pode estar usando. - 2026/08/22
  */
 
+/**
+ * O `waitUntil` do ambiente de borda, que os tipos não declaram.
+ *
+ * Ele segura a função viva até a promessa terminar, mesmo depois de a resposta
+ * já ter ido embora. É o que permite fazer em segundo plano o que não muda o
+ * que se responde — e não fazer o cliente esperar por isso.
+ */
+declare const EdgeRuntime: { waitUntil(promessa: Promise<unknown>): void };
+
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -304,14 +313,68 @@ Deno.serve(async (req) => {
 
   const servidor = pacote.servidor;
 
+  /**
+   * # As três leituras vão JUNTAS
+   *
+   * Elas não dependem uma da outra: os apps do plano, o fuso da loja e o teste
+   * ainda vivo deste telefone. Em fila eram três idas ao banco somadas; juntas
+   * são uma espera só.
+   *
+   * Medido em 2026/08/22: o teste inteiro levava 3,22s, e só 1,87s eram do
+   * mundo de fora — subir a função e falar com o painel. O resto era isto:
+   * dez idas ao banco, uma esperando a outra sem motivo.
+   *
+   * E os apps viraram UMA consulta em vez de duas. A configuração do app
+   * escolhido e a tabela de códigos de todos saíam da mesma tabela, com o
+   * mesmo filtro, uma logo depois da outra.
+   */
+  const [{ data: appsDoPacote }, { data: orgRow }, { data: vivos }] =
+    await Promise.all([
+      client
+        .from("iptv_apps")
+        .select("app, is_enabled, codigo, texto, display_name")
+        .eq("pacote_id", pacote.id),
+
+      client.from("organizations").select("extra").eq("id", organizacao)
+        .maybeSingle(),
+
+      /**
+       * # O guarda do reuso
+       *
+       * Este telefone já tem teste vivo aqui? Sem isto, o cliente que pede
+       * duas vezes em dez minutos — o que acontece sempre, porque a primeira
+       * mensagem "sumiu" na conversa — consome dois créditos e recebe dois
+       * usuários diferentes. E aí ele pergunta qual usar, que é uma conversa
+       * que ninguém quer ter.
+       *
+       * ## Casa por SERVIDOR, e não por app
+       *
+       * A especificação mandava casar também pelo app, e eu segui. Contra um
+       * painel de verdade está errado: a mesma dupla usuário/senha serve os
+       * quinze aplicativos, e o que muda entre eles é só o código de ativação.
+       * Casando por app, quem respondesse "Super Play" depois de receber a
+       * lista queimaria um segundo crédito para receber a MESMA senha com
+       * outro código ao lado. Medido em 2026/08/22.
+       */
+      client
+        .from("iptv_testes")
+        .select(
+          "id, username, password, codigo, dns, m3u_url, expira_em, app, apps",
+        )
+        .eq("organization_id", organizacao)
+        .eq("contact_address", soDigitos(telefone))
+        .eq("servidor_id", servidor.id)
+        .eq("status", "ativo")
+        .gt("expira_em", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1),
+    ]);
+
   /* Em minúsculas: quem atende escolhe pelo nome que o painel escreve
    * ("Super Play") e a chave é sempre minúscula. */
-  const { data: appConfig } = await client
-    .from("iptv_apps")
-    .select("app, is_enabled, codigo, texto, display_name")
-    .eq("pacote_id", pacote.id)
-    .eq("app", app.toLowerCase())
-    .maybeSingle();
+  const appConfig =
+    (appsDoPacote ?? []).find((linha) => linha.app === app.toLowerCase()) ??
+      null;
 
   if (appConfig && !appConfig.is_enabled) {
     return json({ erro: "este app está desligado neste pacote" }, 409);
@@ -324,58 +387,11 @@ Deno.serve(async (req) => {
    * hora que o painel manda — que vem local e sem fuso nenhum. Ver `comoIso`
    * em `painel.ts`.
    */
-  const { data: orgRow } = await client
-    .from("organizations")
-    .select("extra")
-    .eq("id", organizacao)
-    .maybeSingle();
-
-  const fuso =
-    (orgRow?.extra as { timezone?: string } | null)?.timezone ||
+  const fuso = (orgRow?.extra as { timezone?: string } | null)?.timezone ||
     "America/Sao_Paulo";
 
-  /**
-   * # O guarda do reuso
-   *
-   * Antes de falar com o painel: este telefone já tem teste vivo aqui?
-   *
-   * Sem ele, o cliente que pede duas vezes em dez minutos — o que acontece
-   * sempre, porque a primeira mensagem "sumiu" na conversa — consome dois
-   * créditos do painel e recebe dois usuários diferentes. E aí ele pergunta
-   * qual usar, que é uma conversa que ninguém quer ter.
-   *
-   * ## Casa por SERVIDOR, e não mais por app
-   *
-   * A especificação mandava casar também pelo app, e eu segui. Contra um
-   * painel de verdade isso está errado: a mesma dupla usuário/senha serve os
-   * quinze aplicativos, e o que muda entre eles é só o código de ativação —
-   * que vem na resposta e agora fica guardado.
-   *
-   * Casando por app, o cliente que pedisse o teste, recebesse a lista e
-   * respondesse "Super Play" queimaria um segundo crédito para receber a
-   * MESMA senha com outro código ao lado. Medido em 2026/08/22.
-   */
-  const { data: vivos } = await client
-    .from("iptv_testes")
-    .select(
-      "id, username, password, codigo, dns, m3u_url, expira_em, app, apps",
-    )
-    .eq("organization_id", organizacao)
-    .eq("contact_address", soDigitos(telefone))
-    .eq("servidor_id", servidor.id)
-    .eq("status", "ativo")
-    .gt("expira_em", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-
-  const { data: codigosDoPacote } = await client
-    .from("iptv_apps")
-    .select("app, codigo")
-    .eq("pacote_id", pacote.id);
-
   const codigos = Object.fromEntries(
-    (codigosDoPacote ?? [])
+    (appsDoPacote ?? [])
       .filter((linha) => linha.codigo)
       .map((linha) => [linha.app, linha.codigo as string]),
   );
@@ -490,17 +506,45 @@ Deno.serve(async (req) => {
    * Falhar aqui NÃO cancela o teste: o usuário pode existir e a consulta ter
    * caído. Fica no log, e o registro é gravado do mesmo jeito — perder a
    * credencial que o cliente já pode estar usando é o erro mais caro possível.
+   *
+   * ## E por isso ela não é esperada
+   *
+   * Ela não cancela nada, não muda o texto e não muda o que se grava. Tudo o
+   * que faz é escrever no log. Esperar por ela era fazer o CLIENTE esperar por
+   * um `console.warn`.
+   *
+   * Medido em 2026/08/22, com um cronômetro em cada parte:
+   *
+   *   0,70s   subir esta função e a viagem até ela
+   *   1,17s   o robô do painel, que é o trabalho de verdade
+   *   0,75s   esta confirmação  ← um quarto da espera, por nada
+   *
+   * E o pior é onde ela estava: ANTES de `mandar`. A mensagem com as
+   * credenciais ficava três quartos de segundo parada esperando uma linha de
+   * log. Agora ela roda em segundo plano, depois da resposta — o mesmo
+   * trabalho, ninguém esperando. - 2026/08/22
    */
   if (painel.token) {
-    const confirmado = await procurarPorUsuario(painel, credenciais.username);
+    const conferir = procurarPorUsuario(painel, credenciais.username)
+      .then((confirmado) => {
+        if (!confirmado) {
+          console.warn(
+            "[iptv] criado mas não confirmado",
+            servidor.name,
+            credenciais.username,
+          );
+        }
+      })
+      .catch((erro) => {
+        /* Engolido de propósito: uma promessa rejeitada aqui derrubaria a
+         * chamada inteira, e esta é a parte que menos importa dela. */
+        console.warn("[iptv] não deu para confirmar", (erro as Error).message);
+      });
 
-    if (!confirmado) {
-      console.warn(
-        "[iptv] criado mas não confirmado",
-        servidor.name,
-        credenciais.username,
-      );
-    }
+    /* `waitUntil` mantém a função viva até terminar mesmo depois da resposta
+     * já ter saído. Sem ele, o ambiente pode encerrar no meio e a conferência
+     * viraria uma coisa que às vezes acontece — pior que não existir. */
+    EdgeRuntime.waitUntil(conferir);
   }
 
   /* A parede lida em partes: os dois DNS, a lista e os apps com o código de
