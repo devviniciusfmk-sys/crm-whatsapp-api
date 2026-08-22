@@ -210,11 +210,13 @@ Deno.serve(async (req) => {
 
   const servidor = pacote.servidor;
 
+  /* Em minúsculas: quem atende escolhe pelo nome que o painel escreve
+   * ("Super Play") e a chave é sempre minúscula. */
   const { data: appConfig } = await client
     .from("iptv_apps")
     .select("app, is_enabled, codigo, texto, display_name")
     .eq("pacote_id", pacote.id)
-    .eq("app", app)
+    .eq("app", app.toLowerCase())
     .maybeSingle();
 
   if (appConfig && !appConfig.is_enabled) {
@@ -504,6 +506,47 @@ Deno.serve(async (req) => {
    * os códigos. A resposta dele volta por aqui e cai no reuso: mesma
    * credencial, código certo, nenhum crédito a mais.
    */
+  /**
+   * # O catálogo de apps se preenche sozinho
+   *
+   * Quem atende escolhe o aplicativo ANTES de gerar — o cliente já disse o
+   * que tem instalado, e é o que decide qual código mandar. Para escolher
+   * antes, a lista precisa existir antes.
+   *
+   * E ela só existe depois: os códigos vêm dentro do texto que o painel
+   * devolve junto com uma credencial. Não há de onde pedir a lista sem
+   * gastar um crédito.
+   *
+   * Então o primeiro teste de cada pacote semeia o catálogo, e do segundo em
+   * diante quem atende escolhe antes. A alternativa era a loja digitar
+   * quinze nomes e quinze códigos à mão — e mantê-los quando o painel
+   * trocasse um.
+   *
+   * `ignoreDuplicates` porque o par pacote+app é único: o que já existe fica
+   * como está. Um código editado à mão pela loja não pode ser sobrescrito
+   * pelo painel na próxima geração. - 2026/08/22
+   */
+  if (lida.apps.length) {
+    const { error: erroAoSemear } = await client
+      .from("iptv_apps")
+      .upsert(
+        lida.apps.map((a, i) => ({
+          pacote_id: pacote.id,
+          app: a.nome.toLowerCase(),
+          display_name: a.nome,
+          codigo: a.codigo,
+          ordem: i + 1,
+        })),
+        { onConflict: "pacote_id,app", ignoreDuplicates: true },
+      );
+
+    /* Falhar aqui não desfaz nada: o teste existe e a mensagem vai sair. O
+     * que se perde é a lista pronta para a próxima vez. */
+    if (erroAoSemear) {
+      console.warn("[iptv] não semeou o catálogo", erroAoSemear.message);
+    }
+  }
+
   const texto = appConfig?.texto?.trim()
     ? renderizar(appConfig.texto, {
         username: credenciais.username,
