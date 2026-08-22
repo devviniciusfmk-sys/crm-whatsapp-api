@@ -120,6 +120,14 @@ create table if not exists public.iptv_pacotes (
    * nome da coluna diz o tipo.
    */
   painel_pacote_id text,
+  /**
+   * Quanto o painel cobra por uma VENDA deste plano.
+   *
+   * O teste custa zero — medido em 2026/08/22 contra o painel do piloto, os
+   * pacotes de teste têm `credits: 0` e o saldo não se moveu depois de cinco
+   * testes. Quem custa é o pago: 1 no mensal, 12 no anual.
+   */
+  creditos integer,
   -- Preço de venda em CENTAVOS, como todo dinheiro neste banco. 1990 = 19,90.
   preco integer,
   /**
@@ -265,6 +273,19 @@ create table if not exists public.iptv_testes (
   -- ativo | expirado | convertido | cancelado
   status text default 'ativo' not null,
   convertido_em timestamp with time zone,
+  /**
+   * A cobrança que fechou este teste, e o plano que ele comprou.
+   *
+   * A conversão era um botão, e evento assim subnotifica justamente quando a
+   * loja está corrida — que é quando ela mais vende. O gatilho
+   * `converter_teste_ao_pagar` marca daqui, quando a cobrança é paga, e traz
+   * o VALOR junto. O botão ficou para a venda feita por fora.
+   */
+  cobranca_id uuid,
+  pacote_vendido_id uuid,
+  -- Por que não fechou: caro | nao_funcionou | sumiu | outro_fornecedor.
+  -- Quatro, e não texto livre: motivo que não soma não vira decisão.
+  motivo_perda text,
   /**
    * Quem GEROU o teste.
    *
