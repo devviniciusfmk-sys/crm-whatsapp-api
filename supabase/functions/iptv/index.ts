@@ -3,6 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ErroDoPainel, pedirTeste, procurarPorUsuario } from "./painel.ts";
 import { renderizar, TEXTO_PADRAO } from "./texto.ts";
+import {
+  acharApp,
+  lerResposta,
+  mensagemCurta,
+  type AppDoPainel,
+} from "./resposta.ts";
 
 /**
  * # A porta do IPTV
@@ -129,6 +135,8 @@ Deno.serve(async (req) => {
     pacote?: string;
     app?: string;
     agente?: string;
+    /** O nome da loja, para assinar a mensagem. */
+    loja?: string;
   };
 
   const { organizacao, conversa, telefone } = corpo;
@@ -240,26 +248,30 @@ Deno.serve(async (req) => {
    * créditos do painel e recebe dois usuários diferentes. E aí ele pergunta
    * qual usar, que é uma conversa que ninguém quer ter.
    *
-   * Casa por servidor E app, como a especificação define: o mesmo cliente
-   * testando o Vizzion e o XCIPTV precisa de credenciais próprias, porque o
-   * código de ativação é de cada um.
+   * ## Casa por SERVIDOR, e não mais por app
+   *
+   * A especificação mandava casar também pelo app, e eu segui. Contra um
+   * painel de verdade isso está errado: a mesma dupla usuário/senha serve os
+   * quinze aplicativos, e o que muda entre eles é só o código de ativação —
+   * que vem na resposta e agora fica guardado.
+   *
+   * Casando por app, o cliente que pedisse o teste, recebesse a lista e
+   * respondesse "Super Play" queimaria um segundo crédito para receber a
+   * MESMA senha com outro código ao lado. Medido em 2026/08/22.
    */
   const { data: vivos } = await client
     .from("iptv_testes")
-    .select("id, username, password, codigo, dns, m3u_url, expira_em, app")
+    .select(
+      "id, username, password, codigo, dns, m3u_url, expira_em, app, apps",
+    )
     .eq("organization_id", organizacao)
     .eq("contact_address", soDigitos(telefone))
     .eq("servidor_id", servidor.id)
-    .eq("app", app)
     .eq("status", "ativo")
     .gt("expira_em", new Date().toISOString())
     .order("created_at", { ascending: false })
     .limit(1);
 
-  /* No reuso não há `reply`: ele veio na resposta de uma chamada que não
-   * vamos repetir — é justamente o que o reuso evita. Fica o texto da loja
-   * ou o padrão. */
-  const molde = appConfig?.texto?.trim() || TEXTO_PADRAO;
 
   const { data: codigosDoPacote } = await client
     .from("iptv_apps")
@@ -276,21 +288,39 @@ Deno.serve(async (req) => {
 
   if (vivos?.[0]) {
     const vivo = vivos[0];
+    const guardados = (vivo.apps ?? []) as AppDoPainel[];
 
-    const texto = renderizar(molde, {
-      username: vivo.username,
-      password: vivo.password ?? undefined,
-      codigo: vivo.codigo ?? undefined,
-      dns: vivo.dns ?? undefined,
-      m3u_url: vivo.m3u_url ?? undefined,
-      duracao: horas,
-      expira: quando(vivo.expira_em, fuso),
-      plano: pacote.name,
-      telas: pacote.telas,
-      nome: corpo.nome,
-      codigos,
-      comprado: false,
-    });
+    /**
+     * O reuso é o caminho de quem RESPONDEU qual app usa.
+     *
+     * Ele pediu o teste, recebeu a lista de nomes, e agora diz "Super Play".
+     * A credencial é a mesma; o que muda é o código ao lado. Por isso a
+     * mensagem aqui é a curta, e não a parede de novo.
+     */
+    const texto = appConfig?.texto?.trim()
+      ? renderizar(appConfig.texto, {
+          username: vivo.username,
+          password: vivo.password ?? undefined,
+          codigo: appConfig?.codigo ?? undefined,
+          dns: vivo.dns ?? undefined,
+          m3u_url: vivo.m3u_url ?? undefined,
+          duracao: horas,
+          expira: quando(vivo.expira_em, fuso),
+          plano: pacote.name,
+          telas: pacote.telas,
+          nome: corpo.nome,
+          codigos,
+          comprado: false,
+        })
+      : mensagemCurta({
+          username: vivo.username,
+          password: vivo.password ?? "",
+          dns: vivo.dns ?? undefined,
+          app: acharApp(guardados, corpo.app),
+          nomes: guardados.map((a) => a.nome),
+          expira: quando(vivo.expira_em, fuso),
+          loja: corpo.loja,
+        });
 
     if (conversa) await mandar(conversa, organizacao, texto);
 
@@ -377,6 +407,10 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* A parede lida em partes: os dois DNS, a lista e os apps com o código de
+   * cada um. Vazio quando não deu para ler, e aí a parede vai inteira. */
+  const lida = lerResposta(credenciais.reply);
+
   const comeca = new Date();
 
   /**
@@ -413,6 +447,10 @@ Deno.serve(async (req) => {
       comeca_em: comeca.toISOString(),
       expira_em: expira.toISOString(),
       vendido_por: corpo.agente ?? null,
+      /* Lidos de dentro do texto do painel: é o único lugar onde eles
+       * existem. Guardados, dá para mandar o código de outro app depois sem
+       * gerar credencial nova. Ver `resposta.ts`. */
+      apps: lida.apps,
     })
     .select()
     .single();
@@ -445,6 +483,27 @@ Deno.serve(async (req) => {
    * melhor que o nosso padrão: ele conhece os apps parceiros dele e os
    * códigos de cada um, e nós não.
    */
+  /**
+   * # A ordem do texto, e por que a parede saiu da frente
+   *
+   * O painel devolve cento e trinta linhas: seis DNS, quinze aplicativos,
+   * EPG, links curtos, códigos de STB e três downloads. É o que ele mostra
+   * na página dele, onde a pessoa está sentada procurando o que é dela.
+   *
+   * No WhatsApp isso não funciona: quem pediu o teste usa UM aplicativo e
+   * recebe uma parede onde precisa caçar duas linhas. O cliente que não acha
+   * o código dele não instala, não testa, e não compra.
+   *
+   * Então:
+   *
+   *   texto da loja      quando ela escreveu um para aquele app
+   *   mensagem curta     usuário, senha, o código do app pedido, o prazo
+   *   a parede inteira   só quando não deu para ler nada dela
+   *
+   * Sem app escolhido, a curta pergunta qual — com os NOMES na frente, e não
+   * os códigos. A resposta dele volta por aqui e cai no reuso: mesma
+   * credencial, código certo, nenhum crédito a mais.
+   */
   const texto = appConfig?.texto?.trim()
     ? renderizar(appConfig.texto, {
         username: credenciais.username,
@@ -461,7 +520,18 @@ Deno.serve(async (req) => {
         codigos,
         comprado: false,
       })
-    : (credenciais.reply?.trim() ||
+    : lida.apps.length
+      ? mensagemCurta({
+          username: credenciais.username,
+          password: credenciais.password,
+          dns: lida.dns ?? credenciais.dns,
+          dns_alternativo: lida.dns_alternativo,
+          app: acharApp(lida.apps, corpo.app),
+          nomes: lida.apps.map((a) => a.nome),
+          expira: quando(expira.toISOString(), fuso),
+          loja: corpo.loja,
+        })
+      : (credenciais.reply?.trim() ||
       renderizar(TEXTO_PADRAO, {
         username: credenciais.username,
         password: credenciais.password,
