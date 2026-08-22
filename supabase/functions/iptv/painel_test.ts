@@ -149,6 +149,33 @@ Deno.test("a procura é por USERNAME, nunca por id", async () => {
   assertEquals(url.searchParams.has("hashid"), false);
 });
 
+Deno.test("o token vai no cabeçalho, e NUNCA na URL", async () => {
+  /**
+   * Ele ia como `?token=…`. Token em query string entra no log de acesso do
+   * servidor, no de todo proxy no caminho e no Referer da página seguinte — e
+   * este é o token do painel INTEIRO: quem o pega administra a base toda.
+   *
+   * A documentação do Sigma é explícita, e é o que este teste guarda:
+   * `Authorization: Bearer <token>` em todo endpoint. - 2026/08/22
+   */
+  const { buscar, gravado } = fetchDeMentira({ data: [{ username: "u" }] });
+
+  await procurarPorUsuario(PAINEL, "u", buscar);
+
+  assertEquals(
+    gravado.headers?.get("authorization"),
+    `Bearer ${PAINEL.token}`,
+  );
+
+  const url = new URL(gravado.url!);
+
+  assertEquals(url.searchParams.has("token"), false);
+  /* E o `userId` sai junto: um token de painel inteiro não precisa dizer de
+   * quem é. */
+  assertEquals(url.searchParams.has("userId"), false);
+  assertEquals(gravado.url!.includes(PAINEL.token), false);
+});
+
 Deno.test("a procura entende as três formas de resposta", async () => {
   const lista = fetchDeMentira({ data: [{ username: "a" }] });
   assertEquals(

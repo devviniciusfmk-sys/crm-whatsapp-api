@@ -265,6 +265,17 @@ export async function pedirTeste(
  *
  * O usuário é único dentro do painel. É o único identificador em que dá para
  * confiar, e é por isso que esta função só aceita ele. - 2026/08/22
+ *
+ * ## O token saiu da URL
+ *
+ * Ia como `?token=…`, e a documentação do painel (Sigma) é explícita: todo
+ * endpoint usa `Authorization: Bearer`. Não é só formalidade — token em query
+ * string entra no log de acesso do servidor, no de qualquer proxy no caminho e
+ * no Referer da página seguinte. E este é o token do PAINEL INTEIRO, não o de
+ * um cliente: quem o pega administra a base toda.
+ *
+ * O `userId` saiu junto, pelo mesmo motivo de sempre: um token de painel
+ * inteiro não precisa dizer de quem é. - 2026/08/22
  */
 export async function procurarPorUsuario(
   painel: Painel,
@@ -273,14 +284,12 @@ export async function procurarPorUsuario(
 ): Promise<Record<string, unknown> | null> {
   const base = semBarra(painel.painel_url || painel.base_url);
 
-  const url =
-    `${base}/webhook/customer` +
-    `?username=${encodeURIComponent(username)}` +
-    `&token=${encodeURIComponent(painel.token)}` +
-    `&userId=${encodeURIComponent(painel.painel_user_id ?? "")}`;
+  const url = `${base}/webhook/customer` +
+    `?username=${encodeURIComponent(username)}`;
 
   const resposta = await buscar(url, {
     method: "GET",
+    headers: { authorization: `Bearer ${painel.token}` },
     signal: AbortSignal.timeout(20_000),
   });
 
@@ -346,6 +355,27 @@ export async function renovarCliente(
   );
 }
 
+/**
+ * # ATENÇÃO: estes dois caminhos ainda não foram conferidos
+ *
+ * `/webhook/customer`, `/webhook/customer/create` e `/webhook/customer/renew`
+ * vieram do documento de especificação, e não da documentação do painel. Em
+ * 2026/08/22 apareceu a documentação de verdade do servidor do piloto — é a
+ * **Sigma API**, e dela só sabemos, até agora, que todo endpoint usa
+ * `Authorization: Bearer <token>`, o que já foi corrigido acima.
+ *
+ * A lista de endereços dela ainda não foi lida. Enquanto não for:
+ *
+ *   - `procurarPorUsuario` é chamada de verdade depois de cada teste. Errando
+ *     o caminho ela devolve `null`, e quem chama já trata isso como "não
+ *     confirmei" sem cancelar nada. Custa uma requisição inútil, e nada mais.
+ *   - `criarCliente` e `renovarCliente` NÃO são chamadas por ninguém ainda.
+ *     Isso é bom: são elas que criam e renovam cliente de verdade, e disparar
+ *     um POST adivinhado contra um painel que administra a base inteira de uma
+ *     loja é o tipo de palpite que não se desfaz.
+ *
+ * O primeiro que for ligar isto lê a lista de endpoints primeiro. - 2026/08/22
+ */
 async function escrever(
   painel: Painel,
   acao: "create" | "renew",
