@@ -3,6 +3,7 @@ import {
   criarCliente,
   ErroDoPainel,
   lerCredenciais,
+  listarPacotes,
   pedirTeste,
   procurarPorUsuario,
   renovarCliente,
@@ -130,79 +131,83 @@ Deno.test("o código vem da NOSSA configuração, e não do painel", () => {
   assertEquals(lido.codigo, "951982");
 });
 
-Deno.test("a procura é por USERNAME, nunca por id", async () => {
+/**
+ * # A Sigma API, testada contra o que a documentação descreve
+ *
+ * As chamadas antigas iam para `/webhook/customer{,/create,/renew}` — endereços
+ * do documento de especificação, que não existem. Estes testes guardam os de
+ * verdade, e sobretudo guardam as três armadilhas que a documentação e o painel
+ * do piloto mostraram:
+ *
+ *   o hashid colide entre tipos, e trocar um não dá erro — acerta outra coisa;
+ *   `per_page` é limitado a 20 EM SILÊNCIO, então quem não pagina vê 20 e acha
+ *     que é tudo;
+ *   o token é do painel inteiro, e não pode aparecer em URL nenhuma.
+ * - 2026/08/22
+ */
+
+const BASE = "https://painel.megabox.exemplo/api/integration/v1";
+
+Deno.test("a procura é por USERNAME, nunca por hashid", async () => {
   const { buscar, gravado } = fetchDeMentira({ data: [{ username: "user1" }] });
 
   await procurarPorUsuario(PAINEL, "user1", buscar);
 
   const url = new URL(gravado.url!);
 
+  assertEquals(url.pathname, "/api/integration/v1/customers");
   assertEquals(url.searchParams.get("username"), "user1");
 
   /**
-   * A regra que a especificação lista como erro real de produção: o id destes
-   * painéis é um hashid ambíguo, e o mesmo valor aponta para clientes
-   * diferentes em contextos diferentes. Confirmar por ele manda credenciais
-   * para a pessoa errada — sem estourar nada.
+   * Provado no painel do piloto em 2026/08/22: `ANKWPKDPRq` é ao mesmo tempo um
+   * PACOTE e o revendedor "rodnei"; `BV4D3rLaqZ` é um SERVIDOR e o revendedor
+   * "super-sharkstreaming". Cada tipo tem a sua sequência, cifrada com o mesmo
+   * alfabeto — passar um pelo outro acerta um registro real e errado.
    */
   assertEquals(url.searchParams.has("id"), false);
   assertEquals(url.searchParams.has("hashid"), false);
 });
 
+Deno.test("um homônimo parcial NÃO é o cliente procurado", async () => {
+  /* O filtro do painel é por igualdade hoje. Se um dia virar parcial — a busca
+   * ao lado, `/customers/search`, já é —, procurar "ana" devolveria "ana2" e a
+   * renovação cairia na conta dela. A conferência exata é refeita aqui. */
+  const { buscar } = fetchDeMentira({
+    data: [{ username: "ana2" }, { username: "ana" }],
+  });
+
+  assertEquals((await procurarPorUsuario(PAINEL, "ana", buscar))?.username, "ana");
+
+  const so = fetchDeMentira({ data: [{ username: "ana2" }] });
+
+  assertEquals(await procurarPorUsuario(PAINEL, "ana", so.buscar), null);
+});
+
 Deno.test("o token vai no cabeçalho, e NUNCA na URL", async () => {
   /**
    * Ele ia como `?token=…`. Token em query string entra no log de acesso do
-   * servidor, no de todo proxy no caminho e no Referer da página seguinte — e
-   * este é o token do painel INTEIRO: quem o pega administra a base toda.
+   * servidor, no de todo proxy no caminho e no Referer da página seguinte.
    *
-   * A documentação do Sigma é explícita, e é o que este teste guarda:
-   * `Authorization: Bearer <token>` em todo endpoint. - 2026/08/22
+   * E a documentação diz o que ele é: "panel-wide token — do NOT share". Foi
+   * conferido: com ele dá para listar TODOS os revendedores do painel e os
+   * saldos de cada um.
    */
   const { buscar, gravado } = fetchDeMentira({ data: [{ username: "u" }] });
 
   await procurarPorUsuario(PAINEL, "u", buscar);
 
-  assertEquals(
-    gravado.headers?.get("authorization"),
-    `Bearer ${PAINEL.token}`,
-  );
-
-  const url = new URL(gravado.url!);
-
-  assertEquals(url.searchParams.has("token"), false);
-  /* E o `userId` sai junto: um token de painel inteiro não precisa dizer de
-   * quem é. */
-  assertEquals(url.searchParams.has("userId"), false);
+  assertEquals(gravado.headers?.get("authorization"), `Bearer ${PAINEL.token}`);
+  assertEquals(gravado.headers?.get("accept"), "application/json");
   assertEquals(gravado.url!.includes(PAINEL.token), false);
-});
-
-Deno.test("a procura entende as três formas de resposta", async () => {
-  const lista = fetchDeMentira({ data: [{ username: "a" }] });
-  assertEquals(
-    (await procurarPorUsuario(PAINEL, "a", lista.buscar))?.username,
-    "a",
-  );
-
-  const direto = fetchDeMentira({ username: "b" });
-  assertEquals(
-    (await procurarPorUsuario(PAINEL, "b", direto.buscar))?.username,
-    "b",
-  );
-
-  const embrulhado = fetchDeMentira({ customer: { username: "c" } });
-  assertEquals(
-    (await procurarPorUsuario(PAINEL, "c", embrulhado.buscar))?.username,
-    "c",
-  );
 });
 
 Deno.test("cliente não achado é nulo, e não erro", async () => {
   /* Não achar é resposta, e não falha: é o que separa "criar" de "renovar". */
-  const { buscar } = fetchDeMentira({ data: [] });
+  const vazio = fetchDeMentira({ data: [] });
 
-  assertEquals(await procurarPorUsuario(PAINEL, "ninguem", buscar), null);
+  assertEquals(await procurarPorUsuario(PAINEL, "ninguem", vazio.buscar), null);
 
-  const quatroCemQuatro = fetchDeMentira("", 404);
+  const quatroCemQuatro = fetchDeMentira({ error: true, message: "x" }, 404);
 
   assertEquals(
     await procurarPorUsuario(PAINEL, "ninguem", quatroCemQuatro.buscar),
@@ -210,44 +215,132 @@ Deno.test("cliente não achado é nulo, e não erro", async () => {
   );
 });
 
-Deno.test("criar manda o telefone TAMBÉM na nota", async () => {
-  /* É pela nota que se acha o cliente depois: o usuário é gerado pelo painel e
-   * ninguém o decorou. */
-  const { buscar, gravado } = fetchDeMentira({ data: { username: "novo" } });
+Deno.test("criar cliente vai para POST /customers, com o pacote", async () => {
+  const { buscar, gravado } = fetchDeMentira({ data: { id: "C1" } });
 
-  await criarCliente(PAINEL, "pac-1", "5511999998888", "João", buscar);
+  await criarCliente(
+    PAINEL,
+    {
+      packageId: "ANKWPKDPRq",
+      username: "cliente01",
+      whatsapp: "5511999998888",
+      note: "PEDIDO-1234",
+    },
+    buscar,
+  );
 
-  assertEquals(gravado.url, "https://painel.megabox.exemplo/webhook/customer/create");
-  assertEquals(gravado.corpo?.note, "5511999998888");
-  assertEquals(gravado.corpo?.whatsapp, "5511999998888");
-  assertEquals(gravado.corpo?.packageId, "pac-1");
-  assertEquals(gravado.corpo?.userId, "u-123");
+  assertEquals(gravado.url, `${BASE}/customers`);
+  assertEquals(gravado.metodo, "POST");
+  assertEquals(gravado.corpo?.packageId, "ANKWPKDPRq");
+  assertEquals(gravado.corpo?.username, "cliente01");
+  assertEquals(gravado.corpo?.status, "ACTIVE");
+  assertEquals(gravado.headers?.get("content-type"), "application/json");
+
+  /**
+   * `userId` NÃO vai. Ele diria de qual revendedor o cliente passa a ser, e o
+   * padrão — o dono do token — é o certo para quem vende em nome próprio.
+   * Preenchido com um hashid achado por aí, cria o cliente na conta de outro.
+   */
+  assertEquals("userId" in (gravado.corpo ?? {}), false);
 });
 
-Deno.test("renovar manda usuário e pacote, e o token vai no cabeçalho", async () => {
-  const { buscar, gravado } = fetchDeMentira({ data: { username: "user1" } });
+Deno.test("renovar vai para POST /customers/{id}/renew", async () => {
+  const { buscar, gravado } = fetchDeMentira({ data: { id: "C1" } });
 
-  await renovarCliente(PAINEL, "pac-anual", "user1", buscar);
+  await renovarCliente(PAINEL, "C1", "PkaL4dLgrz", undefined, buscar);
 
-  assertEquals(gravado.url, "https://painel.megabox.exemplo/webhook/customer/renew");
-  assertEquals(gravado.corpo?.username, "user1");
-  assertEquals(gravado.corpo?.packageId, "pac-anual");
+  assertEquals(gravado.url, `${BASE}/customers/C1/renew`);
+  assertEquals(gravado.metodo, "POST");
+  assertEquals(gravado.corpo?.packageId, "PkaL4dLgrz");
 
-  /* No cabeçalho, e não na URL: URL vai para log de servidor e de proxy. */
-  assertEquals(gravado.headers?.get("authorization"), "Bearer segredo");
+  /* Sem data: a renovação segue a duração do pacote. Mandar uma calculada aqui
+   * é refazer uma conta que o painel já faz, e discordar dele por um dia é um
+   * cliente ligando. */
+  assertEquals("expiresAt" in (gravado.corpo ?? {}), false);
+});
+
+Deno.test("o catálogo percorre TODAS as páginas", async () => {
+  /**
+   * `per_page` é limitado a 20 em silêncio: pedir 500 devolve 20 e nenhum erro.
+   * Sem paginar, o plano que ficasse na página dois não existiria para a loja —
+   * e ninguém veria nada errado, porque vinte planos parecem uma lista inteira.
+   */
+  const paginas = [
+    Array.from({ length: 20 }, (_, i) => ({ id: `p${i}`, name: "x" })),
+    [{ id: "ultimo", name: "y" }],
+  ];
+
+  let quantas = 0;
+
+  const buscar = ((url: string) => {
+    const pagina = Number(new URL(url).searchParams.get("page"));
+
+    quantas++;
+
+    return Promise.resolve(
+      new Response(JSON.stringify({ data: paginas[pagina - 1] ?? [] }), {
+        status: 200,
+      }),
+    );
+  }) as unknown as typeof fetch;
+
+  const todos = await listarPacotes(PAINEL, buscar);
+
+  assertEquals(todos.length, 21);
+  assertEquals(todos[20].id, "ultimo");
+  /* Parou na página curta: uma terceira chamada seria desperdício e um passo a
+   * mais rumo ao 429. */
+  assertEquals(quantas, 2);
+});
+
+Deno.test("erro do painel traz a MENSAGEM dele, e não o corpo cru", async () => {
+  /* A Sigma responde `{error:true, message:"…"}`. É a mensagem que diz se
+   * faltou permissão, se o pacote não existe ou se bateu no limite — e é ela
+   * que precisa chegar ao log. */
+  const { buscar } = fetchDeMentira(
+    { error: true, message: "Package not found" },
+    400,
+  );
+
+  const erro = await assertRejects(
+    () => criarCliente(PAINEL, { packageId: "x", username: "u" }, buscar),
+    ErroDoPainel,
+  );
+
+  assertEquals(erro.status, 400);
+  assertEquals(erro.message, "Package not found");
+});
+
+Deno.test("o 429 chega como erro, com o tempo de espera dentro", async () => {
+  const { buscar } = fetchDeMentira(
+    { message: "Too many requests. Please try again in 47 seconds." },
+    429,
+  );
+
+  const erro = await assertRejects(
+    () => criarCliente(PAINEL, { packageId: "x", username: "u" }, buscar),
+    ErroDoPainel,
+  );
+
+  assertEquals(erro.status, 429);
+  assertEquals(erro.message.includes("47 seconds"), true);
 });
 
 Deno.test("a barra do fim não vira barra dupla", async () => {
-  /* `base_url` com e sem barra final é a diferença entre `/webhook` e
-   * `//webhook` — e alguns servidores respondem 404 para o segundo. */
+  /* `base_url` com e sem barra final é a diferença entre `/api` e `//api`, e
+   * alguns servidores respondem 404 para o segundo. */
   const { buscar, gravado } = fetchDeMentira({ data: {} });
 
   await renovarCliente(
     { ...PAINEL, painel_url: "https://painel.exemplo///" },
+    "C1",
     "p",
-    "u",
+    undefined,
     buscar,
   );
 
-  assertEquals(gravado.url, "https://painel.exemplo/webhook/customer/renew");
+  assertEquals(
+    gravado.url,
+    "https://painel.exemplo/api/integration/v1/customers/C1/renew",
+  );
 });

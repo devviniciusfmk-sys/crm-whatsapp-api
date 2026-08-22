@@ -256,151 +256,234 @@ export async function pedirTeste(
 }
 
 /**
- * # Procura um cliente PELO USUÁRIO, e nunca pelo id
+ * # A Sigma API — o painel administrativo de verdade
  *
- * O id que estes painéis devolvem é um hashid ambíguo: o mesmo valor aponta
- * para clientes diferentes em contextos diferentes. Confirmar por ele devolve
- * o cliente errado — e o erro não aparece como erro. Aparece como credenciais
- * mandadas para a pessoa errada, ou uma renovação aplicada na conta de outro.
+ * Até 2026/08/22 estas chamadas iam para `/webhook/customer{,/create,/renew}`,
+ * endereços que vieram do documento de especificação e que NÃO EXISTEM. A
+ * documentação do painel do piloto chegou no mesmo dia e é outra coisa: a
+ * Sigma API, em `/api/integration/v1`, com dezenove endpoints.
  *
- * O usuário é único dentro do painel. É o único identificador em que dá para
- * confiar, e é por isso que esta função só aceita ele. - 2026/08/22
+ * Conferido contra o servidor de verdade, só com GET: `/servers` e `/packages`
+ * responderam, e é de lá que saem os hashids abaixo.
  *
- * ## O token saiu da URL
+ * ## Hashids: o mesmo texto quer dizer coisas diferentes
  *
- * Ia como `?token=…`, e a documentação do painel (Sigma) é explícita: todo
- * endpoint usa `Authorization: Bearer`. Não é só formalidade — token em query
- * string entra no log de acesso do servidor, no de qualquer proxy no caminho e
- * no Referer da página seguinte. E este é o token do PAINEL INTEIRO, não o de
- * um cliente: quem o pega administra a base toda.
+ * A especificação avisava, e agora há prova. Do painel do piloto:
  *
- * O `userId` saiu junto, pelo mesmo motivo de sempre: um token de painel
- * inteiro não precisa dizer de quem é. - 2026/08/22
+ *   ANKWPKDPRq   é um PACOTE (2H teste completo c/adulto)
+ *   ANKWPKDPRq   é também o REVENDEDOR "rodnei"
+ *   BV4D3rLaqZ   é um SERVIDOR, e também o revendedor "super-sharkstreaming"
+ *   bOxLAQLZ7a   é um PACOTE, e também o revendedor "alexandreantenas"
+ *
+ * Não são coincidências: cada tipo tem a sua própria sequência, cifrada com o
+ * mesmo alfabeto. Passar um hashid de pacote onde se espera um de revendedor
+ * não dá erro — acerta OUTRA COISA. É criar o cliente na conta de terceiro, ou
+ * renovar a assinatura de quem não pagou.
+ *
+ * Por isso: nunca reaproveitar um id entre tipos, nunca inferir um do outro, e
+ * procurar cliente sempre por `username`, que é único e legível.
+ *
+ * ## O link do robô é `/api/chatbot/{revendedor}/{pacote}`
+ *
+ * O link do piloto — `…/api/chatbot/RYAWRk1jlx/ANKWPKDPRq` — tem os dois: o
+ * primeiro é o revendedor `adm-shark`, o segundo é o pacote de teste. Os dois
+ * saíram das listagens acima. É por isso que colar o link basta.
+ * - 2026/08/22
  */
-export async function procurarPorUsuario(
-  painel: Painel,
-  username: string,
-  buscar: typeof fetch = fetch,
-): Promise<Record<string, unknown> | null> {
-  const base = semBarra(painel.painel_url || painel.base_url);
 
-  const url = `${base}/webhook/customer` +
-    `?username=${encodeURIComponent(username)}`;
-
-  const resposta = await buscar(url, {
-    method: "GET",
-    headers: { authorization: `Bearer ${painel.token}` },
-    signal: AbortSignal.timeout(20_000),
-  });
-
-  if (!resposta.ok) return null;
-
-  const corpo = (await resposta.json().catch(() => null)) as
-    | Record<string, unknown>
-    | null;
-
-  if (!corpo) return null;
-
-  const dados = (corpo.data ?? corpo) as Record<string, unknown>;
-
-  if (Array.isArray(dados)) {
-    return (dados[0] as Record<string, unknown>) ?? null;
-  }
-
-  if (typeof dados.username === "string") return dados;
-
-  if (dados.customer && typeof dados.customer === "object") {
-    return dados.customer as Record<string, unknown>;
-  }
-
-  return null;
-}
-
-/** Cria um cliente pago no painel. */
-export async function criarCliente(
-  painel: Painel,
-  pacoteId: string,
-  telefone: string,
-  nome: string,
-  buscar: typeof fetch = fetch,
-): Promise<Record<string, unknown>> {
-  return await escrever(
-    painel,
-    "create",
-    {
-      userId: painel.painel_user_id,
-      packageId: pacoteId,
-      whatsapp: telefone,
-      name: nome || telefone,
-      /* A nota guarda o telefone: é por ela que se acha o cliente depois,
-       * porque o usuário é gerado pelo painel e ninguém o decorou. */
-      note: telefone,
-    },
-    buscar,
-  );
-}
-
-/** Soma prazo a um cliente que já existe. */
-export async function renovarCliente(
-  painel: Painel,
-  pacoteId: string,
-  username: string,
-  buscar: typeof fetch = fetch,
-): Promise<Record<string, unknown>> {
-  return await escrever(
-    painel,
-    "renew",
-    { userId: painel.painel_user_id, username, packageId: pacoteId },
-    buscar,
-  );
+/** Onde a Sigma mora, a partir da raiz que a loja configurou. */
+function sigma(painel: Painel): string {
+  return `${semBarra(painel.painel_url || painel.base_url)}/api/integration/v1`;
 }
 
 /**
- * # ATENÇÃO: estes dois caminhos ainda não foram conferidos
+ * # Uma chamada à Sigma, e o único lugar que sabe como ela responde
  *
- * `/webhook/customer`, `/webhook/customer/create` e `/webhook/customer/renew`
- * vieram do documento de especificação, e não da documentação do painel. Em
- * 2026/08/22 apareceu a documentação de verdade do servidor do piloto — é a
- * **Sigma API**, e dela só sabemos, até agora, que todo endpoint usa
- * `Authorization: Bearer <token>`, o que já foi corrigido acima.
- *
- * A lista de endereços dela ainda não foi lida. Enquanto não for:
- *
- *   - `procurarPorUsuario` é chamada de verdade depois de cada teste. Errando
- *     o caminho ela devolve `null`, e quem chama já trata isso como "não
- *     confirmei" sem cancelar nada. Custa uma requisição inútil, e nada mais.
- *   - `criarCliente` e `renovarCliente` NÃO são chamadas por ninguém ainda.
- *     Isso é bom: são elas que criam e renovam cliente de verdade, e disparar
- *     um POST adivinhado contra um painel que administra a base inteira de uma
- *     loja é o tipo de palpite que não se desfaz.
- *
- * O primeiro que for ligar isto lê a lista de endpoints primeiro. - 2026/08/22
+ * Cabeçalhos, envelope `{data}`, corpo de erro e o 429 moram aqui. Espalhados,
+ * cada chamada nova esquece um — e o que se esquece primeiro é o 429, que só
+ * aparece quando a loja cresce.
  */
-async function escrever(
+async function chamarSigma(
   painel: Painel,
-  acao: "create" | "renew",
-  corpo: Record<string, unknown>,
+  metodo: "GET" | "POST" | "PUT" | "DELETE",
+  caminho: string,
+  corpo: Record<string, unknown> | undefined,
   buscar: typeof fetch,
-): Promise<Record<string, unknown>> {
-  const base = semBarra(painel.painel_url || painel.base_url);
-
-  const resposta = await buscar(`${base}/webhook/customer/${acao}`, {
-    method: "POST",
+): Promise<unknown> {
+  const resposta = await buscar(`${sigma(painel)}${caminho}`, {
+    method: metodo,
     headers: {
-      "content-type": "application/json",
+      accept: "application/json",
       authorization: `Bearer ${painel.token}`,
+      ...(corpo ? { "content-type": "application/json" } : {}),
     },
-    body: JSON.stringify(corpo),
+    body: corpo ? JSON.stringify(corpo) : undefined,
     signal: AbortSignal.timeout(20_000),
   });
 
   const texto = await resposta.text();
 
   if (!resposta.ok) {
-    throw new ErroDoPainel(resposta.status, texto.slice(0, 300));
+    /* A Sigma manda o motivo em `message`, e ele é o que serve para quem for
+     * ler o log. O corpo cru só quando não der para ler. */
+    let motivo = texto.slice(0, 300);
+
+    try {
+      const erro = JSON.parse(texto) as { message?: string };
+
+      if (erro.message) motivo = erro.message;
+    } catch {
+      /* Não era JSON: fica o corpo cru, que já é melhor que nada. */
+    }
+
+    throw new ErroDoPainel(resposta.status, motivo);
   }
 
   const lido = JSON.parse(texto) as Record<string, unknown>;
 
-  return (lido.data ?? lido) as Record<string, unknown>;
+  return lido.data ?? lido;
+}
+
+/**
+ * # Procura um cliente PELO USUÁRIO, e nunca pelo id
+ *
+ * O usuário é único dentro do painel e é o único identificador em que dá para
+ * confiar — os hashids colidem entre tipos (ver o bloco no topo). Confirmar
+ * por id devolveria o cliente errado, e o erro não aparece como erro: aparece
+ * como credenciais mandadas para a pessoa errada.
+ *
+ * `GET /customers?username=` filtra por igualdade, mas a conferência exata é
+ * refeita aqui: um filtro que um dia vire parcial não pode virar, sozinho, uma
+ * renovação na conta do vizinho.
+ */
+export async function procurarPorUsuario(
+  painel: Painel,
+  username: string,
+  buscar: typeof fetch = fetch,
+): Promise<Record<string, unknown> | null> {
+  const dados = await chamarSigma(
+    painel,
+    "GET",
+    `/customers?username=${encodeURIComponent(username)}&per_page=20`,
+    undefined,
+    buscar,
+  ).catch(() => null);
+
+  const lista = Array.isArray(dados)
+    ? (dados as Record<string, unknown>[])
+    : dados && typeof dados === "object"
+    ? [dados as Record<string, unknown>]
+    : [];
+
+  return lista.find((c) => c.username === username) ?? null;
+}
+
+/** Um plano do painel, como a Sigma o descreve. */
+export type PacoteDoPainel = {
+  id: string;
+  name: string;
+  duration: number;
+  duration_in: "MINUTES" | "HOURS" | "DAYS" | "MONTHS" | "YEARS";
+  connections: number;
+  is_trial: "YES" | "NO";
+  is_adult: boolean;
+  plan_price: number;
+  server_id: string;
+};
+
+/**
+ * # O catálogo de planos, TODAS as páginas
+ *
+ * `per_page` é limitado a 20 em silêncio: pedir 500 devolve 20 e nenhum erro.
+ * Uma integração que não paginasse concluiria que o painel tem vinte planos —
+ * e o plano de venda que ficasse na página dois simplesmente não existiria
+ * para a loja.
+ *
+ * O teto de páginas é para nunca virar laço infinito num painel que responda
+ * `last_page` torto. Vinte páginas são quatrocentos planos.
+ */
+export async function listarPacotes(
+  painel: Painel,
+  buscar: typeof fetch = fetch,
+): Promise<PacoteDoPainel[]> {
+  const todos: PacoteDoPainel[] = [];
+
+  for (let pagina = 1; pagina <= 20; pagina++) {
+    const dados = await chamarSigma(
+      painel,
+      "GET",
+      `/packages?page=${pagina}&per_page=20`,
+      undefined,
+      buscar,
+    );
+
+    const lista = (Array.isArray(dados) ? dados : []) as PacoteDoPainel[];
+
+    todos.push(...lista);
+
+    if (lista.length < 20) break;
+  }
+
+  return todos;
+}
+
+/**
+ * # Cria um cliente pago
+ *
+ * `packageId` é o hashid do PACOTE — o mesmo que sai de `listarPacotes` e o
+ * mesmo que está na segunda metade do link do robô. Não é o do servidor nem o
+ * do revendedor, e trocá-los não dá erro: acerta outro registro.
+ *
+ * `userId` fica de fora de propósito. Ele diria de qual revendedor o cliente
+ * passa a ser, e o padrão — o dono do token — é o certo para uma loja que
+ * vende em nome próprio. Preenchê-lo com um valor achado por aí é exatamente o
+ * acidente que a colisão de hashids torna possível.
+ */
+export async function criarCliente(
+  painel: Painel,
+  dados: {
+    packageId: string;
+    username: string;
+    password?: string;
+    name?: string;
+    whatsapp?: string;
+    connections?: number;
+    /** A referência do nosso pedido. É por ela que se acha depois. */
+    note?: string;
+  },
+  buscar: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  return await chamarSigma(
+    painel,
+    "POST",
+    "/customers",
+    { ...dados, status: "ACTIVE" },
+    buscar,
+  ) as Record<string, unknown>;
+}
+
+/**
+ * # Soma prazo a um cliente que já existe
+ *
+ * Por `customerId` — o hashid que veio de `procurarPorUsuario` ou da criação —
+ * e não por username, porque é assim que a Sigma monta o caminho.
+ *
+ * Sem `expiresAt`, a renovação segue a duração do pacote, que é o que se quer
+ * em quase todo caso: mandar uma data calculada aqui é duplicar uma conta que
+ * o painel já sabe fazer, e discordar dele por um dia é um cliente ligando.
+ */
+export async function renovarCliente(
+  painel: Painel,
+  customerId: string,
+  packageId: string,
+  expiresAt: string | undefined,
+  buscar: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  return await chamarSigma(
+    painel,
+    "POST",
+    `/customers/${encodeURIComponent(customerId)}/renew`,
+    { packageId, ...(expiresAt ? { expiresAt } : {}) },
+    buscar,
+  ) as Record<string, unknown>;
 }
