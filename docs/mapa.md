@@ -68,6 +68,8 @@ supabase/functions/   o que executa
    whatsapp-webhook   o que chega da Meta
    whatsapp-dispatcher o que sai para a Meta
    contact-memory     o resumo do cliente, por cron
+   iptv               teste e ativação de quem revende painel de IPTV
+   pagamentos         Pix e o retorno do gateway
    mcp                servidor de ferramentas para agentes externos
    media-preprocessor transcrição e descrição de áudio, imagem e vídeo
    storage-gc         limpeza de arquivos órfãos
@@ -90,10 +92,14 @@ diferenças de propósito são marcadas com `// @ui-divergence:`. Rode
 
 ## Onde ficam os "módulos"
 
-Não existe pasta de módulos, e é de propósito.
+Não existe pasta de módulos, e é de propósito. Mas há **dois tipos**, e este
+texto dizia que só existia o primeiro — até 2026/08/22, quando o segundo ficou
+grande demais para continuar sem nome.
 
-Um módulo de ramo — barbearia, salão, clínica — não precisa de tela nova, tabela
-nova nem ferramenta nova. Tudo o que ele define já é campo:
+### 1. Módulo de RAMO: é um objeto de dados
+
+Barbearia, salão, clínica. Não precisa de tela nova, tabela nova nem ferramenta
+nova. Tudo o que ele define já é campo:
 
 | o módulo define | o campo que já existe |
 |---|---|
@@ -109,6 +115,43 @@ Então o módulo é **um objeto de dados**, e mora em um arquivo só:
 `ui/src/config/businessPresets.ts`.
 
 Acrescentar um ramo é escrever mais um objeto ali. Sem tela nova, sem migração.
+
+### 2. Módulo de NEGÓCIO: é um vertical isolado
+
+Cobrança por Pix e IPTV. Aqui a loja não só atende diferente — ela **fala com um
+sistema de fora** que tem contas, credenciais e regras próprias. Isso não cabe
+num campo, e forçar caberia significa espalhar a lógica de um provedor de
+pagamento pelo código que manda mensagem.
+
+O que os dois têm em comum, e é a regra deste tipo:
+
+- **ligado por `organizations.extra.modules`**, um vetor de palavras. `temModulo`
+  na interface, e o botão da barra só existe quando ela está lá. Uma barbearia
+  nunca vê uma televisão no rodapé da conversa.
+- **função de borda própria**, sem ligação com o assistente. O painel de IPTV
+  fora do ar não pode parar o atendimento, que é o produto.
+- **segredo no cofre**, nunca em coluna. Ver `02-05_vault_secrets.sql`: qualquer
+  membro lê as linhas pela RLS, e o gatilho de webhook manda a linha inteira
+  para fora.
+- **tabelas próprias com prefixo**, `iptv_*`, e RLS que separa configuração
+  (admin) de operação (membro).
+
+O IPTV inteiro mora nestes lugares:
+
+| o quê | onde |
+|---|---|
+| a tela do funil | `ui/src/routes/_auth/testes.tsx` + `components/TestesCenter.tsx` |
+| a configuração | `ui/src/routes/_auth/integrations/iptv.tsx` + `components/IptvCenter.tsx` |
+| o botão da conversa | `ui/src/components/ChatFooter.tsx`, procure `Tv` |
+| leitura e escrita | `ui/src/queries/useIptv.ts`, `useFunilDoIptv.ts`, `useGerarTeste.ts` |
+| as regras puras | `ui/src/utils/` — `menuDeApps`, `relogioDoTeste`, `quemSumiu`, `janelaDoFunil`, `planoDoTeste` |
+| as tabelas | `api/supabase/schemas/03_models/03-30_iptv.sql` |
+| a função de borda | `api/supabase/functions/iptv/` |
+| a conversa com o painel | `api/supabase/functions/iptv/painel.ts` (Sigma API) |
+| o teste de ponta a ponta | `ui/scripts/iptv-teste.mjs`, `converteu-teste.mjs` |
+
+Acrescentar um vertical é caro. Antes de criar o terceiro, pergunte se ele não é
+um campo. - 2026/08/22
 
 ## O caminho de quem chega
 
@@ -131,3 +174,7 @@ Acrescentar um ramo é escrever mais um objeto ali. Sem tela nova, sem migraçã
 | a mensagem não entrou | `whatsapp-webhook` |
 | a tela mostra espanhol | falta a chave no dicionário: `npm run i18n:check` |
 | o tipo não bate com o banco | `npm run types:sync-check` |
+| o teste de IPTV não saiu | a resposta traz o motivo em `mensagem`, com status 200 — a tela mostra. Sem plano com link de robô, é 409 |
+| a lista aparece vazia tendo linhas | junção sem chave estrangeira devolve `PGRST200`, e `data ?? []` engole. Sempre olhe o `error` |
+| o cliente aparece como telefone | o nome vem de conversa → ficha → perfil. Ver `ui/src/utils/nomeDoCliente.ts` |
+| o filtro da URL some sozinho | o router converte o que parece número: `?periodo=30` chega como 30, e `["30"].includes(30)` é falso |
