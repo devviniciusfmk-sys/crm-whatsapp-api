@@ -78,6 +78,34 @@ export type OrganizationExtra = {
   authorized_contacts_only?: boolean;
   default_agent_id?: string;
   modules?: ModuleName[];
+  /**
+   * # O que a operação CUSTA, para o caixa dizer o que sobrou
+   *
+   * O fechamento mostrava quanto entrou e quanto vai de comissão, e parava
+   * aí — "Produziu R$ 546,10" não diz se a loja ganhou ou perdeu dinheiro no
+   * mês. Quem revende IPTV paga crédito ao painel por cliente e anúncio para
+   * achar cliente; quem tem cadeira paga aluguel e produto.
+   *
+   * ## Dois tipos, porque eles se comportam diferente
+   *
+   *   por_cliente   multiplica pelo número de clientes que PAGARAM no mês.
+   *                 Crédito do painel, anúncio por aquisição, taxa do gateway.
+   *   fixos         acontece uma vez por mês, com um cliente ou com cem.
+   *                 Aluguel, ferramenta, plano de internet.
+   *
+   * Somar os dois numa lista só faria "R$ 150" de anúncio virar R$ 1.500 numa
+   * loja de dez clientes — e o erro apareceria como lucro que não existe.
+   *
+   * ## Em REAIS, como todo dinheiro deste banco
+   *
+   * A mesma lição que `iptv_pacotes.preco` custou em 2026/08/23: centavos aqui
+   * e reais na cobrança ao lado é uma conta cem vezes errada esperando o
+   * primeiro mês fechar. - 2026/08/23
+   */
+  custos?: {
+    por_cliente?: { nome: string; valor: number }[];
+    fixos?: { nome: string; valor: number }[];
+  };
   media_preprocessing?: PreprocessingConfig;
   error_messages_direction?: "internal" | "outgoing";
   /**
