@@ -128,17 +128,20 @@ create table if not exists public.iptv_pacotes (
    * testes. Quem custa é o pago: 1 no mensal, 12 no anual.
    */
   creditos integer,
-  -- Preço de venda em CENTAVOS, como todo dinheiro neste banco. 1990 = 19,90.
-  preco integer,
+  -- Preço de venda em REAIS, como todo dinheiro neste banco. 19.90 = R$ 19,90.
+  preco numeric,
   /**
-   * Centavos por tela ALÉM das que o pacote já inclui.
+   * Reais por tela ALÉM das que o pacote já inclui.
    *
    * Por plano, e não uma regra no código: quantas telas vêm juntas depende do
    * plano E do servidor. O COMPLETO do piloto traz duas, o UNITV traz uma, e o
    * próximo servidor trará outro número. Regra fixa erraria no primeiro
    * servidor novo — e erraria cobrando.
+   *
+   * Em REAIS. Nasceu em centavos, contra o padrão do banco inteiro, e o erro
+   * só apareceu quando o caixa somou comissão: R$ 19.950 onde eram R$ 199,50.
    */
-  preco_tela_extra integer,
+  preco_tela_extra numeric,
   /**
    * Renova no painel quando vencer, sem cobrar de novo. É o vitalício.
    *
