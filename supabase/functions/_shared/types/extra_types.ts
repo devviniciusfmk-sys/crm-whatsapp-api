@@ -79,6 +79,15 @@ export type OrganizationExtra = {
   default_agent_id?: string;
   modules?: ModuleName[];
   /**
+   * Plano/trial e suspensão, escritos só pela função de borda `admin`
+   * (painel de operador da plataforma) — nenhuma organização grava aqui
+   * sozinha. `suspended` é o que trava o painel inteiro do lado da UI
+   * (`_auth.tsx`).
+   */
+  subscription_status?: "trial" | "active" | "suspended" | "none";
+  trial_ends_at?: string;
+  suspended?: boolean;
+  /**
    * # O que a operação CUSTA, para o caixa dizer o que sobrou
    *
    * O fechamento mostrava quanto entrou e quanto vai de comissão, e parava
@@ -389,11 +398,15 @@ export type WhatsAppOrganizationAddressExtra = {
   verified_name?: string;
   // "manual" is the connection made by pasting a system user token instead of
   // going through Meta's dialog — see whatsapp-management/manual_signup.ts.
+  // "loja" is the same connection, but with a token that was already stored
+  // (never pasted) because the number was bought from the platform's own
+  // stock — see whatsapp-management/loja_delivery.ts.
   flow_type?:
     | "only_waba"
     | "new_phone_number"
     | "existing_phone_number"
-    | "manual";
+    | "manual"
+    | "loja";
   /** ISO, or null when the token never expires. Only set by the manual flow. */
   token_expires_at?: string | null;
   // No `access_token` here on purpose: the Meta token is a Vault secret, read
