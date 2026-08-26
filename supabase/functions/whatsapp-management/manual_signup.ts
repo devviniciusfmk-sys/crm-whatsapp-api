@@ -439,34 +439,41 @@ export type ManualSignupPayload = {
   verify_token?: string;
 };
 
-export async function performManualSignup(
+export type ConnectWhatsAppNumberPayload = {
+  organization_id: string;
+  phone_number_id: string;
+  waba_id: string;
+  business_id?: string;
+  callback_url?: string;
+  verify_token?: string;
+  /**
+   * Como esta conexão nasceu, gravado em `extra.flow_type`. "manual" é o
+   * padrão porque o único chamador até 2026/08/26 era `performManualSignup`
+   * — o dono do dado que essa coluna sempre teve. "loja" é o terceiro valor,
+   * ao lado de "embedded" (`embedded_signup.ts`) e "manual": a mesma conexão
+   * à Graph API, só que disparada pela entrega de um número comprado na loja
+   * em vez de alguém colando um token na tela.
+   */
+  flow_type?: "manual" | "loja";
+};
+
+/**
+ * O que acontece depois de já se ter um token em mãos, dado por quem for.
+ *
+ * Extraído de `performManualSignup` em 2026/08/26 para a entrega da loja de
+ * números (`loja_delivery.ts`) poder reaproveitar exatamente estes passos —
+ * mesmo `debug_token`, mesma checagem de que o número pertence à WABA, mesma
+ * assinatura de webhooks — em vez de duplicá-los com um token que já estava
+ * guardado no cofre desde que o número entrou no estoque, e não colado por
+ * ninguém na tela. `performManualSignup` continua sendo o único lugar que
+ * resolve QUAL token usar (colado ou já guardado); isto aqui é o que se faz
+ * com ele depois de resolvido.
+ */
+export async function connectWhatsAppNumber(
   client: ReturnType<typeof createClient>,
-  payload: ManualSignupPayload,
+  token: string,
+  payload: ConnectWhatsAppNumberPayload,
 ) {
-  const required: (keyof ManualSignupPayload)[] = [
-    "organization_id",
-    "phone_number_id",
-    "waba_id",
-  ];
-
-  for (const field of required) {
-    if (!payload[field]) {
-      throw new HTTPException(400, {
-        message: `Missing '${field}' body param!`,
-      });
-    }
-  }
-
-  const token = payload.access_token?.trim() ||
-    await storedTokenFor(client, payload.organization_id, payload.waba_id);
-
-  if (!token) {
-    throw new HTTPException(400, {
-      message:
-        "No stored token for this WhatsApp Business Account. Paste a system user token.",
-    });
-  }
-
   const ctx = {
     organization_id: payload.organization_id,
     phone_number_id: payload.phone_number_id,
@@ -574,7 +581,7 @@ export async function performManualSignup(
       extra: {
         waba_id: payload.waba_id,
         business_id: payload.business_id,
-        flow_type: "manual",
+        flow_type: payload.flow_type ?? "manual",
         phone_number: normalizePhoneNumber(phone_number.display_phone_number),
         verified_name: phone_number.verified_name,
         token_expires_at: expires_at,
@@ -612,4 +619,51 @@ export async function performManualSignup(
     code_verification_status: phone_number.code_verification_status,
     token_expires_at: expires_at,
   };
+}
+
+/**
+ * A conexão manual: cola-se um token, ou reaproveita-se o que a organização já
+ * tinha guardado para esta WABA.
+ *
+ * A parte que sabe QUAL token usar termina aqui — `access_token?.trim() ||
+ * storedTokenFor(...)` é a única decisão específica desta tela. Tudo que
+ * acontece depois de ter um token em mãos é idêntico para qualquer origem, e
+ * mora em `connectWhatsAppNumber` acima.
+ */
+export async function performManualSignup(
+  client: ReturnType<typeof createClient>,
+  payload: ManualSignupPayload,
+) {
+  const required: (keyof ManualSignupPayload)[] = [
+    "organization_id",
+    "phone_number_id",
+    "waba_id",
+  ];
+
+  for (const field of required) {
+    if (!payload[field]) {
+      throw new HTTPException(400, {
+        message: `Missing '${field}' body param!`,
+      });
+    }
+  }
+
+  const token = payload.access_token?.trim() ||
+    await storedTokenFor(client, payload.organization_id, payload.waba_id);
+
+  if (!token) {
+    throw new HTTPException(400, {
+      message:
+        "No stored token for this WhatsApp Business Account. Paste a system user token.",
+    });
+  }
+
+  return connectWhatsAppNumber(client, token, {
+    organization_id: payload.organization_id,
+    phone_number_id: payload.phone_number_id,
+    waba_id: payload.waba_id,
+    business_id: payload.business_id,
+    callback_url: payload.callback_url,
+    verify_token: payload.verify_token,
+  });
 }

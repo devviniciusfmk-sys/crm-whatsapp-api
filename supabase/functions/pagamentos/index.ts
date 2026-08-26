@@ -3,8 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ADAPTADORES } from "./provedores.ts";
 import { criarCobranca, lerCheckout, lerSituacao } from "./checkout.ts";
+import { criarPedidoLoja } from "./loja.ts";
 import { ErroDoGateway, testarAmploPay } from "./criar.ts";
 import { confirmacaoDePagamento } from "../_shared/confirmacao_de_pagamento.ts";
+import { isPlatformAdmin } from "../_shared/platform_admin.ts";
 
 /**
  * # A porta dos pagamentos
@@ -14,9 +16,14 @@ import { confirmacaoDePagamento } from "../_shared/confirmacao_de_pagamento.ts";
  *   GET  /pagamentos/checkout?org=…       o que a loja vende
  *   POST /pagamentos/cobrar               o cliente pede um Pix
  *   GET  /pagamentos/situacao?cobranca=…  já pagou?
+ *   POST /pagamentos/loja/comprar         uma organização compra um número da loja
+ *   GET  /pagamentos/loja/status          a chave da PLATAFORMA está configurada?
  *   POST /pagamentos/amplopay             o gateway avisa que pagou
  *
- * As três primeiras são o cliente da loja, sem login, num navegador. A última é
+ * As três primeiras são o cliente da loja, sem login, num navegador. `/loja/
+ * comprar` já é diferente — exige login, porque quem compra é a organização,
+ * não um cliente dela — mas mora no mesmo lugar pelo mesmo motivo de sempre: o
+ * gateway é um só, as credenciais e a tabela de pedidos moram aqui. A última é
  * o gateway. Moram juntas porque compartilham o essencial — as credenciais e a
  * tabela de cobranças — e separá-las seria duas funções lendo o mesmo segredo.
  *
@@ -79,7 +86,11 @@ Deno.serve(async (req) => {
    * aceitar valor de fora e não devolver nada que já não esteja no cardápio.
    */
   if (qual === "checkout") {
-    return await lerCheckout(client, url.searchParams.get("org") ?? "", corsHeaders);
+    return await lerCheckout(
+      client,
+      url.searchParams.get("org") ?? "",
+      corsHeaders,
+    );
   }
 
   if (qual === "cobrar") {
@@ -94,6 +105,146 @@ Deno.serve(async (req) => {
       `${url.origin}${url.pathname.replace(/\/[^/]*$/, "")}`,
       corsHeaders,
     );
+  }
+
+  /**
+   * Uma organização compra um número da loja.
+   *
+   * Diferente de `/checkout` e `/cobrar`, que são o cliente ANÔNIMO de uma
+   * loja, esta é a organização comprando da PLATAFORMA — e por isso é a única
+   * rota deste arquivo, além de `/testar`, que exige login. A permissão segue
+   * o mesmo idioma de `/testar`: monta-se um cliente com o JWT de quem
+   * chamou e verifica-se via RLS/consulta direta se ele é owner da
+   * organização, em vez de inventar uma segunda definição de "quem pode"
+   * fora do banco.
+   *
+   * O trabalho de verdade — reservar o número, falar com o gateway — roda
+   * com o cliente `service_role` (`client`, o mesmo de sempre neste arquivo),
+   * exatamente como `criarCobranca` já roda com `service_role` mesmo sendo
+   * chamada por um cliente anônimo: quem decide se pode chegar até aqui é
+   * esta rota, e a partir daí o trabalho não deveria ficar refém de RLS
+   * pensada para outra coisa.
+   */
+  if (qual === "comprar") {
+    const corpo = await req.json().catch(() => ({}));
+
+    const comoUsuario = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        global: {
+          headers: { Authorization: req.headers.get("Authorization") ?? "" },
+        },
+      },
+    );
+
+    const { data: { user }, error: erroUsuario } = await comoUsuario.auth
+      .getUser();
+
+    if (erroUsuario || !user) {
+      return new Response(JSON.stringify({ erro: "não autenticado" }), {
+        status: 401,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    const { data: dono } = await comoUsuario
+      .from("agents")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .eq("organization_id", corpo.organization_id ?? "")
+      .eq("extra->>role", "owner")
+      .maybeSingle();
+
+    if (!dono) {
+      return new Response(JSON.stringify({ erro: "sem permissão" }), {
+        status: 403,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    return await criarPedidoLoja(
+      client,
+      corpo,
+      { userId: user.id, email: user.email },
+      /* Duas segmentos a tirar (`/loja/comprar`), e não um: esta rota mora
+       * dois níveis abaixo da raiz da função, diferente de `/cobrar`, que
+       * mora só um. A mesma regra genérica de `/cobrar` cortaria só
+       * "comprar" e deixaria "/pagamentos/loja" como base — e `avisarEm`
+       * sairia apontando para .../loja/amplopay em vez de .../amplopay. O
+       * roteador deste arquivo não liga (ele só olha o ÚLTIMO segmento), mas
+       * a URL de callback ficaria enganosa para quem a lê num log. */
+      `${url.origin}${url.pathname.replace(/\/loja\/comprar$/, "")}`,
+      corsHeaders,
+    );
+  }
+
+  /**
+   * As chaves da AmploPay DA PLATAFORMA — as que a loja de números usa para
+   * cobrar uma organização, `AMPLOPAY_LOJA_CHAVE_PUBLICA`/`_SECRETA` — estão
+   * configuradas e funcionando?
+   *
+   * Existe porque o painel de administração (`admin/dashboard.tsx`,
+   * `admin/settings.tsx`) tinha "AmploPay conectado" escrito fixo no código,
+   * mentindo mesmo sem nenhuma chave configurada. Esta rota é a mesma
+   * pergunta que `/testar` já responde para a chave de CADA loja, só que para
+   * a chave única da plataforma — por isso o nome diferente (`status`, e não
+   * `testar`): o roteador deste arquivo decide pelo ÚLTIMO segmento da URL, e
+   * reusar "testar" colidiria com a rota de baixo.
+   *
+   * Só o operador da plataforma chama isto — ninguém mais tem por que saber
+   * se a chave DA PLATAFORMA está certa. - 2026/08/26
+   */
+  if (qual === "status") {
+    const comoUsuario = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        global: {
+          headers: { Authorization: req.headers.get("Authorization") ?? "" },
+        },
+      },
+    );
+
+    const { data: { user } } = await comoUsuario.auth.getUser();
+
+    if (!isPlatformAdmin(user?.email)) {
+      return new Response(JSON.stringify({ erro: "sem permissão" }), {
+        status: 403,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    const chavePublica = Deno.env.get("AMPLOPAY_LOJA_CHAVE_PUBLICA");
+    const chaveSecreta = Deno.env.get("AMPLOPAY_LOJA_CHAVE_SECRETA");
+
+    if (!chavePublica || !chaveSecreta) {
+      return new Response(
+        JSON.stringify({ ok: false, configurado: false }),
+        { headers: { ...corsHeaders, "content-type": "application/json" } },
+      );
+    }
+
+    try {
+      const conferida = await testarAmploPay({
+        publica: chavePublica,
+        secreta: chaveSecreta,
+      });
+
+      return new Response(
+        JSON.stringify({ ok: true, configurado: true, ...conferida }),
+        { headers: { ...corsHeaders, "content-type": "application/json" } },
+      );
+    } catch (erro) {
+      const detalhe = erro instanceof ErroDoGateway
+        ? { codigo: erro.codigo, mensagem: erro.message }
+        : { mensagem: String(erro) };
+
+      return new Response(
+        JSON.stringify({ ok: false, configurado: true, ...detalhe }),
+        { headers: { ...corsHeaders, "content-type": "application/json" } },
+      );
+    }
   }
 
   /**
@@ -149,10 +300,13 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!credencial) {
-      return new Response(JSON.stringify({ erro: "nenhuma chave cadastrada" }), {
-        status: 404,
-        headers: { ...corsHeaders, "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ erro: "nenhuma chave cadastrada" }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "content-type": "application/json" },
+        },
+      );
     }
 
     try {
@@ -192,7 +346,10 @@ Deno.serve(async (req) => {
   if (!adaptador) {
     return new Response(
       JSON.stringify({ erro: `provedor desconhecido: ${qual}` }),
-      { status: 404, headers: { ...corsHeaders, "content-type": "application/json" } },
+      {
+        status: 404,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      },
     );
   }
 
@@ -200,7 +357,8 @@ Deno.serve(async (req) => {
    * originais, e `req.json()` já teria consumido o fluxo. */
   const corpo = await req.text();
 
-  const segredo = Deno.env.get(`PAGAMENTOS_${qual.toUpperCase()}_SEGREDO`) ?? "";
+  const segredo = Deno.env.get(`PAGAMENTOS_${qual.toUpperCase()}_SEGREDO`) ??
+    "";
 
   if (!adaptador.confere(req, corpo, segredo)) {
     console.warn(`[pagamentos] assinatura recusada em ${qual}`);
@@ -216,7 +374,9 @@ Deno.serve(async (req) => {
   try {
     aviso = adaptador.ler(JSON.parse(corpo));
   } catch {
-    console.warn(`[pagamentos] corpo ilegível em ${qual}: ${corpo.slice(0, 300)}`);
+    console.warn(
+      `[pagamentos] corpo ilegível em ${qual}: ${corpo.slice(0, 300)}`,
+    );
     aviso = null;
   }
 
@@ -229,7 +389,9 @@ Deno.serve(async (req) => {
   }
 
   if (aviso.situacao !== "pago") {
-    console.info(`[pagamentos] ${qual}: ${aviso.transacao} está ${aviso.situacao}`);
+    console.info(
+      `[pagamentos] ${qual}: ${aviso.transacao} está ${aviso.situacao}`,
+    );
 
     return new Response(JSON.stringify({ situacao: aviso.situacao }), {
       headers: { ...corsHeaders, "content-type": "application/json" },
@@ -237,23 +399,34 @@ Deno.serve(async (req) => {
   }
 
   /**
-   * Dois destinos, e a referência diz qual.
+   * Três destinos, e a referência diz qual.
    *
    * `cob:` é uma cobrança da loja para um cliente dela — o corte de cabelo, o
    * plano. `fat:` (ou uma referência sem prefixo, que é o formato antigo) é a
-   * fatura da mensalidade que a loja paga.
+   * fatura da mensalidade que a loja paga. `loja:` é a PLATAFORMA vendendo um
+   * número de WhatsApp para uma organização — um terceiro dinheiro, com um
+   * terceiro dono (a plataforma, não uma loja nem o cliente dela), pela mesma
+   * porta que os outros dois.
    *
-   * São dois dinheiros com dois donos e duas tabelas, e o postback chega pela
-   * mesma porta. Adivinhar pelo formato do id seria adivinhar sobre dinheiro:
-   * os dois são uuid, e errar manda o pagamento do cliente para a fatura da
-   * loja. Quem cria a cobrança no gateway é quem escreve o prefixo. - 2026/08/19
+   * São três dinheiros com donos diferentes e três tabelas, e o postback
+   * chega pela mesma porta. Adivinhar pelo formato do id seria adivinhar
+   * sobre dinheiro: os três são uuid, e errar manda o pagamento de um lugar
+   * para a fatura ou o pedido de outro. Quem cria a cobrança no gateway é
+   * quem escreve o prefixo. - 2026/08/19
    */
-  const deCliente = aviso.fatura.startsWith("cob:");
-  const alvo = aviso.fatura.replace(/^(cob|fat):/, "");
+  const prefixo = aviso.fatura.match(/^(cob|fat|loja):/)?.[1] ?? "fat";
+  const alvo = aviso.fatura.replace(/^(cob|fat|loja):/, "");
+  const deCliente = prefixo === "cob";
 
-  const { data, error } = deCliente
+  const { data, error } = prefixo === "cob"
     ? await client.rpc("quitar_cobranca", {
       _cobranca: alvo,
+      _metodo: qual,
+      _external_id: aviso.transacao,
+    })
+    : prefixo === "loja"
+    ? await client.rpc("quitar_pedido_loja", {
+      _pedido: alvo,
       _metodo: qual,
       _external_id: aviso.transacao,
     })
@@ -287,7 +460,11 @@ Deno.serve(async (req) => {
    *
    * Só para cobrança de cliente. A fatura da mensalidade é da LOJA, não tem
    * conversa do outro lado, e mandar "pagamento confirmado" para o WhatsApp
-   * dela seria o sistema conversando consigo mesmo.
+   * dela seria o sistema conversando consigo mesmo. O mesmo vale para
+   * `loja:`: quem comprou é uma organização autenticada, não um contato numa
+   * conversa de WhatsApp — não há para onde mandar, e a tela de
+   * administração já sabe o que fazer com um pedido pago (chamar
+   * `/whatsapp-management/loja/entregar`).
    */
   if (deCliente && data) {
     const cobranca = data as unknown as {
@@ -360,8 +537,14 @@ Deno.serve(async (req) => {
     }
   }
 
+  const rotulo = prefixo === "cob"
+    ? "cobrança"
+    : prefixo === "loja"
+    ? "pedido da loja"
+    : "fatura";
+
   console.info(
-    `[pagamentos] ${qual}: ${deCliente ? "cobrança" : "fatura"} ${alvo} recebeu R$ ${aviso.valor}`,
+    `[pagamentos] ${qual}: ${rotulo} ${alvo} recebeu R$ ${aviso.valor}`,
   );
 
   return new Response(JSON.stringify({ pagamento: data }), {

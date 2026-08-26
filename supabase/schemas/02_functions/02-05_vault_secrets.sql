@@ -459,3 +459,115 @@ drop trigger if exists apagar_token on public.iptv_servidores;
 create trigger apagar_token
 after delete on public.iptv_servidores
 for each row execute function public.apagar_token_do_servidor();
+
+-- ## O token do número da loja
+--
+-- Cada número em `loja_numeros` já vem da Meta com um token de usuário do
+-- sistema permanente — é o que deixa a plataforma mandar mensagem por ele
+-- antes mesmo de existir uma organização dona. Mesmo trato do token da Meta
+-- e do da IPTV: keyado pelo id da linha, nunca numa coluna de
+-- `loja_numeros`, pela mesma razão de sempre — coluna é lida por RLS de quem
+-- tiver acesso à linha e pode sair verbatim em alguma resposta.
+create function public.loja_numero_token_secret_name(p_numero_id uuid)
+returns text
+language sql
+immutable
+set search_path to ''
+as $$
+  select 'loja_numero_token:' || p_numero_id::text;
+$$;
+
+revoke execute on function public.loja_numero_token_secret_name(uuid)
+from public, anon, authenticated;
+
+-- Só `service_role`, e mais estrito que `get_whatsapp_access_token`: aquele
+-- confere `get_authorized_orgs` porque já existe uma organização dona do
+-- endereço na hora da leitura. Aqui não — o número pode ainda estar
+-- `disponivel` ou `reservado`, sem organização nenhuma, e é justamente nesse
+-- momento (a plataforma testando/preparando o número antes da venda) que a
+-- leitura precisa acontecer. Sem organização para checar, a única fronteira
+-- possível é "isto só roda em código de confiança", que é o que `service_role`
+-- já significa.
+create function public.get_loja_numero_token(p_numero_id uuid)
+returns text
+language sql
+stable
+security definer
+set search_path to ''
+as $$
+  select s.decrypted_secret
+  from vault.decrypted_secrets s
+  where s.name = public.loja_numero_token_secret_name(p_numero_id);
+$$;
+
+revoke execute on function public.get_loja_numero_token(uuid)
+from public, anon, authenticated;
+
+grant execute on function public.get_loja_numero_token(uuid) to service_role;
+
+-- Só `service_role`, e não `authenticated` como `set_iptv_token`/
+-- `set_model_api_key` — aquelas são chamadas direto pela tela de um admin
+-- logado, e por isso se autoconferem com `get_authorized_orgs('admin')` por
+-- dentro. Esta é chamada só pela função de borda `loja`, que já é
+-- gate-keepada para admin da plataforma (não admin de organização) do lado
+-- de fora, antes mesmo de chegar aqui — repetir a checagem de organização não
+-- faria sentido para um token que ainda não tem organização dona.
+create function public.set_loja_numero_token(
+  p_numero_id uuid,
+  p_token text
+)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _name text := public.loja_numero_token_secret_name(p_numero_id);
+  _id uuid;
+begin
+  if nullif(p_token, '') is null then
+    raise exception 'set_loja_numero_token: token must not be null or empty';
+  end if;
+
+  select id into _id from vault.secrets where name = _name;
+
+  if _id is null then
+    perform vault.create_secret(
+      p_token,
+      _name,
+      'System user access token for loja number ' || p_numero_id::text
+    );
+  else
+    perform vault.update_secret(_id, p_token);
+  end if;
+end;
+$$;
+
+revoke execute on function public.set_loja_numero_token(uuid, text)
+from public, anon, authenticated;
+
+grant execute on function public.set_loja_numero_token(uuid, text)
+to service_role;
+
+-- Sem isto, apagar um número da loja deixa o token dele no cofre para
+-- sempre — mesmo caso de `apagar_token_do_servidor`, medido lá em
+-- 2026/08/22 e nunca reaberto desde então.
+create function public.apagar_token_do_numero_loja()
+returns trigger
+language plpgsql
+security definer
+set search_path to ''
+as $$
+begin
+  delete from vault.secrets
+  where name = public.loja_numero_token_secret_name(old.id);
+
+  return old;
+end;
+$$;
+
+drop trigger if exists apagar_token_numero_loja on public.loja_numeros;
+
+create trigger apagar_token_numero_loja
+after delete on public.loja_numeros
+for each row execute function public.apagar_token_do_numero_loja();

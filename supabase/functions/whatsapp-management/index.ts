@@ -40,6 +40,11 @@ import {
   performManualSignup,
   type WabaNumbersPayload,
 } from "./manual_signup.ts";
+import {
+  type LojaDeliveryPayload,
+  performLojaDelivery,
+} from "./loja_delivery.ts";
+import { isPlatformAdmin } from "../_shared/platform_admin.ts";
 import { type User } from "@supabase/supabase-js";
 
 type TemplatePayload = {
@@ -232,6 +237,36 @@ function requireRoles(
 
     await next();
   };
+}
+
+/**
+ * Gate do operador da plataforma — não de uma organização.
+ *
+ * `requireRoles` prova pertencimento a UMA organização; a entrega da loja de
+ * números chama a Graph API em nome de uma organização da qual quem clicou
+ * "Conectar" pode nem ser membro. Por isso este middleware não olha `agents`
+ * nem `organization_id` nenhum — só se o e-mail de quem chamou está na lista
+ * de operadores. Ver `_shared/platform_admin.ts` para o porquê completo.
+ *
+ * Exige JWT, e não API key: só um humano logado como operador aciona isto,
+ * nunca uma integração de organização com uma chave de API.
+ */
+async function requirePlatformAdmin(
+  c: Context<AppEnv>,
+  next: () => Promise<void>,
+) {
+  const user = c.get("user");
+
+  if (!isPlatformAdmin(user?.email)) {
+    log.error(
+      `User ${user?.id ?? "(sem JWT)"} is not a platform admin`,
+      { email: user?.email },
+    );
+
+    throw new HTTPException(403, { message: "Not a platform admin." });
+  }
+
+  await next();
 }
 
 // Templates routes
@@ -664,6 +699,81 @@ app.post(
           .throwOnError();
       } else {
         log.error("Manual signup failed", error);
+      }
+
+      throw error;
+    }
+  },
+);
+
+/**
+ * Entregar um número comprado na loja.
+ *
+ * Só o operador da plataforma chama isto — depois de conferir que o Pix
+ * caiu (a tela de administração lê `loja_pedidos` diretamente via RLS), ele
+ * clica "Conectar" e este endpoint faz o trabalho de Graph API que o fluxo
+ * manual já sabe fazer, reaproveitando o token permanente que já está no
+ * cofre desde que o número entrou no estoque. Ver `loja_delivery.ts`.
+ */
+app.post(
+  "/whatsapp-management/loja/entregar",
+  requirePlatformAdmin,
+  async (c) => {
+    const { pedido_id } = await c.req.json<LojaDeliveryPayload>();
+    const user = c.get("user");
+
+    log.info("Loja delivery payload", { pedido_id, admin_user_id: user.id });
+
+    const unsecureClient = createUnsecureClient();
+
+    try {
+      const address = await performLojaDelivery(unsecureClient, {
+        pedido_id,
+        admin_user_id: user.id,
+      });
+
+      log.info("Loja delivery completed", {
+        pedido_id,
+        organization_id: address.organization_id,
+        address: address.address,
+      });
+
+      return c.json(address);
+    } catch (error) {
+      if (error instanceof HTTPException) {
+        log.error(error.message, error);
+
+        // `logs.organization_id` é NOT NULL, e o payload desta rota só tem
+        // `pedido_id` — a organização mora dentro do pedido, e quem lê o
+        // pedido é `performLojaDelivery`. Se ela já leu antes de falhar, a
+        // releitura abaixo acha a mesma linha; se falhou ANTES de achar o
+        // pedido (id errado, id de outra coisa), não existe organização
+        // nenhuma para atribuir o log, e a linha simplesmente não é
+        // gravada — o `log.error` acima já deixou o rastro em stdout, que é
+        // o que sobra quando não há dono para registrar o log contra. As
+        // rotas de signup não têm este problema porque `organization_id` já
+        // vem no payload delas; esta não.
+        const { data: pedido } = await unsecureClient
+          .from("loja_pedidos")
+          .select("organization_id")
+          .eq("id", pedido_id)
+          .maybeSingle();
+
+        if (pedido?.organization_id) {
+          await unsecureClient
+            .from("logs")
+            .insert({
+              organization_id: pedido.organization_id,
+              category: "signup",
+              service: "whatsapp",
+              level: "error",
+              message: error.message,
+              metadata: error.cause as Json,
+            })
+            .throwOnError();
+        }
+      } else {
+        log.error("Loja delivery failed", error);
       }
 
       throw error;
