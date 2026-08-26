@@ -37,16 +37,12 @@ begin
 end;
 $$;
 
--- `after` e não `before`: nada aqui muda a mensagem, e um gatilho que só
--- escreve noutra tabela não tem por que segurar a inserção.
---
--- `security definer` porque `conversations` não concede update a quem insere
--- mensagem. Sem isso a RLS filtraria o update em silêncio — zero linhas,
--- nenhum erro, nenhum log — que é exatamente como o cancelamento de retorno
--- passou dias parecendo funcionar em 2026/08/14.
-create trigger marcar_origem
-after insert
-on public.messages
-for each row
-when (new.content -> 'referral' is not null)
-execute function public.marcar_origem_da_conversa();
+-- O gatilho que liga esta função a `public.messages` mora em
+-- `04_functions_post_tables/04-09_triggers_pos_tabela_de_mensagens.sql`, não
+-- aqui: `messages` só existe a partir de `03_models`, lido depois desta
+-- pasta — um `create trigger ... on public.messages` aqui quebra o
+-- `supabase db diff` com "relation \"public.messages\" does not exist".
+-- A função pode ficar neste arquivo porque o corpo dela (que também
+-- referencia `public.conversations`, também de `03_models`) só é
+-- validado quando o gatilho DISPARA, não quando a função é criada.
+-- - 2026/08/26

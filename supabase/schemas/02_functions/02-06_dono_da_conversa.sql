@@ -55,17 +55,7 @@ begin
 end;
 $$;
 
--- `||` e não `jsonb_build_object` puro: `marcar_origem` PODE sobrescrever o
--- extra inteiro porque roda uma vez, no primeiro contato, quando não há mais
--- nada lá. Aqui não — a conversa já tem `paused`, `handoff`, `draft`, e
--- trocar o objeto apagaria os três em silêncio.
---
--- `after` e `security definer` pelos mesmos motivos de `marcar_origem`: nada
--- aqui muda a mensagem, e sem `security definer` a RLS filtraria o update sem
--- erro, sem log e sem linha nenhuma alterada.
-create trigger marcar_dono
-after insert
-on public.messages
-for each row
-when (new.direction = 'outgoing' and new.agent_id is not null)
-execute function public.marcar_dono_da_conversa();
+-- O gatilho que liga esta função a `public.messages` mora em
+-- `04_functions_post_tables/04-09_triggers_pos_tabela_de_mensagens.sql`, junto
+-- do de `marcar_origem` — mesmo motivo: `messages` só existe a partir de
+-- `03_models`, lida depois desta pasta. - 2026/08/26

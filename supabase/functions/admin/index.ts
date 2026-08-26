@@ -267,4 +267,66 @@ app.get("/admin/stats", async (c) => {
   });
 });
 
+/**
+ * Receita de verdade — `admin/revenue.tsx` mostrava "R$ 0, sin
+ * facturación configurada" fixo, mesmo depois de `billing.payments` e
+ * `billing.subscriptions` passarem a existir. As duas tabelas são
+ * restritas a "owner da própria organização" por RLS (ver
+ * `06-20_rls.sql`), então precisam do mesmo cliente de serviço que
+ * `/admin/stats` já usa.
+ *
+ * `churn` fica de fora de propósito: `billing.subscriptions` não guarda
+ * histórico de cancelamento (é uma linha por organização, sobrescrita),
+ * então não há como calcular churn sem inventar um número. Melhor a tela
+ * continuar dizendo "sem dados suficientes" do que uma conta que parece
+ * precisa e não é.
+ */
+app.get("/admin/revenue", async (c) => {
+  const client = createUnsecureClient();
+  const now = new Date();
+  const startOfMonth = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    1,
+  ).toISOString();
+
+  const [pagamentos, assinaturas] = await Promise.all([
+    client
+      .schema("billing")
+      .from("payments")
+      .select("amount")
+      .eq("status", "succeeded")
+      .gte("created_at", startOfMonth),
+    client
+      .schema("billing")
+      .from("subscriptions")
+      .select("plans(price, billing_cycle)")
+      .not("plan_id", "is", null),
+  ]);
+
+  const ingresos_del_mes = (pagamentos.data ?? []).reduce(
+    (soma, p) => soma + Number(p.amount),
+    0,
+  );
+
+  // MRR: mensaliza o que é anual. Hoje só existe `month` no catálogo, mas
+  // a conta já fica certa no dia em que um plano anual for vendido.
+  const mrr = (assinaturas.data ?? []).reduce((soma, s) => {
+    const plano = s.plans as { price: number; billing_cycle: string | null } | null;
+    if (!plano) return soma;
+    const mensal = plano.billing_cycle === "year"
+      ? plano.price / 12
+      : plano.price;
+    return soma + mensal;
+  }, 0);
+
+  return c.json({
+    ingresos_del_mes,
+    mrr,
+    // Sem histórico de cancelamento, não tem como calcular — ver o
+    // comentário acima da rota.
+    churn: null,
+  });
+});
+
 Deno.serve(app.fetch);

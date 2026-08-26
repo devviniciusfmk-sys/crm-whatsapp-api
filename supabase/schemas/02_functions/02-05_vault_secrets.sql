@@ -265,18 +265,28 @@ from public, anon, authenticated;
 grant execute on function public.get_voz_api_key(uuid) to service_role;
 
 -- A tela só pergunta se existe. Nunca o valor.
+--
+-- `language plpgsql`, e não `sql`: uma função `sql` é validada contra o
+-- catálogo NA CRIAÇÃO, e `get_authorized_orgs` só existe a partir de
+-- `04_functions_post_tables`, lida depois desta pasta — `language sql`
+-- aqui quebrava `supabase db diff` com "function get_authorized_orgs does
+-- not exist". `plpgsql` adia essa checagem para a EXECUÇÃO, que é quando
+-- a função já existe de verdade. Achado ao gerar a migração da loja de
+-- números em 2026/08/26, sem relação com ela. - 2026/08/26
 create function public.has_voz_api_key(p_organization_id uuid)
 returns boolean
-language sql
+language plpgsql
 stable
 security definer
 set search_path to ''
 as $$
-  select exists (
+begin
+  return exists (
     select 1 from vault.secrets
     where name = public.voz_key_secret_name(p_organization_id)
       and p_organization_id in (select public.get_authorized_orgs('member'))
   );
+end;
 $$;
 
 revoke execute on function public.has_voz_api_key(uuid) from public, anon;
@@ -365,20 +375,28 @@ from public, anon, authenticated;
 grant execute on function public.get_iptv_token(uuid) to service_role;
 
 -- A tela só pergunta se existe. Nunca o valor.
+--
+-- `language plpgsql`: mesmo motivo de `has_voz_api_key` acima — esta
+-- também referencia `public.iptv_servidores` (de `03_models`) e
+-- `get_authorized_orgs` (de `04_functions_post_tables`), as duas lidas
+-- depois desta pasta. `language sql` validava contra o catálogo na
+-- criação e quebrava `supabase db diff` duas vezes seguidas.
 create function public.has_iptv_token(p_servidor_id uuid)
 returns boolean
-language sql
+language plpgsql
 stable
 security definer
 set search_path to ''
 as $$
-  select exists (
+begin
+  return exists (
     select 1
     from vault.secrets v
     join public.iptv_servidores s on s.id = p_servidor_id
     where v.name = public.iptv_token_secret_name(p_servidor_id)
       and s.organization_id in (select public.get_authorized_orgs('member'))
   );
+end;
 $$;
 
 revoke execute on function public.has_iptv_token(uuid) from public, anon;
@@ -454,11 +472,10 @@ begin
 end;
 $$;
 
-drop trigger if exists apagar_token on public.iptv_servidores;
-
-create trigger apagar_token
-after delete on public.iptv_servidores
-for each row execute function public.apagar_token_do_servidor();
+-- O gatilho que liga esta função a `public.iptv_servidores` mora em
+-- `04_functions_post_tables/04-10_vault_secrets_triggers.sql`, não aqui:
+-- a tabela só existe a partir de `03_models`, lida depois desta pasta.
+-- - 2026/08/26
 
 -- ## O token do número da loja
 --
@@ -566,8 +583,6 @@ begin
 end;
 $$;
 
-drop trigger if exists apagar_token_numero_loja on public.loja_numeros;
-
-create trigger apagar_token_numero_loja
-after delete on public.loja_numeros
-for each row execute function public.apagar_token_do_numero_loja();
+-- O gatilho que liga esta função a `public.loja_numeros` também mora em
+-- `04_functions_post_tables/04-10_vault_secrets_triggers.sql`, pelo mesmo
+-- motivo do de cima.
