@@ -178,3 +178,6 @@ um campo. - 2026/08/22
 | a lista aparece vazia tendo linhas | junção sem chave estrangeira devolve `PGRST200`, e `data ?? []` engole. Sempre olhe o `error` |
 | o cliente aparece como telefone | o nome vem de conversa → ficha → perfil. Ver `ui/src/utils/nomeDoCliente.ts` |
 | o filtro da URL some sozinho | o router converte o que parece número: `?periodo=30` chega como 30, e `["30"].includes(30)` é falso |
+| o assistente falou dentro de um grupo | não deveria: `agent-client/grupo.ts` cala antes de qualquer outra decisão. Se voltou a falar, a trava saiu do topo do `Deno.serve` |
+| grupo não aparece na caixa de entrada | a API oficial da Meta não entrega grupo. Grupo só chega pela ponte `whatsapp-web`, e ela precisa de `WHATSAPP_WEB_URL` |
+| um teste apagou o que outro plantou | dois `const PREFIXO` iguais em `ui/scripts/`. Um por suíte, nenhum repetido |

@@ -1,10 +1,14 @@
 {
   "fmt": {
-    "exclude": ["supabase/functions/_shared/db_types.ts"]
+    "exclude": [
+      "supabase/functions/_shared/db_types.ts"
+    ]
   },
   "tasks": {
     "evals": "cd supabase/functions && deno run --allow-net --allow-env --env-file=../../.env.evals agent-client/evals/run.ts",
     "check": "cd supabase/functions && deno check agent-client/index.ts && deno lint agent-client/ _shared/ iptv/ && deno test --allow-all agent-client/ _shared/ iptv/",
-    "deploy": "deno run --allow-run --allow-read --allow-env scripts/subir.ts"
+    "deploy": "deno run --allow-run --allow-read --allow-env scripts/subir.ts",
+    "test:ficha": "docker cp supabase/tests/ficha_nasce_da_conversa.sql supabase_db_open-bsp-api:/tmp/ficha.sql && docker exec supabase_db_open-bsp-api psql -U postgres -d postgres -q -f /tmp/ficha.sql",
+    "test:limpeza": "docker cp supabase/tests/a_limpeza_da_agenda.sql supabase_db_open-bsp-api:/tmp/limpeza.sql && docker exec supabase_db_open-bsp-api psql -U postgres -d postgres -q -f /tmp/limpeza.sql"
   }
 }

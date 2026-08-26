@@ -192,6 +192,36 @@ app.get(
   },
 );
 
+/**
+ * Os grupos deste número, com quem está em cada um.
+ *
+ * O resto do sistema só conhece um grupo quando chega mensagem dele, e nunca
+ * aprende os participantes. Isso não responde "quem está aqui": numa
+ * comunidade quase todo mundo fica calado — no primeiro grupo medido, 541
+ * membros e 3 que já tinham falado.
+ *
+ * `member` porque é leitura, e é a mesma informação que o WhatsApp mostra a
+ * qualquer participante ao tocar no nome do grupo.
+ *
+ * **O que sai daqui não vira público de campanha.** Estar num grupo não é
+ * consentimento para receber promoção no privado. Quem entra numa campanha tem
+ * conversa ou opt-in registrado, e essa regra mora em `campaign_recipients`,
+ * longe desta rota — de propósito. - 2026/08/24
+ */
+app.get(
+  "/whatsapp-web-management/groups/:address",
+  requireRoles(["member", "admin", "owner"]),
+  async (c) => {
+    const address = c.req.param("address") ?? "";
+    const result = await callBridge(
+      "GET",
+      `/groups/${encodeURIComponent(address)}`,
+    );
+
+    return Response.json(result);
+  },
+);
+
 // Logout: the bridge logs the device out and deletes it from its session
 // store; the organizations_addresses row is marked disconnected here.
 app.delete(

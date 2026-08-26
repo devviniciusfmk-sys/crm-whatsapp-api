@@ -179,10 +179,25 @@ $$;
 -- marketing: quem saiu da lista de promoção continua recebendo confirmação de
 -- horário.
 --
--- **Só quem já tem conversa naquele número.** `messages.conversation_id` é NOT
--- NULL, então tecnicamente não haveria como. Mas coincide com o certo: disparo
--- para quem nunca falou com aquele número é o que gera bloqueio e derruba a
--- nota de qualidade. Havendo mais de uma conversa, vale a mais recente.
+-- **Conversa OU consentimento registrado.** A regra era só a conversa, por duas
+-- razões boas: `messages.conversation_id` é NOT NULL, e disparo para quem nunca
+-- falou com o número é o que gera bloqueio e derruba a nota de qualidade.
+--
+-- A segunda continua valendo para uma lista fria qualquer, e deixa de valer
+-- para quem preencheu formulário, marcou a caixa ou mandou "quero" em outro
+-- canal. Essa pessoa pediu para receber, e a regra da casa estava mais dura que
+-- a da própria Meta, que exige opt-in e não conversa prévia:
+--
+--   tem conversa                    entra, como sempre entrou
+--   sem conversa, com opt-in        entra, e `start_campaign` abre a conversa
+--   sem conversa, sem opt-in        fica de fora
+--
+-- Uma porta a mais, e não uma porta aberta. Havendo mais de uma conversa, vale
+-- a mais recente.
+--
+-- `conversation_id` passa a poder vir nulo, e é de propósito: a prévia precisa
+-- contar exatamente a mesma lista que sai depois, e criar conversa dentro de
+-- uma função `stable` é impossível. Quem cria é o disparo. - 2026/08/23
 --
 -- **Quem não pôde ser renderizado fica de fora**, em vez de receber um template
 -- com buraco no meio. - 2026/08/03
@@ -202,7 +217,7 @@ as $$
   from public.contacts_addresses as ca
   join public.contacts as c
     on c.id = ca.contact_id
-  join public.conversations as conv
+  left join public.conversations as conv
     on conv.organization_id = ca.organization_id
    and conv.service = ca.service
    and conv.contact_address = ca.address
@@ -217,9 +232,11 @@ as $$
       p_campaign.template_category <> 'marketing'
       or ca.marketing_opt_out_at is null
     )
+    -- Conversa OU consentimento registrado. Sem um dos dois, fica de fora.
+    and (conv.id is not null or ca.marketing_opt_in_at is not null)
     and public.matches_campaign_audience(c, p_campaign.audience)
     and rendered.content is not null
-  order by ca.address, conv.updated_at desc;
+  order by ca.address, conv.updated_at desc nulls last;
 $$;
 
 -- As etiquetas que existem nesta organização, com quantos contatos cada uma.
@@ -343,6 +360,12 @@ $$;
 -- O horário da mensagem é `scheduled_at`, ou agora. Vale lembrar que a fila só
 -- pega o que tem mais de um minuto, então uma campanha disparada "agora" começa
 -- a sair no minuto seguinte — o que de quebra dá uma janela para cancelar.
+--
+-- E é aqui que nasce a conversa de quem entrou por opt-in registrado e nunca
+-- escreveu neste número. `messages.conversation_id` é NOT NULL e continua
+-- sendo: a mensagem de campanha precisa morar em algum lugar, e é nesse lugar
+-- que a resposta dela vai cair. Criar a conversa no disparo é o que torna a
+-- resposta possível. - 2026/08/23
 create function public.start_campaign(p_campaign_id uuid)
 returns integer
 language plpgsql
@@ -373,6 +396,29 @@ begin
       p_campaign_id, v_campaign.status;
   end if;
 
+  -- Antes do insert das mensagens, e não durante: o insert lê
+  -- `campaign_recipients`, e a lista tem de estar completa quando ele roda.
+  --
+  -- `on conflict do nothing` porque duas campanhas podem sair no mesmo minuto
+  -- para a mesma pessoa, e a segunda não pode estourar por achar a conversa que
+  -- a primeira criou.
+  insert into public.conversations (
+    organization_id,
+    service,
+    organization_address,
+    contact_address,
+    status
+  )
+  select
+    v_campaign.organization_id,
+    v_campaign.service,
+    v_campaign.organization_address,
+    r.contact_address,
+    'open'
+  from public.campaign_recipients(v_campaign) as r
+  where r.conversation_id is null
+  on conflict do nothing;
+
   insert into public.messages (
     organization_id,
     conversation_id,
@@ -386,7 +432,20 @@ begin
   )
   select
     v_campaign.organization_id,
-    r.conversation_id,
+    -- Relido depois de criar: quem entrou sem conversa agora tem uma.
+    coalesce(
+      r.conversation_id,
+      (
+        select conv.id
+        from public.conversations as conv
+        where conv.organization_id = v_campaign.organization_id
+          and conv.service = v_campaign.service
+          and conv.organization_address = v_campaign.organization_address
+          and conv.contact_address = r.contact_address
+        order by conv.updated_at desc
+        limit 1
+      )
+    ),
     v_campaign.id,
     'outgoing'::public.direction,
     v_campaign.service,

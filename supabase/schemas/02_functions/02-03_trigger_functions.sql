@@ -305,7 +305,7 @@ language plpgsql
 set search_path = ''
 as $$
 declare
-  _existing_address text;
+  _existing record;
   _new_contact uuid;
 begin
   -- Validate that external services require either contact_address or group_address
@@ -313,35 +313,57 @@ begin
     raise exception 'Conversations with external services require either contact_address or group_address';
   end if;
 
+  /**
+   * # A ficha nasce da CONVERSA, e esta função é a única que a cria
+   *
+   * Conversa de grupo sai na linha de baixo: `contact_address` é nulo por
+   * definição nela, e quem fala dentro de um grupo seu não vira cliente por
+   * isso. Vira quando alguém salva de propósito, e há tela para isso.
+   *
+   * ## O que quebrou antes de a regra ser esta
+   *
+   * Até 2026/08/24 quem criava ficha era `create_contact_on_first_address`, no
+   * ENDEREÇO. Fazia sentido enquanto endereço só aparecia porque alguém tinha
+   * escrito para a loja, que é o caso da API oficial da Meta. A ponte
+   * `whatsapp-web` mudou isso: no pareamento ela recebe do WhatsApp todo
+   * apelido de perfil que aquele aparelho conhece e manda tudo de uma vez.
+   *
+   * Medido numa base real em 2026/08/24: **1.267 fichas, 1.055 sem conversa
+   * nenhuma**, todas criadas às 23:52 do dia anterior — o minuto do
+   * pareamento. A tela de Contatos, que serve para achar um cliente, tinha
+   * virado a agenda telefônica de um celular, com "_jootaape" dentro.
+   *
+   * Endereço continua nascendo de qualquer coisa: é ele que pendura mensagem,
+   * e ter dez mil não incomoda ninguém. Ficha é uma pessoa com quem a loja tem
+   * relação, e agora ela custa uma conversa. - 2026/08/24
+   */
   if new.contact_address is null then
     return new;
   end if;
 
-  select address into _existing_address
-  from public.contacts_addresses
-  where organization_id = new.organization_id
-    and service = new.service
-    and address = new.contact_address
-  order by created_at desc
+  select ca.address, ca.contact_id, nullif(ca.extra->>'name', '') as nome
+  into _existing
+  from public.contacts_addresses ca
+  where ca.organization_id = new.organization_id
+    and ca.service = new.service
+    and ca.address = new.contact_address
+  order by ca.created_at desc
   limit 1;
 
-  if _existing_address is null then
+  if _existing.address is null then
     /**
      * A ficha nasce JUNTO com o endereço, e não depois.
      *
      * Este gatilho criava o endereço sem `contact_id`, contando com
      * `create_contact_on_first_address` para dar a ficha na primeira mensagem.
-     * Só que aquela função pula quando o endereço JÁ EXISTE — proteção contra
-     * ficha fantasma a cada `upsert` do webhook — e o endereço já existia,
-     * porque foi este gatilho que o criou. Resultado: endereço com conversa,
-     * com nome de perfil, e ficha nenhuma.
+     * Só que aquela função pulava quando o endereço JÁ EXISTIA — proteção
+     * contra ficha fantasma a cada `upsert` do webhook — e o endereço já
+     * existia, porque foi este gatilho que o criou. Resultado: endereço com
+     * conversa, com nome de perfil, e ficha nenhuma.
      *
-     * Quem cai nesse buraco desaparece da tela de Contatos, que lê
+     * Quem caía nesse buraco desaparecia da tela de Contatos, que lê
      * `public.contacts`. Encontrado em 2026/08/18 numa base real: o cliente
      * "Ambern", com dois horários marcados, não existia na lista.
-     *
-     * Criando a ficha aqui, `create_contact_on_first_address` vê o
-     * `contact_id` preenchido e sai na primeira linha — não há ficha dupla.
      */
     insert into public.contacts (organization_id)
     values (new.organization_id)
@@ -358,6 +380,31 @@ begin
       new.service,
       _new_contact
     );
+
+  elsif _existing.contact_id is null then
+    /**
+     * O endereço já existe e está SEM ficha: é agora que ela nasce.
+     *
+     * Este virou o caminho COMUM, e não a exceção. O webhook grava o endereço
+     * com o apelido de perfil antes de a mensagem virar conversa; a importação
+     * inteira para aqui sem ficha nenhuma, e só quem conversa de verdade chega
+     * nesta linha.
+     *
+     * Sem este ramo, o "Ambern" de 2026/08/18 voltaria multiplicado: todo
+     * cliente novo ficaria com endereço, com conversa e sem ficha.
+     *
+     * O nome vem do endereço, que é onde o apelido de perfil está guardado.
+     */
+    insert into public.contacts (organization_id, name)
+    values (new.organization_id, _existing.nome)
+    returning id into _new_contact;
+
+    update public.contacts_addresses
+    set contact_id = _new_contact
+    where organization_id = new.organization_id
+      and service = new.service
+      and address = new.contact_address
+      and contact_id is null;
   end if;
 
   return new;
@@ -438,73 +485,25 @@ begin
 end;
 $$;
 
--- BEFORE trigger: dá ficha a quem escreve pela primeira vez.
+-- ## A função que dava ficha a todo endereço novo, e por que ela não existe
 --
--- O sistema já guardava número e nome do perfil em contacts_addresses, mas a
--- ficha em public.contacts só nascia na migração de uma conta do app WhatsApp
--- Business — o gatilho ao lado só dispara com `extra.synced`. Quem simplesmente
--- mandou mensagem ficava sem ficha: numa instalação real, 33 endereços
--- conversados e zero contatos. A tela de Contatos lê `contacts`, então ela
--- aparecia vazia para quem já tinha atendido dezenas de pessoas.
+-- `create_contact_on_first_address` nasceu em 2026/08/03 para um problema real:
+-- 33 endereços conversados e zero fichas, a tela de Contatos vazia para quem já
+-- tinha atendido dezenas de pessoas. Enquanto o único canal era a API da Meta,
+-- "endereço novo" e "pessoa que escreveu para a loja" eram a mesma coisa, e dar
+-- ficha no endereço acertava sempre.
 --
--- E sem ficha não há agrupar, marcar nem montar lista — que é o que uma
--- campanha precisa.
+-- A ponte `whatsapp-web` separou as duas: no pareamento ela recebe do WhatsApp
+-- todo apelido de perfil que o aparelho conhece. Medido numa base real em
+-- 2026/08/24 — 1.267 fichas, 1.055 sem conversa nenhuma, todas criadas no mesmo
+-- minuto do pareamento. A tela de Contatos virou a agenda de um celular.
 --
--- O nome inicial é o do perfil do WhatsApp, escolhido pela própria pessoa:
--- vem "Ju 💅" e vem "Não atende". Serve de ponto de partida, e a ficha é
--- editável na tela.
+-- Quem cria ficha agora é `before_insert_on_conversations`, e a regra passou a
+-- ser a que a tela sempre quis dizer: ficha é gente com quem se conversou.
+-- O caso original continua coberto — a primeira mensagem cria a conversa, e a
+-- conversa cria a ficha. - 2026/08/24
 --
--- Só na inserção, e só quando ninguém já ligou uma ficha. Atualização não
--- entra: renomear o perfil no WhatsApp não deve criar uma segunda ficha nem
--- sobrescrever o nome que a equipe corrigiu à mão. - 2026/08/03
-create function public.create_contact_on_first_address() returns trigger
-language plpgsql
-set search_path = ''
-as $$
-begin
-  if new.contact_id is not null then
-    return new;
-  end if;
-
-  -- O caminho da sincronização tem dono: manage_contact_on_address_sync roda
-  -- antes e usa o nome de lá. Duas funções criando ficha para a mesma linha
-  -- criariam duas fichas.
-  if new.extra->'synced' is not null then
-    return new;
-  end if;
-
-  -- Endereço que já existe não ganha ficha nova, mesmo estando num INSERT.
-  --
-  -- O Postgres dispara os gatilhos BEFORE INSERT *antes* de detectar o
-  -- conflito, e o que eles fizeram não volta atrás quando a linha cai no
-  -- `do update`. O webhook faz `upsert` de contacts_addresses a cada mensagem
-  -- recebida, sem `contact_id` — então toda mensagem que chegava criava uma
-  -- ficha aqui, o conflito devolvia a linha à ficha antiga, e a recém-criada
-  -- ficava órfã. Uma ficha fantasma por mensagem recebida, com o nome certo e
-  -- telefone nenhum, na tela de Contatos.
-  --
-  -- Apareceu em produção como um segundo "Ambern" sem telefone, criado no mesmo
-  -- microssegundo em que a mensagem chegou. - 2026/08/04
-  if exists (
-    select 1
-    from public.contacts_addresses as existing
-    where existing.organization_id = new.organization_id
-      and existing.service = new.service
-      and existing.address = new.address
-  ) then
-    return new;
-  end if;
-
-  insert into public.contacts (organization_id, name)
-  values (
-    new.organization_id,
-    nullif(new.extra->>'name', '')
-  )
-  returning id into new.contact_id;
-
-  return new;
-end;
-$$;
+-- (segue a sincronização da agenda, que tem dono próprio e continua igual)
 
 -- ## O retorno que não faz mais sentido
 --

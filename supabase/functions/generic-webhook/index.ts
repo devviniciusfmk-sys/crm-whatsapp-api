@@ -48,6 +48,12 @@ import {
   type OutgoingStatus,
 } from "../_shared/supabase.ts";
 import { MAX_STORAGE_UPLOAD_SIZE, uploadToStorage } from "../_shared/media.ts";
+import { ultimoDeCada } from "../_shared/ultimo_de_cada.ts";
+import {
+  nomesDoLote,
+  traduzirMensagem,
+  traduzirStatus,
+} from "../_shared/contrato_do_conector.ts";
 import type { Database, Json } from "../_shared/db_types.ts";
 
 type Service = Database["public"]["Enums"]["service"];
@@ -145,6 +151,10 @@ Deno.serve(async (req) => {
 
   const batch = (await req.json()) as {
     organization_address?: string;
+    // Connectors on the newer upstream contract send `conversation_address` +
+    // `sender_address` instead of contact/group/direction; `traduzirMensagem`
+    // folds those into the shape below before anything reads them. See
+    // `_shared/contrato_do_conector.ts`.
     messages?: Array<{
       external_id: string;
       direction: "incoming" | "outgoing";
@@ -193,6 +203,29 @@ Deno.serve(async (req) => {
 
   const organization_address = batch.organization_address!;
 
+  /* A tradução acontece AQUI, uma vez, antes de qualquer leitura. Espalhá-la
+   * pelos três pontos que montam linhas garantiria que um deles ficasse para
+   * trás — e o sintoma seria uma mensagem sem conversa, que é o 500 opaco de
+   * novo. Conector no contrato antigo passa intacto. */
+  /* Os nomes saem das mensagens ANTES da tradução, que é quem apaga os campos
+   * do contrato novo. Invertida, a ordem devolve listas vazias e a caixa de
+   * entrada enche de número — foi o que aconteceu na primeira versão. */
+  const nomes = nomesDoLote(batch.messages ?? []);
+
+  if (nomes.contatos.length) {
+    batch.contacts = [...(batch.contacts ?? []), ...nomes.contatos];
+  }
+
+  if (nomes.grupos.length) {
+    batch.groups = [...(batch.groups ?? []), ...nomes.grupos];
+  }
+
+  batch.messages = batch.messages?.map((mensagem) =>
+    traduzirMensagem(mensagem, organization_address)
+  ) as typeof batch.messages;
+
+  batch.statuses = batch.statuses?.map(traduzirStatus) as typeof batch.statuses;
+
   if (batch.contacts?.length) {
     const rows: ContactAddressInsert[] = batch.contacts.map((contact) => ({
       organization_id,
@@ -203,7 +236,14 @@ Deno.serve(async (req) => {
 
     // Conflict target defaults to the PK (organization_id, service,
     // address); extra is folded in by the merge_update trigger.
-    await client.from("contacts_addresses").upsert(rows).throwOnError();
+    //
+    // Deduped first: history sync names the same contact once per message
+    // they sent, and one repeated key makes Postgres reject the whole
+    // statement — the other five hundred rows with it. See `ultimoDeCada`.
+    await client
+      .from("contacts_addresses")
+      .upsert(ultimoDeCada(rows, (row) => row.address))
+      .throwOnError();
   }
 
   // Delivery receipts ride as outgoing rows with empty content, exactly like
@@ -258,7 +298,13 @@ Deno.serve(async (req) => {
     },
   );
 
-  const upsertBatch = async (label: string, rows: MessageInsert[]) => {
+  const upsertBatch = async (label: string, todas: MessageInsert[]) => {
+    /* Uma linha repetida derruba o `upsert` inteiro, e histórico repete: o
+     * mesmo `external_id` chega em dois pedaços de sincronização que se
+     * sobrepõem. Dedup aqui, e não em cada chamador, porque é a mesma trava
+     * para as três — e trava que mora no chamador não protege o próximo. */
+    const rows = ultimoDeCada(todas, (row) => row.external_id);
+
     if (rows.length === 0) return;
 
     const { error } = await client

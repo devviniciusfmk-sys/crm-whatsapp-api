@@ -2,6 +2,7 @@ import ky from "ky";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decodeBase64 } from "jsr:@std/encoding/base64";
 import { encodeBase64Url } from "jsr:@std/encoding/base64url";
+import { tipoParaGuardar } from "./tipo_pelos_bytes.ts";
 
 const SIGNED_URL_EXPIRATION_SECONDS = 3600; // 1 hour
 const BASE_URI = "internal://media";
@@ -40,9 +41,26 @@ export async function uploadToStorage(
 
   const key = `/organizations/${organization_id}/attachments/${file_hash}`;
 
+  /**
+   * O tipo, lido dos bytes quando quem enviou não soube dizer.
+   *
+   * Sem isto, tudo o que sobe por um multipart montado em Go fica gravado como
+   * `application/octet-stream` — o padrão do `CreateFormFile` —, e é assim que
+   * o Storage devolve o arquivo para sempre. O `<video>` da tela recusa um blob
+   * desses; foi a queixa "os vídeos não baixam", medida em 2026/08/23.
+   *
+   * `buffer` já foi lido acima para o hash, então a leitura não custa nada
+   * além dos poucos bytes que a assinatura olha.
+   */
+  const contentType = tipoParaGuardar(
+    file.type,
+    new Uint8Array(buffer.slice(0, 64)),
+  );
+
   const { error } = await client.storage.from("media").upload(key, file, {
     upsert: true,
     metadata: { name },
+    ...(contentType ? { contentType } : {}),
   });
 
   if (error) {

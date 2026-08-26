@@ -40,6 +40,7 @@ import type { AgentRowWithExtra, ResponseContext } from "./protocols/base.ts";
 import { getFileMetadata } from "../_shared/media.ts";
 import { type MessageRowV0, toV1 } from "../_shared/messages-v0.ts";
 import { sugerirRetorno } from "./sugerir_retorno.ts";
+import { porQueNaoResponder } from "./grupo.ts";
 
 const sanitizeLabel = (label: string) => {
   return label
@@ -307,6 +308,22 @@ Deno.serve(async (req) => {
     has_org: !!org,
     has_contact_address: !!contact_address,
   });
+
+  /*
+   * A PRIMEIRA saída, antes de qualquer outra decisão.
+   *
+   * Fica no topo porque tudo o que vem abaixo pressupõe uma conversa com UMA
+   * pessoa: contato bloqueado, ficha, memória, janela de atendimento, bilhete
+   * de retorno. Num grupo essas perguntas não têm resposta — e a última delas
+   * escreveria no grupo. Ver `grupo.ts` para o que cada motivo significa.
+   */
+  const silencio = porQueNaoResponder(conv);
+
+  if (silencio) {
+    log.info(`Conversation ${conv.id}: ${silencio}. Skipping response.`);
+
+    return new Response("ok", { headers: corsHeaders });
+  }
 
   const organization_id = org.id;
 

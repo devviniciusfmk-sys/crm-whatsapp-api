@@ -867,6 +867,8 @@ export type Database = {
           contact_id: string | null
           created_at: string
           extra: Json | null
+          marketing_opt_in_at: string | null
+          marketing_opt_in_origem: string | null
           marketing_opt_out_at: string | null
           organization_id: string
           service: Database["public"]["Enums"]["service"]
@@ -878,6 +880,8 @@ export type Database = {
           contact_id?: string | null
           created_at?: string
           extra?: Json | null
+          marketing_opt_in_at?: string | null
+          marketing_opt_in_origem?: string | null
           marketing_opt_out_at?: string | null
           organization_id: string
           service: Database["public"]["Enums"]["service"]
@@ -889,6 +893,8 @@ export type Database = {
           contact_id?: string | null
           created_at?: string
           extra?: Json | null
+          marketing_opt_in_at?: string | null
+          marketing_opt_in_origem?: string | null
           marketing_opt_out_at?: string | null
           organization_id?: string
           service?: Database["public"]["Enums"]["service"]
