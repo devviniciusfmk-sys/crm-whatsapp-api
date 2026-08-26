@@ -18,7 +18,7 @@ import { commitDispatchedMessage } from "../_shared/dispatch.ts";
 import { Json } from "../_shared/db_types.ts";
 
 const API_VERSION = "v25.0";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY")!;
 
 class InstagramError extends Error {
   constructor(

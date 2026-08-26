@@ -20,7 +20,7 @@ import * as log from "../_shared/logger.ts";
  * resumes where this one stopped.
  */
 
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY");
 
 const BUCKET = "media";
 const LIST_LIMIT = 1000; // max page size for Storage list()

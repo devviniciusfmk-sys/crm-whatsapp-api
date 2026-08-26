@@ -22,7 +22,7 @@ import {
 } from "./login.ts";
 import { type User } from "@supabase/supabase-js";
 
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY")!;
 
 // Routes that do not use the user/API-key auth middleware. Each has its own
 // auth: an onboarding token, the service-role key, or a signed_request HMAC.

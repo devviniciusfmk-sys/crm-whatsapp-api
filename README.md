@@ -425,7 +425,7 @@ Option A: deploy via Supabase GitHub Integration
 
 - **edge_functions_url**:
   `https://{SUPABASE_PROJECT_ID}.supabase.co/functions/v1`
-- **edge_functions_token**: the `SUPABASE_SERVICE_ROLE_KEY`
+- **edge_functions_token**: the `SB_SECRET_KEY`
 
 ##### Release
 
@@ -464,8 +464,7 @@ self-contained in GitHub Actions instead of relying on Supabase's integration.
   [personal access token](https://supabase.com/dashboard/account/tokens)
 - **SUPABASE_DB_PASSWORD**
   <!-- Get it at Supabase > Project > Database > Settings > Database password `https://supabase.com/dashboard/project/{project_id}/database/settings` -->
-- **SUPABASE_SERVICE_ROLE_KEY**: you can use a secret key instead of the legacy
-  service role key
+- **SB_SECRET_KEY**: use a secret key instead of the legacy service role key
   <!-- Get it at Supabase > Project > Project Settings > API keys > API Keys > Secret keys `https://supabase.com/dashboard/project/{project_id}/settings/api-keys/new` -->
 
 ##### Variables

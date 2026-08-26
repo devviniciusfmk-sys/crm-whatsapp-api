@@ -12,9 +12,9 @@ if [ -n "$SUPABASE_DB_URL" ] || [ -n "$SUPABASE_URL" ]; then
     echo "Detected self-hosted Supabase deployment"
     
     # Check required environment variables for self-hosted
-    if [ -z "$SUPABASE_DB_URL" ] || [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+    if [ -z "$SUPABASE_DB_URL" ] || [ -z "$SUPABASE_URL" ] || [ -z "$SB_SECRET_KEY" ]; then
         echo "Error: Required environment variables for self-hosted deployment are not set"
-        echo "Required: SUPABASE_DB_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY"
+        echo "Required: SUPABASE_DB_URL, SUPABASE_URL, SB_SECRET_KEY"
         exit 1
     fi
     
@@ -26,9 +26,9 @@ elif [ -n "$SUPABASE_PROJECT_ID" ] || [ -n "$SUPABASE_DB_PASSWORD" ] || [ -n "$S
     echo "Detected Supabase Cloud deployment"
     
     # Check required environment variables for cloud
-    if [ -z "$SUPABASE_PROJECT_ID" ] || [ -z "$SUPABASE_DB_PASSWORD" ] || [ -z "$SUPABASE_SESSION_POOLER_HOST" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+    if [ -z "$SUPABASE_PROJECT_ID" ] || [ -z "$SUPABASE_DB_PASSWORD" ] || [ -z "$SUPABASE_SESSION_POOLER_HOST" ] || [ -z "$SB_SECRET_KEY" ]; then
         echo "Error: Required environment variables for cloud deployment are not set"
-        echo "Required: SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD, SUPABASE_SESSION_POOLER_HOST, SUPABASE_SERVICE_ROLE_KEY"
+        echo "Required: SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD, SUPABASE_SESSION_POOLER_HOST, SB_SECRET_KEY"
         exit 1
     fi
     
@@ -38,8 +38,8 @@ elif [ -n "$SUPABASE_PROJECT_ID" ] || [ -n "$SUPABASE_DB_PASSWORD" ] || [ -n "$S
     
 else
     echo "Error: Cannot determine deployment type"
-    echo "For self-hosted: Set SUPABASE_DB_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY"
-    echo "For cloud: Set SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD, SUPABASE_SERVICE_ROLE_KEY"
+    echo "For self-hosted: Set SUPABASE_DB_URL, SUPABASE_URL, SB_SECRET_KEY"
+    echo "For cloud: Set SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD, SB_SECRET_KEY"
     exit 1
 fi
 
@@ -78,7 +78,7 @@ BEGIN
         -- Update existing secret
         PERFORM vault.update_secret(
             (SELECT id FROM vault.decrypted_secrets WHERE name = 'edge_functions_token'),
-            '$SUPABASE_SERVICE_ROLE_KEY',
+            '$SB_SECRET_KEY',
             'edge_functions_token',
             'Service role key'
         );
@@ -86,7 +86,7 @@ BEGIN
     ELSE
         -- Create new secret
         PERFORM vault.create_secret(
-            '$SUPABASE_SERVICE_ROLE_KEY',
+            '$SB_SECRET_KEY',
             'edge_functions_token',
             'Service role key'
         );

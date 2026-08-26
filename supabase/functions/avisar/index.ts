@@ -25,7 +25,7 @@ import { avisarAEquipe, type MotivoDoAviso } from "../_shared/avisar.ts";
 
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  Deno.env.get("SB_SECRET_KEY")!,
 );
 
 const MOTIVOS: MotivoDoAviso[] = [

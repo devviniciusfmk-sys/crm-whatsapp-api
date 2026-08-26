@@ -32,7 +32,7 @@ import { createSignedUrl } from "../_shared/media.ts";
 import { commitDispatchedMessage } from "../_shared/dispatch.ts";
 import type { Json } from "../_shared/db_types.ts";
 
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY")!;
 
 /** Derives the service from the function slug (e.g. /whatsapp-web-dispatcher)
  * or, when invoked under the generic slug, from the subpath

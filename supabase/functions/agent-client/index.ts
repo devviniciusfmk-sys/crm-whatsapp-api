@@ -266,7 +266,7 @@ function getNewestIncomingMessage(
   return sortedMessages[0];
 }
 
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY")!;
 
 Deno.serve(async (req) => {
   const authHeader = req.headers.get("Authorization");

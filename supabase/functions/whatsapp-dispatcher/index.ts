@@ -18,7 +18,7 @@ import { getWhatsAppAccessToken } from "../_shared/whatsapp_token.ts";
 import { recordTemplateSend } from "../_shared/template_billing.ts";
 
 const API_VERSION = "v24.0";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY")!;
 
 // A business-scoped user ID (BSUID) is the user's ISO 3166 alpha-2 country code,
 // a period, then alphanumerics (e.g. US.13491208655302741918; parent BSUIDs add

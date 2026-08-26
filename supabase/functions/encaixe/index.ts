@@ -28,7 +28,7 @@ import type { OrganizationExtra } from "../_shared/types/extra_types.ts";
 
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  Deno.env.get("SB_SECRET_KEY")!,
 );
 
 /** Quanto tempo o convite espera resposta, quando ninguém configurou. */

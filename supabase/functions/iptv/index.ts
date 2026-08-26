@@ -49,7 +49,7 @@ declare const EdgeRuntime: { waitUntil(promessa: Promise<unknown>): void };
 
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  Deno.env.get("SB_SECRET_KEY")!,
 );
 
 const json = (corpo: unknown, status = 200) =>

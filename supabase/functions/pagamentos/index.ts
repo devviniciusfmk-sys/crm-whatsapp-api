@@ -61,7 +61,7 @@ import { isPlatformAdmin } from "../_shared/platform_admin.ts";
 
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  Deno.env.get("SB_SECRET_KEY")!,
 );
 
 Deno.serve(async (req) => {

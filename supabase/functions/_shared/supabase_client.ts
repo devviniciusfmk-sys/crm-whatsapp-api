@@ -102,13 +102,13 @@ export function createUnsecureClient() {
     throw new Error("Undefined SUPABASE_URL env var.");
   }
 
-  if (!Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
-    throw new Error("Undefined SUPABASE_SERVICE_ROLE_KEY env var.");
+  if (!Deno.env.get("SB_SECRET_KEY")) {
+    throw new Error("Undefined SB_SECRET_KEY env var.");
   }
 
   return createClientBase<Database>(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    Deno.env.get("SB_SECRET_KEY")!,
     {
       auth: { persistSession: false },
     },

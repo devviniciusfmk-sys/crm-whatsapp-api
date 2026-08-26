@@ -40,7 +40,7 @@ import type { MessageRow } from "../_shared/types/database_types.ts";
  * e apagável na tela por quem atende. - 2026/08/04
  */
 
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY")!;
 
 /** Quantos contatos por rodada. Teto de gasto por tick, não de capacidade. */
 const BATCH = 10;
