@@ -1010,6 +1010,57 @@ export type Database = {
           },
         ]
       }
+      comissoes: {
+        Row: {
+          agent_id: string
+          criado_em: string
+          estornado_em: string | null
+          id: string
+          negocio_id: string
+          organization_id: string
+          status: string
+          tipo: string
+          valor: number
+        }
+        Insert: {
+          agent_id: string
+          criado_em?: string
+          estornado_em?: string | null
+          id?: string
+          negocio_id: string
+          organization_id: string
+          status?: string
+          tipo?: string
+          valor: number
+        }
+        Update: {
+          agent_id?: string
+          criado_em?: string
+          estornado_em?: string | null
+          id?: string
+          negocio_id?: string
+          organization_id?: string
+          status?: string
+          tipo?: string
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comissoes_negocio_id_fkey"
+            columns: ["negocio_id"]
+            isOneToOne: false
+            referencedRelation: "negocios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comissoes_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           created_at: string
@@ -1799,6 +1850,8 @@ export type Database = {
           nome: string
           organization_id: string
           origem: string
+          responsavel_id: string | null
+          reuniao_em: string | null
           score_ia: number | null
           telefone: string | null
           valor_estimado: number | null
@@ -1821,6 +1874,8 @@ export type Database = {
           nome: string
           organization_id: string
           origem?: string
+          responsavel_id?: string | null
+          reuniao_em?: string | null
           score_ia?: number | null
           telefone?: string | null
           valor_estimado?: number | null
@@ -1843,6 +1898,8 @@ export type Database = {
           nome?: string
           organization_id?: string
           origem?: string
+          responsavel_id?: string | null
+          reuniao_em?: string | null
           score_ia?: number | null
           telefone?: string | null
           valor_estimado?: number | null
@@ -2417,6 +2474,39 @@ export type Database = {
         Args: { p_address: string; p_organization_id: string }
         Returns: undefined
       }
+      desmarcar_reuniao_negocio: {
+        Args: { _negocio: string }
+        Returns: {
+          abertura_sugerida: string | null
+          atualizado_em: string
+          categoria: string | null
+          cidade: string | null
+          conversation_id: string | null
+          criado_em: string
+          dores_identificadas: Json | null
+          estagio: string
+          externo_id: string | null
+          extra: Json | null
+          id: string
+          motivo_ia: string | null
+          nicho: string | null
+          nome: string
+          organization_id: string
+          origem: string
+          responsavel_id: string | null
+          reuniao_em: string | null
+          score_ia: number | null
+          telefone: string | null
+          valor_estimado: number | null
+          veredito_ia: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "negocios"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       escalate_stale_handoffs: { Args: never; Returns: number }
       expirar_reservas_loja: { Args: { _minutos?: number }; Returns: number }
       get_authorized_orgs: {
@@ -2465,6 +2555,39 @@ export type Database = {
       loja_numero_token_secret_name: {
         Args: { p_numero_id: string }
         Returns: string
+      }
+      marcar_reuniao_negocio: {
+        Args: { _negocio: string; _quando: string }
+        Returns: {
+          abertura_sugerida: string | null
+          atualizado_em: string
+          categoria: string | null
+          cidade: string | null
+          conversation_id: string | null
+          criado_em: string
+          dores_identificadas: Json | null
+          estagio: string
+          externo_id: string | null
+          extra: Json | null
+          id: string
+          motivo_ia: string | null
+          nicho: string | null
+          nome: string
+          organization_id: string
+          origem: string
+          responsavel_id: string | null
+          reuniao_em: string | null
+          score_ia: number | null
+          telefone: string | null
+          valor_estimado: number | null
+          veredito_ia: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "negocios"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       matches_campaign_audience: {
         Args: {

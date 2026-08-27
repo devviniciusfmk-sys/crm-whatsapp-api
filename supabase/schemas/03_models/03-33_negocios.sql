@@ -28,6 +28,14 @@ create table public.negocios (
   abertura_sugerida text,
   dores_identificadas jsonb,
   conversation_id uuid,
+  -- Quem está trabalhando o negócio — atribuído sozinho na primeira vez que
+  -- alguém marca reunião (`marcar_reuniao_negocio`), não escolhido à mão.
+  -- Também é quem recebe a comissão em `comissoes`.
+  responsavel_id uuid references auth.users(id),
+  -- Nulo = sem reunião marcada. Preenchido e limpo só pelas funções
+  -- `marcar_reuniao_negocio`/`desmarcar_reuniao_negocio` (04-33), nunca
+  -- direto por update na tabela — é o que credita/estorna a comissão.
+  reuniao_em timestamptz,
   extra jsonb,
   criado_em timestamptz not null default now(),
   atualizado_em timestamptz not null default now()
