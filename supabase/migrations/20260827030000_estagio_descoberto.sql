@@ -1,24 +1,12 @@
-/**
- * Sincroniza um lote de negócios vindos da base externa de leads.
- *
- * Upsert por `(organization_id, origem, externo_id)` — a mesma sincronização
- * rodando de novo atualiza os campos vindos da IA (nome, telefone, score,
- * dores, abertura sugerida, localização) sem duplicar a linha. `estagio`,
- * `valor_estimado` e `conversation_id` ficam DE FORA do `do update set` de
- * propósito: são campos que um humano mexe depois que o negócio chega —
- * sincronizar de novo não pode devolver um negócio "qualificado" para
- * "novo" só porque a IA rodou outra vez sobre o mesmo lead.
- *
- * Recebe o lote inteiro como jsonb (um array de objetos) e faz um insert só,
- * em vez de uma chamada por linha — a base externa tem mais de mil leads, e
- * uma função de borda não devia abrir milhares de round-trips ao Postgres
- * para uma rotina que roda sozinha a cada 30 minutos.
- *
- * Todo negócio NOVO nasce em `estagio = 'descoberto'` — fora do Kanban
- * (`/funil` só lista `novo` em diante), até alguém escolher trabalhá-lo na
- * tela de pesquisa. Constante fixa aqui, e não um campo vindo do lote: é
- * regra de negócio, não dado por lead.
- */
+-- Escrita à mão, mesmo motivo das anteriores: drift no `supabase db diff`
+-- entre schemas e histórico já aplicado.
+
+alter table "public"."negocios" drop constraint if exists "negocios_estagio_check";
+
+alter table "public"."negocios"
+  add constraint "negocios_estagio_check"
+  check (estagio in ('descoberto','novo','contatado','qualificado','proposta','fechado','perdido'));
+
 create or replace function public.sincronizar_negocios_externos(p_linhas jsonb)
 returns int
 language plpgsql
@@ -80,8 +68,11 @@ begin
 end;
 $$;
 
-revoke execute on function public.sincronizar_negocios_externos(jsonb)
-from public, anon, authenticated;
-
-grant execute on function public.sincronizar_negocios_externos(jsonb)
-to service_role;
+-- Backfill: só os negócios ainda intocados (estagio = 'novo', vindos da
+-- sincronização automática) voltam pra 'descoberto'. Qualquer negócio já
+-- movido de estágio, ou marcado manualmente durante os testes desta
+-- sessão, fica exatamente onde está — o where restringe a 'novo' e a
+-- origem sincronizada, nada mais.
+update public.negocios
+set estagio = 'descoberto'
+where estagio = 'novo' and origem = 'leads_externos';

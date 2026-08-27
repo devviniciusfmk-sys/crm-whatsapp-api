@@ -19,8 +19,15 @@ create table public.negocios (
   cidade text,
   categoria text,
   nicho text,
+  -- 'descoberto' é o único estágio FORA do Kanban (/funil só lista
+  -- ESTAGIOS_NEGOCIO, que começa em 'novo') — é onde um lead sincronizado
+  -- automaticamente fica até alguém escolher trabalhá-lo na tela de
+  -- pesquisa. Continua sendo o default de quem cadastra um negócio à mão,
+  -- não de quem sincroniza: sincronizar_negocios_externos passa
+  -- 'descoberto' explícito; um negócio manual nasce já 'novo' porque
+  -- alguém decidiu digitar aquilo de propósito.
   estagio text not null default 'novo'
-    check (estagio in ('novo','contatado','qualificado','proposta','fechado','perdido')),
+    check (estagio in ('descoberto','novo','contatado','qualificado','proposta','fechado','perdido')),
   valor_estimado numeric,
   score_ia real,
   veredito_ia text,
