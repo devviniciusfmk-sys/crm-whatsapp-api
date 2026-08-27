@@ -55,9 +55,18 @@ create table public.negocios (
   -- `marcar_reuniao_negocio`/`desmarcar_reuniao_negocio` (04-33), nunca
   -- direto por update na tabela — é o que credita/estorna a comissão.
   reuniao_em timestamptz,
+  -- Por que não fechou — quatro chaves fixas, não texto livre (mesmo
+  -- raciocínio de motivoDaPerda.ts no front, domínio diferente: lá é teste
+  -- IPTV, aqui é negócio de SDR; texto livre não soma num relatório, um
+  -- conjunto fechado soma). Só existe quando estagio='perdido' — o check
+  -- de tabela logo abaixo garante isso, então um negócio que sai de
+  -- 'perdido' não carrega motivo órfão.
+  motivo_perda text
+    check (motivo_perda in ('preco','sem_interesse','concorrente','sumiu')),
   extra jsonb,
   criado_em timestamptz not null default now(),
-  atualizado_em timestamptz not null default now()
+  atualizado_em timestamptz not null default now(),
+  check (motivo_perda is null or estagio = 'perdido')
 );
 
 create index negocios_organization_id_idx on public.negocios (organization_id);

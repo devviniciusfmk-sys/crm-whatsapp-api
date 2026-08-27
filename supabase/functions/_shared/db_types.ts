@@ -1848,6 +1848,7 @@ export type Database = {
           extra: Json | null
           id: string
           motivo_ia: string | null
+          motivo_perda: string | null
           nicho: string | null
           nome: string
           organization_id: string
@@ -1875,6 +1876,7 @@ export type Database = {
           extra?: Json | null
           id?: string
           motivo_ia?: string | null
+          motivo_perda?: string | null
           nicho?: string | null
           nome: string
           organization_id: string
@@ -1902,6 +1904,7 @@ export type Database = {
           extra?: Json | null
           id?: string
           motivo_ia?: string | null
+          motivo_perda?: string | null
           nicho?: string | null
           nome?: string
           organization_id?: string
@@ -2500,6 +2503,7 @@ export type Database = {
           extra: Json | null
           id: string
           motivo_ia: string | null
+          motivo_perda: string | null
           nicho: string | null
           nome: string
           organization_id: string
@@ -2585,6 +2589,7 @@ export type Database = {
           extra: Json | null
           id: string
           motivo_ia: string | null
+          motivo_perda: string | null
           nicho: string | null
           nome: string
           organization_id: string
