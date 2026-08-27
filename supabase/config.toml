@@ -117,3 +117,8 @@ entrypoint = "./functions/encaixe/index.ts"
 verify_jwt = false
 import_map = "./functions/deno.json"
 entrypoint = "./functions/pagamentos/index.ts"
+
+[functions.leads-sync]
+verify_jwt = false
+import_map = "./functions/deno.json"
+entrypoint = "./functions/leads-sync/index.ts"

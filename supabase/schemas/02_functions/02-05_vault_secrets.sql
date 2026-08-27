@@ -586,3 +586,72 @@ $$;
 -- O gatilho que liga esta função a `public.loja_numeros` também mora em
 -- `04_functions_post_tables/04-10_vault_secrets_triggers.sql`, pelo mesmo
 -- motivo do de cima.
+
+-- ## A credencial da base externa de leads
+--
+-- Não é segredo de organização — é da PLATAFORMA, como `edge_functions_url`/
+-- `edge_functions_token`: um só par de valores, semeado uma vez à mão
+-- (`vault.create_secret`), sem função `set_*` e sem tela nenhuma escrevendo
+-- por cima. Só a função de borda `leads-sync` lê, por isso `service_role`
+-- é o único grant — mesmo trato de `get_loja_numero_token`.
+create function public.get_leads_externos_config()
+returns table(url text, secret_key text)
+language sql
+stable
+security definer
+set search_path to ''
+as $$
+  select
+    (select decrypted_secret from vault.decrypted_secrets where name = 'leads_externos_url'),
+    (select decrypted_secret from vault.decrypted_secrets where name = 'leads_externos_secret_key');
+$$;
+
+revoke execute on function public.get_leads_externos_config()
+from public, anon, authenticated;
+
+grant execute on function public.get_leads_externos_config() to service_role;
+
+-- ## Semear um segredo de plataforma, genérico
+--
+-- `edge_functions_url`/`edge_functions_token` (lidos por `02-02_edge_functions.sql`
+-- e por todo cron que chama uma função de borda) nunca tiveram um jeito de
+-- serem gravados fora de `psql` direto contra o banco — o script de CI
+-- (`deploy-vault-secrets.sh`) supõe acesso à senha do Postgres, que nem
+-- sempre existe (não existe neste projeto). Esta função cobre os dois: eles
+-- e `leads_externos_url`/`leads_externos_secret_key`, sem precisar de senha
+-- de banco — só a chave de serviço, que já é confiança total mesmo.
+--
+-- Não é keyada por linha nenhuma (não há `<algo>_secret_name` correspondente)
+-- porque não é um segredo por organização/servidor/número — é uma lista
+-- fechada de nomes de plataforma, e nenhum outro tipo de segredo se
+-- beneficiaria de passar por aqui.
+create function public.set_vault_secret(p_name text, p_value text)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  _id uuid;
+begin
+  if p_name not in (
+    'edge_functions_url', 'edge_functions_token',
+    'leads_externos_url', 'leads_externos_secret_key'
+  ) then
+    raise exception 'set_vault_secret: nome de segredo não reconhecido: %', p_name;
+  end if;
+
+  select id into _id from vault.secrets where name = p_name;
+
+  if _id is null then
+    perform vault.create_secret(p_value, p_name, 'platform secret: ' || p_name);
+  else
+    perform vault.update_secret(_id, p_value);
+  end if;
+end;
+$$;
+
+revoke execute on function public.set_vault_secret(text, text)
+from public, anon, authenticated;
+
+grant execute on function public.set_vault_secret(text, text) to service_role;
