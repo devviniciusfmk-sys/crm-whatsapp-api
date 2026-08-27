@@ -31,7 +31,9 @@ type LeadExterno = {
   id: string;
   name: string | null;
   phone: string | null;
+  address: string | null;
   city: string | null;
+  state: string | null;
   category: string | null;
   nicho: string | null;
   status: string | null;
@@ -47,6 +49,45 @@ type LeadScoreExterno = {
   matched_pains: unknown;
   created_at: string;
 };
+
+/**
+ * `city`/`state` da fonte quase sempre vêm vazios — só `address` é
+ * confiável, no formato "..., Cidade - UF, CEP, Brazil". Medido contra as
+ * 1142 linhas reais desta base em 2026/08/27: 1136 resolvem por aqui
+ * (99,5%), 6 ficam `desconhecido` — explícito, não escondido atrás de um
+ * filtro que simplesmente as faria sumir do funil.
+ */
+function extrairLocalizacao(lead: LeadExterno): {
+  estado_normalizado: string | null;
+  cidade_normalizada: string | null;
+  origem_localizacao: "extraido_endereco" | "desconhecido";
+} {
+  if (lead.city && lead.state) {
+    return {
+      estado_normalizado: lead.state,
+      cidade_normalizada: lead.city,
+      origem_localizacao: "extraido_endereco",
+    };
+  }
+
+  const match = lead.address?.match(
+    /,\s*([^,]+?)\s*-\s*([A-Z]{2}),\s*\d{5}-?\d{3}/,
+  );
+
+  if (match) {
+    return {
+      estado_normalizado: match[2],
+      cidade_normalizada: lead.city || match[1].trim(),
+      origem_localizacao: "extraido_endereco",
+    };
+  }
+
+  return {
+    estado_normalizado: null,
+    cidade_normalizada: null,
+    origem_localizacao: "desconhecido",
+  };
+}
 
 async function buscarTudo<T>(
   baseUrl: string,
@@ -137,6 +178,7 @@ Deno.serve(async (req) => {
 
   const linhas = leads.map((lead) => {
     const score = scorePorLead.get(lead.id);
+    const localizacao = extrairLocalizacao(lead);
 
     return {
       organization_id: LEADS_ORGANIZATION_ID,
@@ -152,6 +194,7 @@ Deno.serve(async (req) => {
       motivo_ia: score?.reason_short ?? null,
       abertura_sugerida: score?.suggested_opener ?? null,
       dores_identificadas: score?.matched_pains ?? null,
+      ...localizacao,
     };
   });
 

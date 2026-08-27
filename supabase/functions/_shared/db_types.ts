@@ -1838,9 +1838,11 @@ export type Database = {
           atualizado_em: string
           categoria: string | null
           cidade: string | null
+          cidade_normalizada: string | null
           conversation_id: string | null
           criado_em: string
           dores_identificadas: Json | null
+          estado_normalizado: string | null
           estagio: string
           externo_id: string | null
           extra: Json | null
@@ -1850,6 +1852,7 @@ export type Database = {
           nome: string
           organization_id: string
           origem: string
+          origem_localizacao: string | null
           responsavel_id: string | null
           reuniao_em: string | null
           score_ia: number | null
@@ -1862,9 +1865,11 @@ export type Database = {
           atualizado_em?: string
           categoria?: string | null
           cidade?: string | null
+          cidade_normalizada?: string | null
           conversation_id?: string | null
           criado_em?: string
           dores_identificadas?: Json | null
+          estado_normalizado?: string | null
           estagio?: string
           externo_id?: string | null
           extra?: Json | null
@@ -1874,6 +1879,7 @@ export type Database = {
           nome: string
           organization_id: string
           origem?: string
+          origem_localizacao?: string | null
           responsavel_id?: string | null
           reuniao_em?: string | null
           score_ia?: number | null
@@ -1886,9 +1892,11 @@ export type Database = {
           atualizado_em?: string
           categoria?: string | null
           cidade?: string | null
+          cidade_normalizada?: string | null
           conversation_id?: string | null
           criado_em?: string
           dores_identificadas?: Json | null
+          estado_normalizado?: string | null
           estagio?: string
           externo_id?: string | null
           extra?: Json | null
@@ -1898,6 +1906,7 @@ export type Database = {
           nome?: string
           organization_id?: string
           origem?: string
+          origem_localizacao?: string | null
           responsavel_id?: string | null
           reuniao_em?: string | null
           score_ia?: number | null
@@ -2481,9 +2490,11 @@ export type Database = {
           atualizado_em: string
           categoria: string | null
           cidade: string | null
+          cidade_normalizada: string | null
           conversation_id: string | null
           criado_em: string
           dores_identificadas: Json | null
+          estado_normalizado: string | null
           estagio: string
           externo_id: string | null
           extra: Json | null
@@ -2493,6 +2504,7 @@ export type Database = {
           nome: string
           organization_id: string
           origem: string
+          origem_localizacao: string | null
           responsavel_id: string | null
           reuniao_em: string | null
           score_ia: number | null
@@ -2563,9 +2575,11 @@ export type Database = {
           atualizado_em: string
           categoria: string | null
           cidade: string | null
+          cidade_normalizada: string | null
           conversation_id: string | null
           criado_em: string
           dores_identificadas: Json | null
+          estado_normalizado: string | null
           estagio: string
           externo_id: string | null
           extra: Json | null
@@ -2575,6 +2589,7 @@ export type Database = {
           nome: string
           organization_id: string
           origem: string
+          origem_localizacao: string | null
           responsavel_id: string | null
           reuniao_em: string | null
           score_ia: number | null

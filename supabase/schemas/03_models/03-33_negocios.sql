@@ -28,6 +28,18 @@ create table public.negocios (
   abertura_sugerida text,
   dores_identificadas jsonb,
   conversation_id uuid,
+  -- `cidade`/`estado` que vêm da fonte externa quase sempre chegam vazios —
+  -- só o endereço completo é confiável. Estes dois são o que a sincronização
+  -- CONSEGUE extrair dali (regex sobre "..., Cidade - UF, CEP"), guardados
+  -- separados do dado bruto, e `origem_localizacao` diz a origem em vez de
+  -- fingir certeza sobre o que não deu pra extrair — medido contra a base
+  -- real: 1136 de 1142 resolvem (99,5%), os 6 que sobram ficam
+  -- 'desconhecido', explícitos, não escondidos atrás de um filtro que
+  -- simplesmente os faria sumir.
+  estado_normalizado text,
+  cidade_normalizada text,
+  origem_localizacao text
+    check (origem_localizacao in ('extraido_endereco', 'desconhecido')),
   -- Quem está trabalhando o negócio — atribuído sozinho na primeira vez que
   -- alguém marca reunião (`marcar_reuniao_negocio`), não escolhido à mão.
   -- Também é quem recebe a comissão em `comissoes`.

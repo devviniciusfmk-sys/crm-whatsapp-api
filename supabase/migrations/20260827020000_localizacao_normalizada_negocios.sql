@@ -1,19 +1,13 @@
-/**
- * Sincroniza um lote de negócios vindos da base externa de leads.
- *
- * Upsert por `(organization_id, origem, externo_id)` — a mesma sincronização
- * rodando de novo atualiza os campos vindos da IA (nome, telefone, score,
- * dores, abertura sugerida, localização) sem duplicar a linha. `estagio`,
- * `valor_estimado` e `conversation_id` ficam DE FORA do `do update set` de
- * propósito: são campos que um humano mexe depois que o negócio chega —
- * sincronizar de novo não pode devolver um negócio "qualificado" para
- * "novo" só porque a IA rodou outra vez sobre o mesmo lead.
- *
- * Recebe o lote inteiro como jsonb (um array de objetos) e faz um insert só,
- * em vez de uma chamada por linha — a base externa tem mais de mil leads, e
- * uma função de borda não devia abrir milhares de round-trips ao Postgres
- * para uma rotina que roda sozinha a cada 30 minutos.
- */
+-- Escrita à mão, mesmo motivo das anteriores: o `supabase db diff` deste
+-- projeto vem misturado com drift não relacionada. Só os objetos novos —
+-- nenhum drop.
+
+alter table "public"."negocios"
+  add column "estado_normalizado" text,
+  add column "cidade_normalizada" text,
+  add column "origem_localizacao" text
+    check (origem_localizacao in ('extraido_endereco', 'desconhecido'));
+
 create or replace function public.sincronizar_negocios_externos(p_linhas jsonb)
 returns int
 language plpgsql
@@ -74,9 +68,3 @@ begin
   return _linhas_afetadas;
 end;
 $$;
-
-revoke execute on function public.sincronizar_negocios_externos(jsonb)
-from public, anon, authenticated;
-
-grant execute on function public.sincronizar_negocios_externos(jsonb)
-to service_role;
