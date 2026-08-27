@@ -70,7 +70,8 @@ export type ModuleName =
   | "comissao"
   | "caixa"
   | "fidelidade"
-  | "cobranca";
+  | "cobranca"
+  | "funil";
 
 export type OrganizationExtra = {
   response_delay_seconds?: number;

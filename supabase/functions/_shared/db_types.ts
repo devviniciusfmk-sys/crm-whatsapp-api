@@ -7,25 +7,42 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.17"
+  }
   billing: {
     Tables: {
       accounts: {
         Row: {
           created_at: string
+          email: string | null
+          external_id: string | null
           id: string
           name: string
+          organization_id: string | null
+          provider: string | null
           updated_at: string
         }
         Insert: {
           created_at?: string
+          email?: string | null
+          external_id?: string | null
           id?: string
           name: string
+          organization_id?: string | null
+          provider?: string | null
           updated_at?: string
         }
         Update: {
           created_at?: string
+          email?: string | null
+          external_id?: string | null
           id?: string
           name?: string
+          organization_id?: string | null
+          provider?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -561,6 +578,21 @@ export type Database = {
         }
         Returns: boolean
       }
+      emitir_fatura: {
+        Args: { _organization_id: string; _quando?: string }
+        Returns: string
+      }
+      emitir_faturas_do_mes: { Args: { _quando?: string }; Returns: number }
+      registrar_pagamento: {
+        Args: {
+          _account_id?: string
+          _amount: number
+          _external_id?: string
+          _invoice_id: string
+          _method: string
+        }
+        Returns: string
+      }
       update_usage: {
         Args: {
           _organization_id: string
@@ -820,6 +852,164 @@ export type Database = {
           },
         ]
       }
+      cobranca_recebimentos: {
+        Row: {
+          agent_id: string | null
+          cobranca_id: string
+          conta: string | null
+          created_at: string
+          id: string
+          metodo: string | null
+          nota: string | null
+          organization_id: string
+          recebido_em: string
+          valor: number
+        }
+        Insert: {
+          agent_id?: string | null
+          cobranca_id: string
+          conta?: string | null
+          created_at?: string
+          id?: string
+          metodo?: string | null
+          nota?: string | null
+          organization_id: string
+          recebido_em?: string
+          valor: number
+        }
+        Update: {
+          agent_id?: string | null
+          cobranca_id?: string
+          conta?: string | null
+          created_at?: string
+          id?: string
+          metodo?: string | null
+          nota?: string | null
+          organization_id?: string
+          recebido_em?: string
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobranca_recebimentos_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobranca_recebimentos_cobranca_id_fkey"
+            columns: ["cobranca_id"]
+            isOneToOne: false
+            referencedRelation: "cobrancas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobranca_recebimentos_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cobrancas: {
+        Row: {
+          agent_id: string | null
+          codigo_pix: string | null
+          combinado_para: string | null
+          conta: string | null
+          contact_address: string
+          conversation_id: string
+          created_at: string
+          expira_em: string | null
+          external_id: string | null
+          id: string
+          itens: Json
+          metodo: string | null
+          nota: string | null
+          organization_id: string
+          paga_em: string | null
+          recibo_em: string | null
+          status: string
+          updated_at: string
+          validade_dias: number | null
+          valor: number
+          valor_pago: number
+          vence_em: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          codigo_pix?: string | null
+          combinado_para?: string | null
+          conta?: string | null
+          contact_address: string
+          conversation_id: string
+          created_at?: string
+          expira_em?: string | null
+          external_id?: string | null
+          id?: string
+          itens?: Json
+          metodo?: string | null
+          nota?: string | null
+          organization_id: string
+          paga_em?: string | null
+          recibo_em?: string | null
+          status?: string
+          updated_at?: string
+          validade_dias?: number | null
+          valor: number
+          valor_pago?: number
+          vence_em?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          codigo_pix?: string | null
+          combinado_para?: string | null
+          conta?: string | null
+          contact_address?: string
+          conversation_id?: string
+          created_at?: string
+          expira_em?: string | null
+          external_id?: string | null
+          id?: string
+          itens?: Json
+          metodo?: string | null
+          nota?: string | null
+          organization_id?: string
+          paga_em?: string | null
+          recibo_em?: string | null
+          status?: string
+          updated_at?: string
+          validade_dias?: number | null
+          valor?: number
+          valor_pago?: number
+          vence_em?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobrancas_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobrancas_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobrancas_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           created_at: string
@@ -906,6 +1096,13 @@ export type Database = {
             foreignKeyName: "contacts_addresses_contact_id_fkey"
             columns: ["contact_id"]
             isOneToOne: false
+            referencedRelation: "contact_overview"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contacts_addresses_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
             referencedRelation: "contacts"
             referencedColumns: ["id"]
           },
@@ -982,6 +1179,355 @@ export type Database = {
           },
         ]
       }
+      gateway_credenciais: {
+        Row: {
+          ativo: boolean
+          atualizado_em: string
+          chave_publica: string | null
+          chave_secreta: string
+          criado_em: string
+          organization_id: string
+          provedor: string
+          segredo_webhook: string | null
+        }
+        Insert: {
+          ativo?: boolean
+          atualizado_em?: string
+          chave_publica?: string | null
+          chave_secreta: string
+          criado_em?: string
+          organization_id: string
+          provedor?: string
+          segredo_webhook?: string | null
+        }
+        Update: {
+          ativo?: boolean
+          atualizado_em?: string
+          chave_publica?: string | null
+          chave_secreta?: string
+          criado_em?: string
+          organization_id?: string
+          provedor?: string
+          segredo_webhook?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gateway_credenciais_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      iptv_apps: {
+        Row: {
+          app: string
+          codigo: string | null
+          created_at: string
+          display_name: string | null
+          favorito: boolean
+          id: string
+          is_enabled: boolean
+          ordem: number
+          pacote_id: string
+          texto: string | null
+          updated_at: string
+        }
+        Insert: {
+          app: string
+          codigo?: string | null
+          created_at?: string
+          display_name?: string | null
+          favorito?: boolean
+          id?: string
+          is_enabled?: boolean
+          ordem?: number
+          pacote_id: string
+          texto?: string | null
+          updated_at?: string
+        }
+        Update: {
+          app?: string
+          codigo?: string | null
+          created_at?: string
+          display_name?: string | null
+          favorito?: boolean
+          id?: string
+          is_enabled?: boolean
+          ordem?: number
+          pacote_id?: string
+          texto?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "iptv_apps_pacote_id_fkey"
+            columns: ["pacote_id"]
+            isOneToOne: false
+            referencedRelation: "iptv_pacotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      iptv_pacotes: {
+        Row: {
+          bot_path: string | null
+          bot_url: string | null
+          created_at: string
+          creditos: number | null
+          descricao: string | null
+          duracao_horas: number | null
+          id: string
+          is_active: boolean
+          name: string
+          painel_pacote_id: string | null
+          preco: number | null
+          preco_tela_extra: number | null
+          renova_sozinho: boolean
+          servidor_id: string
+          telas: number
+          tipo: string
+          updated_at: string
+        }
+        Insert: {
+          bot_path?: string | null
+          bot_url?: string | null
+          created_at?: string
+          creditos?: number | null
+          descricao?: string | null
+          duracao_horas?: number | null
+          id?: string
+          is_active?: boolean
+          name: string
+          painel_pacote_id?: string | null
+          preco?: number | null
+          preco_tela_extra?: number | null
+          renova_sozinho?: boolean
+          servidor_id: string
+          telas?: number
+          tipo?: string
+          updated_at?: string
+        }
+        Update: {
+          bot_path?: string | null
+          bot_url?: string | null
+          created_at?: string
+          creditos?: number | null
+          descricao?: string | null
+          duracao_horas?: number | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          painel_pacote_id?: string | null
+          preco?: number | null
+          preco_tela_extra?: number | null
+          renova_sozinho?: boolean
+          servidor_id?: string
+          telas?: number
+          tipo?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "iptv_pacotes_servidor_id_fkey"
+            columns: ["servidor_id"]
+            isOneToOne: false
+            referencedRelation: "iptv_servidores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      iptv_servidores: {
+        Row: {
+          base_url: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          organization_id: string
+          painel_url: string | null
+          painel_user_id: string | null
+          slug: string
+          trial_horas: number
+          updated_at: string
+        }
+        Insert: {
+          base_url?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          organization_id: string
+          painel_url?: string | null
+          painel_user_id?: string | null
+          slug: string
+          trial_horas?: number
+          updated_at?: string
+        }
+        Update: {
+          base_url?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          organization_id?: string
+          painel_url?: string | null
+          painel_user_id?: string | null
+          slug?: string
+          trial_horas?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "iptv_servidores_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      iptv_testes: {
+        Row: {
+          app: string | null
+          apps: Json | null
+          cobranca_id: string | null
+          codigo: string | null
+          comeca_em: string
+          contact_address: string
+          contact_id: string | null
+          conversation_id: string | null
+          convertido_em: string | null
+          created_at: string
+          dns: string | null
+          duracao_horas: number
+          expira_em: string
+          id: string
+          m3u_url: string | null
+          motivo_perda: string | null
+          organization_id: string
+          pacote_id: string | null
+          pacote_nome: string | null
+          pacote_vendido_id: string | null
+          password: string | null
+          servidor_id: string | null
+          servidor_nome: string | null
+          status: string
+          updated_at: string
+          username: string
+          vendido_por: string | null
+        }
+        Insert: {
+          app?: string | null
+          apps?: Json | null
+          cobranca_id?: string | null
+          codigo?: string | null
+          comeca_em?: string
+          contact_address: string
+          contact_id?: string | null
+          conversation_id?: string | null
+          convertido_em?: string | null
+          created_at?: string
+          dns?: string | null
+          duracao_horas?: number
+          expira_em: string
+          id?: string
+          m3u_url?: string | null
+          motivo_perda?: string | null
+          organization_id: string
+          pacote_id?: string | null
+          pacote_nome?: string | null
+          pacote_vendido_id?: string | null
+          password?: string | null
+          servidor_id?: string | null
+          servidor_nome?: string | null
+          status?: string
+          updated_at?: string
+          username: string
+          vendido_por?: string | null
+        }
+        Update: {
+          app?: string | null
+          apps?: Json | null
+          cobranca_id?: string | null
+          codigo?: string | null
+          comeca_em?: string
+          contact_address?: string
+          contact_id?: string | null
+          conversation_id?: string | null
+          convertido_em?: string | null
+          created_at?: string
+          dns?: string | null
+          duracao_horas?: number
+          expira_em?: string
+          id?: string
+          m3u_url?: string | null
+          motivo_perda?: string | null
+          organization_id?: string
+          pacote_id?: string | null
+          pacote_nome?: string | null
+          pacote_vendido_id?: string | null
+          password?: string | null
+          servidor_id?: string | null
+          servidor_nome?: string | null
+          status?: string
+          updated_at?: string
+          username?: string
+          vendido_por?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "iptv_testes_cobranca_id_fkey"
+            columns: ["cobranca_id"]
+            isOneToOne: false
+            referencedRelation: "cobrancas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "iptv_testes_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact_overview"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "iptv_testes_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "iptv_testes_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "iptv_testes_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "iptv_testes_pacote_vendido_id_fkey"
+            columns: ["pacote_vendido_id"]
+            isOneToOne: false
+            referencedRelation: "iptv_pacotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "iptv_testes_vendido_por_fkey"
+            columns: ["vendido_por"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       logs: {
         Row: {
           category: string
@@ -1026,6 +1572,119 @@ export type Database = {
           },
           {
             foreignKeyName: "logs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      loja_numeros: {
+        Row: {
+          atualizado_em: string
+          business_id: string | null
+          criado_em: string
+          id: string
+          organization_id: string | null
+          phone_number: string | null
+          phone_number_id: string
+          preco: number
+          status: string
+          verified_name: string | null
+          waba_id: string
+        }
+        Insert: {
+          atualizado_em?: string
+          business_id?: string | null
+          criado_em?: string
+          id?: string
+          organization_id?: string | null
+          phone_number?: string | null
+          phone_number_id: string
+          preco?: number
+          status?: string
+          verified_name?: string | null
+          waba_id: string
+        }
+        Update: {
+          atualizado_em?: string
+          business_id?: string | null
+          criado_em?: string
+          id?: string
+          organization_id?: string | null
+          phone_number?: string | null
+          phone_number_id?: string
+          preco?: number
+          status?: string
+          verified_name?: string | null
+          waba_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "loja_numeros_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      loja_pedidos: {
+        Row: {
+          codigo_pix: string | null
+          comprador_user_id: string | null
+          conectado_em: string | null
+          conectado_por: string | null
+          criado_em: string
+          external_id: string | null
+          id: string
+          metodo: string | null
+          numero_id: string
+          organization_id: string
+          pago_em: string | null
+          status: string
+          valor: number
+        }
+        Insert: {
+          codigo_pix?: string | null
+          comprador_user_id?: string | null
+          conectado_em?: string | null
+          conectado_por?: string | null
+          criado_em?: string
+          external_id?: string | null
+          id?: string
+          metodo?: string | null
+          numero_id: string
+          organization_id: string
+          pago_em?: string | null
+          status?: string
+          valor: number
+        }
+        Update: {
+          codigo_pix?: string | null
+          comprador_user_id?: string | null
+          conectado_em?: string | null
+          conectado_por?: string | null
+          criado_em?: string
+          external_id?: string | null
+          id?: string
+          metodo?: string | null
+          numero_id?: string
+          organization_id?: string
+          pago_em?: string | null
+          status?: string
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "loja_pedidos_numero_id_fkey"
+            columns: ["numero_id"]
+            isOneToOne: false
+            referencedRelation: "loja_numeros"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "loja_pedidos_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1115,6 +1774,83 @@ export type Database = {
           },
           {
             foreignKeyName: "messages_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      negocios: {
+        Row: {
+          abertura_sugerida: string | null
+          atualizado_em: string
+          categoria: string | null
+          cidade: string | null
+          conversation_id: string | null
+          criado_em: string
+          dores_identificadas: Json | null
+          estagio: string
+          externo_id: string | null
+          extra: Json | null
+          id: string
+          motivo_ia: string | null
+          nicho: string | null
+          nome: string
+          organization_id: string
+          origem: string
+          score_ia: number | null
+          telefone: string | null
+          valor_estimado: number | null
+          veredito_ia: string | null
+        }
+        Insert: {
+          abertura_sugerida?: string | null
+          atualizado_em?: string
+          categoria?: string | null
+          cidade?: string | null
+          conversation_id?: string | null
+          criado_em?: string
+          dores_identificadas?: Json | null
+          estagio?: string
+          externo_id?: string | null
+          extra?: Json | null
+          id?: string
+          motivo_ia?: string | null
+          nicho?: string | null
+          nome: string
+          organization_id: string
+          origem?: string
+          score_ia?: number | null
+          telefone?: string | null
+          valor_estimado?: number | null
+          veredito_ia?: string | null
+        }
+        Update: {
+          abertura_sugerida?: string | null
+          atualizado_em?: string
+          categoria?: string | null
+          cidade?: string | null
+          conversation_id?: string | null
+          criado_em?: string
+          dores_identificadas?: Json | null
+          estagio?: string
+          externo_id?: string | null
+          extra?: Json | null
+          id?: string
+          motivo_ia?: string | null
+          nicho?: string | null
+          nome?: string
+          organization_id?: string
+          origem?: string
+          score_ia?: number | null
+          telefone?: string | null
+          valor_estimado?: number | null
+          veredito_ia?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "negocios_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1269,6 +2005,53 @@ export type Database = {
           },
         ]
       }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          extra: Json
+          id: string
+          organization_id: string
+          p256dh: string
+          updated_at: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          extra?: Json
+          id?: string
+          organization_id: string
+          p256dh: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          extra?: Json
+          id?: string
+          organization_id?: string
+          p256dh?: string
+          updated_at?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quick_replies: {
         Row: {
           content: string
@@ -1355,6 +2138,85 @@ export type Database = {
           },
         ]
       }
+      waitlist: {
+        Row: {
+          contact_address: string
+          conversation_id: string
+          created_at: string
+          desired_date: string | null
+          desired_period: string | null
+          extra: Json
+          id: string
+          offered_at: string | null
+          offered_for: string | null
+          organization_address: string
+          organization_id: string
+          professional_id: string | null
+          service: Database["public"]["Enums"]["service"]
+          status: Database["public"]["Enums"]["waitlist_status"]
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          contact_address: string
+          conversation_id: string
+          created_at?: string
+          desired_date?: string | null
+          desired_period?: string | null
+          extra?: Json
+          id?: string
+          offered_at?: string | null
+          offered_for?: string | null
+          organization_address: string
+          organization_id: string
+          professional_id?: string | null
+          service: Database["public"]["Enums"]["service"]
+          status?: Database["public"]["Enums"]["waitlist_status"]
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contact_address?: string
+          conversation_id?: string
+          created_at?: string
+          desired_date?: string | null
+          desired_period?: string | null
+          extra?: Json
+          id?: string
+          offered_at?: string | null
+          offered_for?: string | null
+          organization_address?: string
+          organization_id?: string
+          professional_id?: string | null
+          service?: Database["public"]["Enums"]["service"]
+          status?: Database["public"]["Enums"]["waitlist_status"]
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "waitlist_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professionals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       webhooks: {
         Row: {
           created_at: string
@@ -1398,7 +2260,61 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      contact_overview: {
+        Row: {
+          agendou: boolean | null
+          anuncio_clique: string | null
+          anuncio_id: string | null
+          anuncio_tipo: string | null
+          anuncio_titulo: string | null
+          assina_ate: string | null
+          assina_desde: string | null
+          assinante: boolean | null
+          atendidos: number | null
+          ciclo_dias: number | null
+          cobrancas_abertas: number | null
+          cobrancas_pagas: number | null
+          compromissos: number | null
+          compromissos_marcados: number | null
+          conversas: number | null
+          created_at: string | null
+          deve: boolean | null
+          enviadas: number | null
+          faltas: number | null
+          fiado: number | null
+          gasto: number | null
+          id: string | null
+          ja_pagou_cobranca: boolean | null
+          metodo_assinatura: string | null
+          name: string | null
+          organization_id: string | null
+          pagamentos: number | null
+          pagou: boolean | null
+          plano_nome: string | null
+          plano_valor: number | null
+          primeira_mensagem: string | null
+          recebidas: number | null
+          sem_resposta: boolean | null
+          status: string | null
+          tags: string[] | null
+          tem_cobranca_aberta: boolean | null
+          total_aberto: number | null
+          total_pago: number | null
+          ultima_mensagem: string | null
+          ultimo_horario: string | null
+          veio_de_anuncio: boolean | null
+          veio_em: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       agent_update_by_owner_rules: {
@@ -1423,6 +2339,7 @@ export type Database = {
         Args: { p_message_id: string }
         Returns: undefined
       }
+      cancelar_pedido_loja: { Args: { _pedido: string }; Returns: undefined }
       claim_pending_messages: {
         Args: { p_budget_per_address?: number }
         Returns: {
@@ -1501,22 +2418,35 @@ export type Database = {
         Returns: undefined
       }
       escalate_stale_handoffs: { Args: never; Returns: number }
+      expirar_reservas_loja: { Args: { _minutos?: number }; Returns: number }
       get_authorized_orgs: {
         Args: { role?: Database["public"]["Enums"]["role"] }
         Returns: string[]
       }
+      get_iptv_token: { Args: { p_servidor_id: string }; Returns: string }
+      get_leads_externos_config: {
+        Args: never
+        Returns: {
+          secret_key: string
+          url: string
+        }[]
+      }
+      get_loja_numero_token: { Args: { p_numero_id: string }; Returns: string }
       get_model_api_key: {
         Args: { p_organization_id: string }
         Returns: string
       }
+      get_voz_api_key: { Args: { p_organization_id: string }; Returns: string }
       get_whatsapp_access_token: {
         Args: { p_address: string; p_organization_id: string }
         Returns: string
       }
+      has_iptv_token: { Args: { p_servidor_id: string }; Returns: boolean }
       has_model_api_key: {
         Args: { p_organization_id: string }
         Returns: boolean
       }
+      has_voz_api_key: { Args: { p_organization_id: string }; Returns: boolean }
       hash_api_key: { Args: { p_key: string }; Returns: string }
       init_data: {
         Args: {
@@ -1527,6 +2457,14 @@ export type Database = {
           p_until?: string
         }
         Returns: Json
+      }
+      iptv_token_secret_name: {
+        Args: { p_servidor_id: string }
+        Returns: string
+      }
+      loja_numero_token_secret_name: {
+        Args: { p_numero_id: string }
+        Returns: string
       }
       matches_campaign_audience: {
         Args: {
@@ -1564,6 +2502,122 @@ export type Database = {
           tag: string
         }[]
       }
+      painel_da_equipe: { Args: { p_org: string }; Returns: Json }
+      painel_do_periodo: {
+        Args: { p_ate?: string; p_desde: string; p_org: string }
+        Returns: Json
+      }
+      professional_of_caller: {
+        Args: { _organization_id: string }
+        Returns: string
+      }
+      quitar_cobranca: {
+        Args: {
+          _agente?: string
+          _cobranca: string
+          _external_id?: string
+          _metodo?: string
+        }
+        Returns: {
+          agent_id: string | null
+          codigo_pix: string | null
+          combinado_para: string | null
+          conta: string | null
+          contact_address: string
+          conversation_id: string
+          created_at: string
+          expira_em: string | null
+          external_id: string | null
+          id: string
+          itens: Json
+          metodo: string | null
+          nota: string | null
+          organization_id: string
+          paga_em: string | null
+          recibo_em: string | null
+          status: string
+          updated_at: string
+          validade_dias: number | null
+          valor: number
+          valor_pago: number
+          vence_em: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "cobrancas"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      quitar_pedido_loja: {
+        Args: { _external_id?: string; _metodo?: string; _pedido: string }
+        Returns: {
+          codigo_pix: string | null
+          comprador_user_id: string | null
+          conectado_em: string | null
+          conectado_por: string | null
+          criado_em: string
+          external_id: string | null
+          id: string
+          metodo: string | null
+          numero_id: string
+          organization_id: string
+          pago_em: string | null
+          status: string
+          valor: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "loja_pedidos"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      receber_parcial: {
+        Args: {
+          _agente?: string
+          _cobranca: string
+          _combinado_para?: string
+          _conta?: string
+          _metodo?: string
+          _nota?: string
+          _valor: number
+        }
+        Returns: {
+          agent_id: string | null
+          codigo_pix: string | null
+          combinado_para: string | null
+          conta: string | null
+          contact_address: string
+          conversation_id: string
+          created_at: string
+          expira_em: string | null
+          external_id: string | null
+          id: string
+          itens: Json
+          metodo: string | null
+          nota: string | null
+          organization_id: string
+          paga_em: string | null
+          recibo_em: string | null
+          status: string
+          updated_at: string
+          validade_dias: number | null
+          valor: number
+          valor_pago: number
+          vence_em: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "cobrancas"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      remover_gateway: {
+        Args: { _apagar?: boolean; _org: string }
+        Returns: undefined
+      }
       render_campaign_template: {
         Args: {
           p_campaign: Database["public"]["Tables"]["campaigns"]["Row"]
@@ -1571,12 +2625,54 @@ export type Database = {
         }
         Returns: Json
       }
+      reservar_numero_loja: {
+        Args: { _numero: string; _organization_id: string; _user_id?: string }
+        Returns: {
+          codigo_pix: string | null
+          comprador_user_id: string | null
+          conectado_em: string | null
+          conectado_por: string | null
+          criado_em: string
+          external_id: string | null
+          id: string
+          metodo: string | null
+          numero_id: string
+          organization_id: string
+          pago_em: string | null
+          status: string
+          valor: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "loja_pedidos"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      salvar_gateway: {
+        Args: {
+          _org: string
+          _provedor?: string
+          _publica: string
+          _secreta: string
+          _webhook?: string
+        }
+        Returns: undefined
+      }
       set_contact_address_blocked: {
         Args: {
           p_address: string
           p_blocked?: boolean
           p_service: Database["public"]["Enums"]["service"]
         }
+        Returns: undefined
+      }
+      set_iptv_token: {
+        Args: { p_servidor_id: string; p_token: string }
+        Returns: undefined
+      }
+      set_loja_numero_token: {
+        Args: { p_numero_id: string; p_token: string }
         Returns: undefined
       }
       set_message_hidden: {
@@ -1587,11 +2683,31 @@ export type Database = {
         Args: { p_key: string; p_organization_id: string }
         Returns: undefined
       }
+      set_vault_secret: {
+        Args: { p_name: string; p_value: string }
+        Returns: undefined
+      }
+      set_voz_api_key: {
+        Args: { p_key: string; p_organization_id: string }
+        Returns: undefined
+      }
       set_whatsapp_access_token: {
         Args: { p_address: string; p_organization_id: string; p_token: string }
         Returns: undefined
       }
+      sincronizar_negocios_externos: {
+        Args: { p_linhas: Json }
+        Returns: number
+      }
       start_campaign: { Args: { p_campaign_id: string }; Returns: number }
+      vencimento_da_cobranca: {
+        Args: { _cobranca: string; _quando?: string }
+        Returns: string
+      }
+      voz_key_secret_name: {
+        Args: { p_organization_id: string }
+        Returns: string
+      }
       whatsapp_token_secret_name: {
         Args: { p_address: string; p_organization_id: string }
         Returns: string
@@ -1617,6 +2733,7 @@ export type Database = {
         | "discord"
         | "teams"
         | "whatsapp-web"
+      waitlist_status: "waiting" | "offered" | "taken" | "expired" | "cancelled"
       webhook_operation: "insert" | "update"
       webhook_table:
         | "messages"
@@ -1625,551 +2742,6 @@ export type Database = {
         | "contacts"
         | "contacts_addresses"
         | "logs"
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
-  storage: {
-    Tables: {
-      buckets: {
-        Row: {
-          allowed_mime_types: string[] | null
-          avif_autodetection: boolean | null
-          created_at: string | null
-          file_size_limit: number | null
-          id: string
-          name: string
-          owner: string | null
-          owner_id: string | null
-          public: boolean | null
-          type: Database["storage"]["Enums"]["buckettype"]
-          updated_at: string | null
-        }
-        Insert: {
-          allowed_mime_types?: string[] | null
-          avif_autodetection?: boolean | null
-          created_at?: string | null
-          file_size_limit?: number | null
-          id: string
-          name: string
-          owner?: string | null
-          owner_id?: string | null
-          public?: boolean | null
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string | null
-        }
-        Update: {
-          allowed_mime_types?: string[] | null
-          avif_autodetection?: boolean | null
-          created_at?: string | null
-          file_size_limit?: number | null
-          id?: string
-          name?: string
-          owner?: string | null
-          owner_id?: string | null
-          public?: boolean | null
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      buckets_analytics: {
-        Row: {
-          created_at: string
-          deleted_at: string | null
-          format: string
-          id: string
-          name: string
-          type: Database["storage"]["Enums"]["buckettype"]
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          deleted_at?: string | null
-          format?: string
-          id?: string
-          name: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          deleted_at?: string | null
-          format?: string
-          id?: string
-          name?: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      buckets_vectors: {
-        Row: {
-          created_at: string
-          id: string
-          type: Database["storage"]["Enums"]["buckettype"]
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          id: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          type?: Database["storage"]["Enums"]["buckettype"]
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      iceberg_namespaces: {
-        Row: {
-          bucket_name: string
-          catalog_id: string
-          created_at: string
-          id: string
-          metadata: Json
-          name: string
-          updated_at: string
-        }
-        Insert: {
-          bucket_name: string
-          catalog_id: string
-          created_at?: string
-          id?: string
-          metadata?: Json
-          name: string
-          updated_at?: string
-        }
-        Update: {
-          bucket_name?: string
-          catalog_id?: string
-          created_at?: string
-          id?: string
-          metadata?: Json
-          name?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "iceberg_namespaces_catalog_id_fkey"
-            columns: ["catalog_id"]
-            isOneToOne: false
-            referencedRelation: "buckets_analytics"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      iceberg_tables: {
-        Row: {
-          bucket_name: string
-          catalog_id: string
-          created_at: string
-          id: string
-          location: string
-          name: string
-          namespace_id: string
-          remote_table_id: string | null
-          shard_id: string | null
-          shard_key: string | null
-          updated_at: string
-        }
-        Insert: {
-          bucket_name: string
-          catalog_id: string
-          created_at?: string
-          id?: string
-          location: string
-          name: string
-          namespace_id: string
-          remote_table_id?: string | null
-          shard_id?: string | null
-          shard_key?: string | null
-          updated_at?: string
-        }
-        Update: {
-          bucket_name?: string
-          catalog_id?: string
-          created_at?: string
-          id?: string
-          location?: string
-          name?: string
-          namespace_id?: string
-          remote_table_id?: string | null
-          shard_id?: string | null
-          shard_key?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "iceberg_tables_catalog_id_fkey"
-            columns: ["catalog_id"]
-            isOneToOne: false
-            referencedRelation: "buckets_analytics"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "iceberg_tables_namespace_id_fkey"
-            columns: ["namespace_id"]
-            isOneToOne: false
-            referencedRelation: "iceberg_namespaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      migrations: {
-        Row: {
-          executed_at: string | null
-          hash: string
-          id: number
-          name: string
-        }
-        Insert: {
-          executed_at?: string | null
-          hash: string
-          id: number
-          name: string
-        }
-        Update: {
-          executed_at?: string | null
-          hash?: string
-          id?: number
-          name?: string
-        }
-        Relationships: []
-      }
-      objects: {
-        Row: {
-          bucket_id: string | null
-          created_at: string | null
-          id: string
-          last_accessed_at: string | null
-          metadata: Json | null
-          name: string | null
-          owner: string | null
-          owner_id: string | null
-          path_tokens: string[] | null
-          updated_at: string | null
-          user_metadata: Json | null
-          version: string | null
-        }
-        Insert: {
-          bucket_id?: string | null
-          created_at?: string | null
-          id?: string
-          last_accessed_at?: string | null
-          metadata?: Json | null
-          name?: string | null
-          owner?: string | null
-          owner_id?: string | null
-          path_tokens?: string[] | null
-          updated_at?: string | null
-          user_metadata?: Json | null
-          version?: string | null
-        }
-        Update: {
-          bucket_id?: string | null
-          created_at?: string | null
-          id?: string
-          last_accessed_at?: string | null
-          metadata?: Json | null
-          name?: string | null
-          owner?: string | null
-          owner_id?: string | null
-          path_tokens?: string[] | null
-          updated_at?: string | null
-          user_metadata?: Json | null
-          version?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "objects_bucketId_fkey"
-            columns: ["bucket_id"]
-            isOneToOne: false
-            referencedRelation: "buckets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      s3_multipart_uploads: {
-        Row: {
-          bucket_id: string
-          created_at: string
-          id: string
-          in_progress_size: number
-          key: string
-          metadata: Json | null
-          owner_id: string | null
-          upload_signature: string
-          user_metadata: Json | null
-          version: string
-        }
-        Insert: {
-          bucket_id: string
-          created_at?: string
-          id: string
-          in_progress_size?: number
-          key: string
-          metadata?: Json | null
-          owner_id?: string | null
-          upload_signature: string
-          user_metadata?: Json | null
-          version: string
-        }
-        Update: {
-          bucket_id?: string
-          created_at?: string
-          id?: string
-          in_progress_size?: number
-          key?: string
-          metadata?: Json | null
-          owner_id?: string | null
-          upload_signature?: string
-          user_metadata?: Json | null
-          version?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "s3_multipart_uploads_bucket_id_fkey"
-            columns: ["bucket_id"]
-            isOneToOne: false
-            referencedRelation: "buckets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      s3_multipart_uploads_parts: {
-        Row: {
-          bucket_id: string
-          created_at: string
-          etag: string
-          id: string
-          key: string
-          owner_id: string | null
-          part_number: number
-          size: number
-          upload_id: string
-          version: string
-        }
-        Insert: {
-          bucket_id: string
-          created_at?: string
-          etag: string
-          id?: string
-          key: string
-          owner_id?: string | null
-          part_number: number
-          size?: number
-          upload_id: string
-          version: string
-        }
-        Update: {
-          bucket_id?: string
-          created_at?: string
-          etag?: string
-          id?: string
-          key?: string
-          owner_id?: string | null
-          part_number?: number
-          size?: number
-          upload_id?: string
-          version?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "s3_multipart_uploads_parts_bucket_id_fkey"
-            columns: ["bucket_id"]
-            isOneToOne: false
-            referencedRelation: "buckets"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "s3_multipart_uploads_parts_upload_id_fkey"
-            columns: ["upload_id"]
-            isOneToOne: false
-            referencedRelation: "s3_multipart_uploads"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      vector_indexes: {
-        Row: {
-          bucket_id: string
-          created_at: string
-          data_type: string
-          dimension: number
-          distance_metric: string
-          id: string
-          metadata_configuration: Json | null
-          name: string
-          updated_at: string
-        }
-        Insert: {
-          bucket_id: string
-          created_at?: string
-          data_type: string
-          dimension: number
-          distance_metric: string
-          id?: string
-          metadata_configuration?: Json | null
-          name: string
-          updated_at?: string
-        }
-        Update: {
-          bucket_id?: string
-          created_at?: string
-          data_type?: string
-          dimension?: number
-          distance_metric?: string
-          id?: string
-          metadata_configuration?: Json | null
-          name?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "vector_indexes_bucket_id_fkey"
-            columns: ["bucket_id"]
-            isOneToOne: false
-            referencedRelation: "buckets_vectors"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      allow_any_operation: {
-        Args: { expected_operations: string[] }
-        Returns: boolean
-      }
-      allow_only_operation: {
-        Args: { expected_operation: string }
-        Returns: boolean
-      }
-      can_insert_object: {
-        Args: { bucketid: string; metadata: Json; name: string; owner: string }
-        Returns: undefined
-      }
-      extension: { Args: { name: string }; Returns: string }
-      filename: { Args: { name: string }; Returns: string }
-      foldername: { Args: { name: string }; Returns: string[] }
-      get_common_prefix: {
-        Args: { p_delimiter: string; p_key: string; p_prefix: string }
-        Returns: string
-      }
-      get_size_by_bucket: {
-        Args: never
-        Returns: {
-          bucket_id: string
-          size: number
-        }[]
-      }
-      list_multipart_uploads_with_delimiter: {
-        Args: {
-          bucket_id: string
-          delimiter_param: string
-          max_keys?: number
-          next_key_token?: string
-          next_upload_token?: string
-          prefix_param: string
-        }
-        Returns: {
-          created_at: string
-          id: string
-          key: string
-        }[]
-      }
-      list_objects_with_delimiter: {
-        Args: {
-          _bucket_id: string
-          delimiter_param: string
-          max_keys?: number
-          next_token?: string
-          prefix_param: string
-          sort_order?: string
-          start_after?: string
-        }
-        Returns: {
-          created_at: string
-          id: string
-          last_accessed_at: string
-          metadata: Json
-          name: string
-          updated_at: string
-        }[]
-      }
-      operation: { Args: never; Returns: string }
-      search: {
-        Args: {
-          bucketname: string
-          levels?: number
-          limits?: number
-          offsets?: number
-          prefix: string
-          search?: string
-          sortcolumn?: string
-          sortorder?: string
-        }
-        Returns: {
-          created_at: string
-          id: string
-          last_accessed_at: string
-          metadata: Json
-          name: string
-          updated_at: string
-        }[]
-      }
-      search_by_timestamp: {
-        Args: {
-          p_bucket_id: string
-          p_level: number
-          p_limit: number
-          p_prefix: string
-          p_sort_column: string
-          p_sort_column_after: string
-          p_sort_order: string
-          p_start_after: string
-        }
-        Returns: {
-          created_at: string
-          id: string
-          key: string
-          last_accessed_at: string
-          metadata: Json
-          name: string
-          updated_at: string
-        }[]
-      }
-      search_v2: {
-        Args: {
-          bucket_name: string
-          levels?: number
-          limits?: number
-          prefix: string
-          sort_column?: string
-          sort_column_after?: string
-          sort_order?: string
-          start_after?: string
-        }
-        Returns: {
-          created_at: string
-          id: string
-          key: string
-          last_accessed_at: string
-          metadata: Json
-          name: string
-          updated_at: string
-        }[]
-      }
-    }
-    Enums: {
-      buckettype: "STANDARD" | "ANALYTICS" | "VECTOR"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2321,6 +2893,7 @@ export const Constants = {
         "teams",
         "whatsapp-web",
       ],
+      waitlist_status: ["waiting", "offered", "taken", "expired", "cancelled"],
       webhook_operation: ["insert", "update"],
       webhook_table: [
         "messages",
@@ -2332,10 +2905,4 @@ export const Constants = {
       ],
     },
   },
-  storage: {
-    Enums: {
-      buckettype: ["STANDARD", "ANALYTICS", "VECTOR"],
-    },
-  },
 } as const
-
