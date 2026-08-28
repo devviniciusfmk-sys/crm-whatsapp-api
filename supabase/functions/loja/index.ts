@@ -10,6 +10,7 @@ import {
 } from "../_shared/supabase.ts";
 import { isPlatformAdmin } from "../_shared/platform_admin.ts";
 import { type User } from "@supabase/supabase-js";
+import { candidateWabas, graph, inspectToken } from "../_shared/meta_graph.ts";
 
 /**
  * # A loja de números
@@ -142,6 +143,122 @@ app.get("/loja/vitrine", async (c) => {
    * `pagamentos/checkout.ts`, pela mesma razão: um `select("*")` que ganhe
    * uma coluna nova amanhã vaza essa coluna aqui sem ninguém perceber. */
   return c.json(data ?? []);
+});
+
+/**
+ * Descobre os números que um token de sistema enxerga, sem cadastrar nada.
+ *
+ * Até 2026/08/28 o único jeito de colocar um número no estoque era digitar
+ * `phone_number_id`/`waba_id`/nome/telefone à mão, um de cada vez — mesmo
+ * quando o token colado já sabe tudo isso sozinho. `candidateWabas` (extraído
+ * de `whatsapp-management/manual_signup.ts`) tenta achar toda WABA sozinha,
+ * por dois caminhos: os `target_ids` do próprio token (quando ele foi
+ * emitido com escopo restrito a contas específicas) e `me/businesses`.
+ *
+ * Testado ao vivo em 2026/08/28 com um System User de escopo amplo (sem
+ * `target_ids`, `debug_token` confirmou): os dois caminhos vieram vazios —
+ * `me/businesses` é endpoint de usuário pessoal, a Graph API recusa pra
+ * token de sistema com "Missing Permission". Não tem como a Meta responder
+ * "tudo que este token alcança" pra esse tipo de token; por isso `business_id`
+ * é aceito como um TERCEIRO caminho, explícito: quando informado, pula
+ * `candidateWabas` inteira e busca as WABAs direto em
+ * `{business_id}/owned_whatsapp_business_accounts` — o mesmo dado que
+ * `candidateWabas` tentaria adivinhar, só que perguntado, não inferido.
+ *
+ * Não grava nada: devolve a lista pra tela escolher o que entra no estoque,
+ * via `POST /loja/admin/numeros` de novo (um por um, reaproveitando a
+ * validação e o cofre que aquela rota já tem).
+ */
+app.post("/loja/admin/numeros/descobrir", requirePlatformAdmin, async (c) => {
+  const body = await c.req.json<{ token: string; business_id?: string }>();
+  const token = body.token?.trim();
+  const businessId = body.business_id?.trim();
+
+  if (!token) {
+    throw new HTTPException(400, { message: "Missing 'token' body param!" });
+  }
+
+  const inspected = await inspectToken(token);
+
+  if (!inspected) {
+    throw new HTTPException(400, {
+      message:
+        "Este token não foi emitido pelo app da plataforma, ou já expirou.",
+    });
+  }
+
+  const wabaIds = businessId
+    ? await Promise.all(
+      // Mesmos dois relacionamentos que `candidateWabas` cobre: dono da
+      // conta, ou gerenciando por conta de um cliente (arranjo de parceiro).
+      (["owned", "client"] as const).map((qual) =>
+        graph(
+          `${businessId}/${qual}_whatsapp_business_accounts?fields=id&limit=50`,
+          token,
+          `Não consegui listar as WABAs (${qual}) do negócio ${businessId}. Confira o ID e se este token tem acesso a ele.`,
+        ).then((resposta: { data?: { id: string }[] }) =>
+          (resposta.data ?? []).map((waba) => waba.id)
+        ).catch(() => [] as string[])
+      ),
+    ).then((listas) => [...new Set(listas.flat())])
+    : await candidateWabas(token);
+
+  const numerosPorWaba = await Promise.all(
+    wabaIds.map(async (waba_id) => {
+      try {
+        const resposta = await graph(
+          `${waba_id}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,status&limit=100`,
+          token,
+          `Não consegui listar os números da WABA ${waba_id}.`,
+        ) as {
+          data?: {
+            id: string;
+            display_phone_number?: string;
+            verified_name?: string;
+            quality_rating?: string;
+            status?: string;
+          }[];
+        };
+
+        return (resposta.data ?? []).map((numero) => ({
+          ...numero,
+          waba_id,
+        }));
+      } catch {
+        // Uma WABA que o token enxerga mas não consegue listar (permissão
+        // parcial, conta suspensa) não pode derrubar a busca inteira — as
+        // outras WABAs ainda respondem.
+        return [];
+      }
+    }),
+  );
+
+  const client = createUnsecureClient();
+  const { data: existentes } = await client
+    .from("loja_numeros")
+    .select("phone_number_id");
+
+  const jaCadastrados = new Set(
+    (existentes ?? []).map((row) => row.phone_number_id),
+  );
+
+  const numeros = numerosPorWaba.flat().map((numero) => ({
+    phone_number_id: numero.id,
+    waba_id: numero.waba_id,
+    phone_number: numero.display_phone_number,
+    verified_name: numero.verified_name,
+    quality_rating: numero.quality_rating,
+    status: numero.status,
+    ja_cadastrado: jaCadastrados.has(numero.id),
+  }));
+
+  return c.json({
+    token_expires_at: inspected.expires_at
+      ? new Date(inspected.expires_at * 1000).toISOString()
+      : null,
+    wabas_verificadas: wabaIds.length,
+    numeros,
+  });
 });
 
 /**
