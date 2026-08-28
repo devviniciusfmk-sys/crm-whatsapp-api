@@ -7,10 +7,28 @@ project_id = "open-bsp-api"
 schemas = ["public", "storage", "billing"]
 
 # Auth. site_url is the frontend origin; it + the OAuth authorization path form
-# the consent UI URL the native OAuth server redirects to. In prod, Site URL is
-# set in the dashboard (Authentication > URL Configuration).
+# the consent UI URL the native OAuth server redirects to.
+#
+# ATENÇÃO — 2026/08/27: um `supabase config push` rodado só pra expor o
+# schema `billing` empurrou o arquivo INTEIRO, e os campos de auth que não
+# estavam explícitos aqui (confirmação de e-mail, MFA, otp) caíram pros
+# padrões da CLI, sobrescrevendo o que estava configurado em produção pelo
+# dashboard. Os valores abaixo são os que a produção tinha ANTES desse
+# push (vistos no diff do próprio comando) — escritos aqui explicitamente
+# agora, pra um próximo `config push` não repetir o apagão.
 [auth]
-site_url = "http://localhost:5173"
+site_url = "https://grupotche.site"
+additional_redirect_urls = ["https://grupotche.site/**"]
+jwt_expiry = 3600
+
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
 
 # Native OAuth 2.1 server (Supabase Auth as the authorization server) — lets
 # MCP clients (Claude Code/Desktop, ChatGPT) authenticate against the `mcp`
