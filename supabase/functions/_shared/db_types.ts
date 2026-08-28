@@ -408,6 +408,7 @@ export type Database = {
           organization_id: string
           plan_id: string | null
           tier_id: string
+          trial_ends_at: string | null
           updated_at: string
         }
         Insert: {
@@ -418,6 +419,7 @@ export type Database = {
           organization_id: string
           plan_id?: string | null
           tier_id: string
+          trial_ends_at?: string | null
           updated_at?: string
         }
         Update: {
@@ -428,6 +430,7 @@ export type Database = {
           organization_id?: string
           plan_id?: string | null
           tier_id?: string
+          trial_ends_at?: string | null
           updated_at?: string
         }
         Relationships: [

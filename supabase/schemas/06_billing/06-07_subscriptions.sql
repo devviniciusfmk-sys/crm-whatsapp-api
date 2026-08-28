@@ -5,6 +5,12 @@ create table billing.subscriptions (
   account_id uuid,
   current_period_start timestamp with time zone,
   current_period_end timestamp with time zone,
+  -- Set once, on organization creation (billing.initialize_subscription), to
+  -- now() + 7 days. Cleared by billing.change_plan on any upgrade off the
+  -- default plan — a paying customer has no reason to see a trial countdown.
+  -- Null means "no trial deadline", not "no data": an org created before this
+  -- column existed, or one that was never on the default plan, has none.
+  trial_ends_at timestamp with time zone,
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
 );

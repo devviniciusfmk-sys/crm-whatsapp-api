@@ -101,10 +101,28 @@ app.use("*", requirePlatformAdmin);
 app.get("/admin/organizations", async (c) => {
   const client = createUnsecureClient();
 
-  const { data, error } = await client
-    .from("organizations")
-    .select("id, name, extra, created_at")
-    .order("created_at", { ascending: false });
+  const [
+    { data, error },
+    { data: assinaturas },
+    { data: donos },
+    { data: enderecos },
+  ] = await Promise.all([
+    client
+      .from("organizations")
+      .select("id, name, extra, created_at")
+      .order("created_at", { ascending: false }),
+    client
+      .schema("billing")
+      .from("subscriptions")
+      .select("organization_id, plan_id, tier_id, trial_ends_at"),
+    client
+      .from("agents")
+      .select("organization_id, user_id")
+      .eq("extra->>role", "owner"),
+    client
+      .from("organizations_addresses")
+      .select("organization_id, service"),
+  ]);
 
   if (error) {
     throw new HTTPException(500, {
@@ -113,7 +131,47 @@ app.get("/admin/organizations", async (c) => {
     });
   }
 
-  return c.json(data ?? []);
+  const assinaturaPorOrg = new Map(
+    (assinaturas ?? []).map((s) => [
+      s.organization_id,
+      {
+        plan_id: s.plan_id,
+        tier_id: s.tier_id,
+        trial_ends_at: s.trial_ends_at,
+      },
+    ]),
+  );
+
+  // "local" é o endereço de teste que todo cadastro ganha sozinho (ver
+  // `after_insert_on_organizations`) — não é um canal real conectado, e
+  // contá-lo faria toda organização parecer que já tem WhatsApp.
+  const canaisPorOrg = new Map<string, number>();
+  for (const e of enderecos ?? []) {
+    if (e.service === "local") continue;
+    canaisPorOrg.set(e.organization_id, (canaisPorOrg.get(e.organization_id) ?? 0) + 1);
+  }
+
+  // E-mail mora em `auth.users`, fora do alcance de um `.select()` comum —
+  // só a API de admin do Auth enxerga. Um `getUserById` por dono, em
+  // paralelo: são poucas organizações, não um relatório de milhares.
+  const emailPorOrg = new Map<string, string>();
+  await Promise.all(
+    (donos ?? [])
+      .filter((d): d is { organization_id: string; user_id: string } => !!d.user_id)
+      .map(async (d) => {
+        const { data: userData } = await client.auth.admin.getUserById(d.user_id);
+        if (userData?.user?.email) emailPorOrg.set(d.organization_id, userData.user.email);
+      }),
+  );
+
+  const comAssinatura = (data ?? []).map((org) => ({
+    ...org,
+    subscription: assinaturaPorOrg.get(org.id) ?? null,
+    owner_email: emailPorOrg.get(org.id) ?? null,
+    canais_conectados: canaisPorOrg.get(org.id) ?? 0,
+  }));
+
+  return c.json(comAssinatura);
 });
 
 /**
@@ -156,8 +214,34 @@ app.get("/admin/organizations/:id", async (c) => {
     .select("address, service, status, extra")
     .eq("organization_id", id);
 
+  const { data: assinatura } = await client
+    .schema("billing")
+    .from("subscriptions")
+    .select("plan_id, tier_id, trial_ends_at")
+    .eq("organization_id", id)
+    .maybeSingle();
+
+  const { data: dono } = await client
+    .from("agents")
+    .select("user_id")
+    .eq("organization_id", id)
+    .eq("extra->>role", "owner")
+    .not("user_id", "is", null)
+    .limit(1)
+    .maybeSingle();
+
+  let ownerEmail: string | null = null;
+  if (dono?.user_id) {
+    const { data: userData } = await client.auth.admin.getUserById(dono.user_id);
+    ownerEmail = userData?.user?.email ?? null;
+  }
+
   return c.json({
-    organization,
+    organization: {
+      ...organization,
+      subscription: assinatura ?? null,
+      owner_email: ownerEmail,
+    },
     agents: agents ?? [],
     addresses: addresses ?? [],
   });
@@ -165,62 +249,162 @@ app.get("/admin/organizations/:id", async (c) => {
 
 export type AdminOrganizationUpdate = {
   modules?: string[];
-  subscription_status?: "trial" | "active" | "suspended" | "none";
-  trial_ends_at?: string | null;
   suspended?: boolean;
+  /** Chama `billing.change_plan` — a mesma função que já rege upgrade em
+   * qualquer outro lugar do produto, pra "o operador troca o plano de um
+   * cliente" nunca poder divergir de "um cliente muda de plano sozinho". */
+  plan_id?: string;
+  /** Prorrogação/cortesia manual, direto em `billing.subscriptions`. A
+   * criação normal do trial (7 dias) já acontece sozinha no gatilho — isto
+   * é só para o caso de negociação que o gatilho não cobre. */
+  trial_ends_at?: string | null;
+  /** Quando `modules` liga um add-on pago (hoje só `iptv`) SEM plano pago,
+   * `cortesia: true` é a única forma de passar: pula a checagem de plano e
+   * marca o módulo em `extra.modulos_cortesia`, pra nunca confundir "cliente
+   * pagando" com "operador liberou de graça" num relatório. */
+  cortesia?: boolean;
 };
 
+/** Só `iptv` é add-on pago hoje — mesma lista que `src/utils/modules.ts`
+ * (`addonPago: true`) do lado da UI. Hardcoded aqui em vez de compartilhada
+ * entre os dois repositórios porque é uma linha só; duplicar a lista
+ * inteira de módulos só pra isto seria mais acoplamento do que o problema
+ * pede. */
+const ADDONS_PAGOS = new Set(["iptv"]);
+
 /**
- * Muda módulos, plano/trial ou suspende — tudo dentro de `extra`.
+ * Muda módulos, plano/trial ou suspende uma organização.
  *
- * Lê o `extra` atual e mescla o que veio no corpo antes de gravar, em vez
- * de confiar só no merge automático do gatilho `set_extra` do lado do
- * banco. É a mesma cautela que `useUpdateCurrentOrganization` (lado da UI,
- * para o dono da própria organização) já toma com esta tabela específica —
- * repetida aqui porque as duas escritas não compartilham código, e a
- * organização não pode ter dois comportamentos diferentes dependendo de
- * quem a edita.
+ * `modules` e `suspended` continuam em `extra` (não são billing — são
+ * capacidade e trinco de acesso, respectivamente). `plan_id` e
+ * `trial_ends_at` foram MOVIDOS pra `billing.subscriptions` — só ficaram em
+ * `extra.subscription_status`/`extra.trial_ends_at` até 2026/08/27, um
+ * sistema paralelo sem nenhuma regra de negócio, que podia discordar do
+ * `billing.subscriptions` real que a própria organização vê em
+ * `/stats/quotas`. Ver `06_billing` no schema.
  */
 app.patch("/admin/organizations/:id", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<AdminOrganizationUpdate>();
   const client = createUnsecureClient();
 
-  const { data: atual, error: leituraError } = await client
-    .from("organizations")
-    .select("extra")
-    .eq("id", id)
-    .maybeSingle();
+  if (body.modules !== undefined || body.suspended !== undefined) {
+    const { data: atual, error: leituraError } = await client
+      .from("organizations")
+      .select("extra")
+      .eq("id", id)
+      .maybeSingle();
 
-  if (leituraError || !atual) {
-    throw new HTTPException(404, { message: "Organização não encontrada." });
+    if (leituraError || !atual) {
+      throw new HTTPException(404, { message: "Organização não encontrada." });
+    }
+
+    const extraAtual = (atual.extra as Record<string, unknown>) ?? {};
+    const extraNovo: Record<string, unknown> = { ...extraAtual };
+
+    if (body.modules !== undefined) {
+      const modulosAtuais = new Set(
+        (extraAtual.modules as string[] | undefined) ?? [],
+      );
+      const novosModulos = new Set(body.modules);
+      const cortesiaAtual = new Set(
+        (extraAtual.modulos_cortesia as string[] | undefined) ?? [],
+      );
+
+      const ligandoAddonPago = [...ADDONS_PAGOS].find(
+        (m) => novosModulos.has(m) && !modulosAtuais.has(m),
+      );
+
+      if (ligandoAddonPago && !body.cortesia) {
+        const { data: assinaturaAtual } = await client
+          .schema("billing")
+          .from("subscriptions")
+          .select("plan_id")
+          .eq("organization_id", id)
+          .maybeSingle();
+
+        if (!assinaturaAtual?.plan_id || assinaturaAtual.plan_id === "free") {
+          throw new HTTPException(400, {
+            message:
+              "IPTV é add-on pago — a organização precisa estar num plano pago (não free) antes de ligar, a não ser que seja cortesia.",
+          });
+        }
+      }
+
+      // `modulos_cortesia` só existe pra add-ons pagos, e só enquanto o
+      // módulo continuar ligado — desligar o checkbox tira da lista de
+      // cortesia junto, pra não sobrar um registro "cortesia" de um módulo
+      // que nem está mais ativo.
+      const cortesiaNova = new Set(
+        [...cortesiaAtual].filter((m) => novosModulos.has(m)),
+      );
+      if (body.cortesia && ligandoAddonPago) cortesiaNova.add(ligandoAddonPago);
+
+      extraNovo.modules = body.modules;
+      extraNovo.modulos_cortesia = [...cortesiaNova];
+    }
+    if (body.suspended !== undefined) extraNovo.suspended = body.suspended;
+
+    const { error } = await client
+      .from("organizations")
+      .update({ extra: extraNovo })
+      .eq("id", id);
+
+    if (error) {
+      throw new HTTPException(500, {
+        message: "Não consegui atualizar a organização.",
+        cause: error,
+      });
+    }
   }
 
-  const extraAtual = (atual.extra as Record<string, unknown>) ?? {};
-  const extraNovo: Record<string, unknown> = { ...extraAtual };
+  if (body.plan_id !== undefined) {
+    const { error } = await client
+      .schema("billing")
+      .rpc("change_plan", { _organization_id: id, _plan_id: body.plan_id });
 
-  if (body.modules !== undefined) extraNovo.modules = body.modules;
-  if (body.subscription_status !== undefined) {
-    extraNovo.subscription_status = body.subscription_status;
+    if (error) {
+      throw new HTTPException(500, {
+        message: "Não consegui trocar o plano.",
+        cause: error,
+      });
+    }
   }
+
   if (body.trial_ends_at !== undefined) {
-    extraNovo.trial_ends_at = body.trial_ends_at;
-  }
-  if (body.suspended !== undefined) extraNovo.suspended = body.suspended;
+    const { error } = await client
+      .schema("billing")
+      .from("subscriptions")
+      .update({ trial_ends_at: body.trial_ends_at })
+      .eq("organization_id", id);
 
-  const { data: organization, error } = await client
+    if (error) {
+      throw new HTTPException(500, {
+        message: "Não consegui atualizar o fim do trial.",
+        cause: error,
+      });
+    }
+  }
+
+  const { data: organization, error: releituraError } = await client
     .from("organizations")
-    .update({ extra: extraNovo })
-    .eq("id", id)
     .select("id, name, extra, created_at")
+    .eq("id", id)
     .single();
 
-  if (error) {
+  if (releituraError) {
     throw new HTTPException(500, {
-      message: "Não consegui atualizar a organização.",
-      cause: error,
+      message: "Não consegui reler a organização.",
+      cause: releituraError,
     });
   }
+
+  const { data: assinatura } = await client
+    .schema("billing")
+    .from("subscriptions")
+    .select("plan_id, tier_id, trial_ends_at")
+    .eq("organization_id", id)
+    .maybeSingle();
 
   log.info("Admin: organização atualizada", {
     organization_id: id,
@@ -228,7 +412,7 @@ app.patch("/admin/organizations/:id", async (c) => {
     mudou: Object.keys(body),
   });
 
-  return c.json(organization);
+  return c.json({ ...organization, subscription: assinatura ?? null });
 });
 
 /**

@@ -283,9 +283,11 @@ begin
     return new;
   end if;
 
-  -- Create subscription with tier only
-  insert into billing.subscriptions (organization_id, tier_id)
-  values (new.id, _tier_id);
+  -- Create subscription with tier only. trial_ends_at starts the 7-day trial
+  -- clock; billing.change_plan clears it the moment the org leaves the
+  -- default plan.
+  insert into billing.subscriptions (organization_id, tier_id, trial_ends_at)
+  values (new.id, _tier_id, now() + interval '7 days');
 
   -- Assign default plan if one exists
   select p.id into _plan_id
@@ -336,11 +338,14 @@ begin
     raise exception 'No active tier found for plan %', _plan_id;
   end if;
 
-  -- Update subscription
+  -- Update subscription. trial_ends_at is cleared here, not just left to
+  -- expire: the moment an org leaves the default plan it is paying, and a
+  -- paying customer has no reason to see a trial countdown.
   update billing.subscriptions
   set tier_id = _tier_id,
       plan_id = _plan_id,
-      current_period_start = now()
+      current_period_start = now(),
+      trial_ends_at = case when _plan.is_default then trial_ends_at else null end
   where organization_id = _organization_id;
 
   -- Grant balance products included in the plan
