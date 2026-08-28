@@ -140,3 +140,19 @@ entrypoint = "./functions/pagamentos/index.ts"
 verify_jwt = false
 import_map = "./functions/deno.json"
 entrypoint = "./functions/leads-sync/index.ts"
+
+# admin e loja nunca tiveram entrada aqui — sem `verify_jwt = false`, o
+# gateway do Supabase exige um JWT válido em TODA requisição, inclusive o
+# preflight CORS (OPTIONS) que o navegador manda sozinho, sem Authorization.
+# Isso barra a chamada antes dela chegar no Hono (que já faz sua própria
+# checagem de JWT/admin por dentro) — só no navegador, nunca via curl direto,
+# o que fez o bug parecer "trava só às vezes" por semanas. - 2026/08/28
+[functions.admin]
+verify_jwt = false
+import_map = "./functions/deno.json"
+entrypoint = "./functions/admin/index.ts"
+
+[functions.loja]
+verify_jwt = false
+import_map = "./functions/deno.json"
+entrypoint = "./functions/loja/index.ts"
