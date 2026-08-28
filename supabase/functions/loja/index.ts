@@ -61,7 +61,10 @@ app.onError((err, c) => {
   }
 
   log.error(`Unhandled error on ${c.req.method} ${c.req.path}`, err);
-  return c.json({ message: "Internal Server Error" }, 500);
+  return c.json(
+    { message: err instanceof Error ? err.message : "Internal Server Error" },
+    500,
+  );
 });
 
 // Toda rota exige JWT. Esta loja não tem checkout anônimo (diferente de
